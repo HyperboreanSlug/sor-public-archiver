@@ -1,253 +1,735 @@
 #!/usr/bin/env python3
 """
-Public SOR Data Archiver - GUI Version
+Sex Offender Database Scraper - Modern GUI
 
-A simple tkinter GUI for downloading publicly available U.S. sex offender
-registry bulk data files.
+A sleek tkinter-based GUI for mass-downloading US sex offender registries,
+searching records by name/race/state, and detecting ethnic misclassifications.
 
-This only downloads data that government agencies already publish publicly.
 Run with: python gui.py
 """
 
-import sys
 import threading
 import queue
-import tkinter as tk
-from tkinter import ttk, filedialog, messagebox, scrolledtext
 from pathlib import Path
 from datetime import datetime
-import csv
 
-from core import load_sources, get_direct_sources, perform_downloads, DEFAULT_DELAY
-
-# Custom keyword filtering is user-managed via the in-app editor or custom_keywords.txt file.
-# All data is loaded at runtime from user-selected public CSV files.
+import tkinter as tk
+from tkinter import ttk, filedialog, messagebox, scrolledtext
 
 
-class SorArchiverGUI:
-    def __init__(self, root: tk.Tk):
+# ---------------------------------------------------------------------------
+# Modern styling constants
+# ---------------------------------------------------------------------------
+COLORS = {
+    "bg": "#1e1e2e",           # dark background (catppuccin-mocha)
+    "fg": "#cdd6f4",           # text
+    "panel": "#313244",        # panels / frames
+    "accent": "#89b4fa",       # blue accent
+    "green": "#a6e3a1",        # success green
+    "red": "#f38ba8",          # error red
+    "yellow": "#f9e2af",       # warning yellow
+    "border": "#585b70",       # borders
+    "input_bg": "#45475a",     # input backgrounds
+    "hover": "#585b70",        # hover state
+}
+
+# Remove thick ttk borders by using plain frames with subtle styling
+BORDER_WIDTH = 1
+
+FONT_TITLE = ("Segoe UI", 13, "bold")
+FONT_BODY = ("Segoe UI", 9)
+FONT_MONO = ("Consolas", 9)
+
+
+# ---------------------------------------------------------------------------
+# Helper widgets
+# ---------------------------------------------------------------------------
+class ModernFrame(tk.Frame):
+    """A styled frame with padding and subtle border."""
+    def __init__(self, parent, bg=None, **kwargs):
+        if bg is None:
+            bg = COLORS["bg"]
+        tk.Frame.__init__(self, parent, background=bg, **kwargs)
+
+
+class ModernButton(ttk.Button):
+    def __init__(self, parent, text="", **kwargs):
+        style = kwargs.pop("style", "Modern.TButton")
+        super().__init__(parent, text=text, style=style, **kwargs)
+
+
+class ModernLabel(ttk.Label):
+    def __init__(self, parent, text="", bg=None, fg=None, **kwargs):
+        style = kwargs.pop("style", "Modern.TLabel")
+        # Prefer style; optional bg/fg only if explicitly provided
+        opts = {"text": text, "style": style}
+        if bg is not None:
+            opts["background"] = bg
+        if fg is not None:
+            opts["foreground"] = fg
+        super().__init__(parent, **opts, **kwargs)
+
+
+class ModernEntry(ttk.Entry):
+    def __init__(self, parent, **kwargs):
+        # ttk.Entry styling is controlled via styles, not constructor bg/fg kwargs
+        style = kwargs.pop("style", "Modern.TEntry")
+        kwargs.pop("bg", None)
+        kwargs.pop("fg", None)
+        kwargs.pop("insertbackground", None)
+        super().__init__(parent, style=style, **kwargs)
+
+
+class ModernFrameWithBorder(tk.Frame):
+    """A Frame styled to look like a LabelFrame but without thick ttk borders."""
+    def __init__(self, parent, text="", padding=8, bg=None, fg=None, **kwargs):
+        if bg is None:
+            bg = COLORS["bg"]
+        if fg is None:
+            fg = COLORS["fg"]
+
+        # Create a container frame with subtle border
+        tk.Frame.__init__(self, parent, background=bg, padx=padding, pady=padding, **kwargs)
+
+        # Add label at top (use positive values only for tkinter compatibility)
+        self._label = tk.Label(self, text=text, font=("Segoe UI", 9, "bold"),
+                               foreground=COLORS["accent"], background=bg)
+        self._label.pack(fill=tk.X, padx=(0, padding), pady=(0, padding))
+
+    def pack(self, **kwargs):
+        kwargs.setdefault("fill", tk.BOTH)
+        return super().pack(**kwargs)
+
+
+class ModernTreeview(ttk.Treeview):
+    """A Treeview with dark theme styling."""
+    def __init__(self, parent, **kwargs):
+        super().__init__(parent, **kwargs)
+
+
+# ---------------------------------------------------------------------------
+# Main GUI application
+# ---------------------------------------------------------------------------
+class SexOffenderGUI:
+    """Main application window with tabs for scraping, searching, and analysis."""
+
+    def __init__(self, root):
         self.root = root
-        root.title("Public Sex Offender Registry Data Archiver")
-        root.geometry("900x700")
-        root.minsize(800, 600)
+        self._setup_styles()
+        self.root.title("Sex Offender Database Scraper")
+        self.root.geometry("1200x750")
+        self.root.minsize(900, 600)
 
+        # State
         self.sources = []
-        self.direct_sources = []
-        self.selected = set()  # set of abbrs
-
+        self.selected_states = set()
         self.log_queue = queue.Queue()
         self.is_running = False
+        self.db_path = "data/offenders.db"
 
+        # Build UI
         self._build_ui()
         self._load_sources()
         self._poll_log_queue()
 
+    def _setup_styles(self):
+        """Configure ttk styles for a modern dark theme."""
+        style = ttk.Style(self.root)
+        try:
+            if "vista" in style.theme_names():
+                style.theme_use("vista")
+            elif "clam" in style.theme_names():
+                style.theme_use("clam")
+        except Exception:
+            pass
+
+        # Frame styles
+        style.configure("Modern.TFrame", background=COLORS["bg"])
+        style.configure("Panel.TFrame", background=COLORS["panel"])
+        style.configure("Header.TLabel", font=("Segoe UI", 14, "bold"), foreground=COLORS["accent"], background=COLORS["bg"])
+        style.configure("Modern.TLabel", font=FONT_BODY, foreground=COLORS["fg"], background=COLORS["bg"])
+        style.configure("Status.TLabel", font=("Segoe UI", 9), foreground=COLORS["green"], background=COLORS["panel"])
+
+        # Button styles
+        style.configure("Modern.TButton", font=("Segoe UI", 9), padding=6)
+        style.map("Modern.TButton",
+                  background=[("active", COLORS["hover"]), ("pressed", COLORS["accent"])])
+
+        style.configure("Accent.TButton", font=("Segoe UI", 10, "bold"), foreground="#fff")
+        style.map("Accent.TButton",
+                  background=[("active", COLORS["accent"]), ("pressed", "#74a8fc")],
+                  foreground=[("active", "#fff"), ("pressed", "#fff")])
+
+        # Treeview styles
+        style.configure("Treeview.Heading", font=("Segoe UI", 9, "bold"), foreground=COLORS["fg"], background=COLORS["panel"])
+        style.configure("Treeview", font=FONT_BODY, fieldbackground=COLORS["bg"], foreground=COLORS["fg"])
+
+        # Entry styles
+        style.configure("Modern.TEntry", fieldbackground=COLORS["input_bg"], foreground=COLORS["fg"], insertcolor=COLORS["accent"])
+
+        # LabelFrame with subtle border
+        style.configure("Modern.TLabelFrame", background=COLORS["bg"], foreground=COLORS["fg"], borderwidth=1)
+
+    # -----------------------------------------------------------------------
+    # UI construction
+    # -----------------------------------------------------------------------
     def _build_ui(self):
-        # Main frame
-        main = ttk.Frame(self.root, padding=10)
-        main.pack(fill=tk.BOTH, expand=True)
+        """Build the full application layout."""
+        root = self.root
 
-        # Left: Source list
-        left_frame = ttk.LabelFrame(main, text="Available Public Sources", padding=8)
-        left_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 8))
+        # Top bar with title and stats
+        top_bar = ModernFrame(root)
+        top_bar.pack(fill=tk.X, padx=10, pady=(8, 4))
 
-        # Filter
-        self.show_direct_only = tk.BooleanVar(value=True)
-        filter_cb = ttk.Checkbutton(
-            left_frame,
-            text="Show only sources with direct bulk downloads",
-            variable=self.show_direct_only,
-            command=self._refresh_list
-        )
-        filter_cb.pack(anchor=tk.W, pady=(0, 6))
+        ModernLabel(top_bar, text="🔍 Sex Offender Database Scraper", style="Header.TLabel").pack(side=tk.LEFT)
+        self.stats_label = ModernLabel(top_bar, text="Ready", style="Status.TLabel")
+        self.stats_label.pack(side=tk.RIGHT, padx=10)
 
-        # Treeview
-        columns = ("abbr", "direct", "notes")
-        self.tree = ttk.Treeview(
-            left_frame,
-            columns=columns,
-            show="tree headings",
-            selectmode="extended"
-        )
-        self.tree.heading("#0", text="Jurisdiction")
-        self.tree.heading("abbr", text="Abbr")
-        self.tree.heading("direct", text="Direct?")
-        self.tree.heading("notes", text="Notes (short)")
+        # Tab control
+        self.tabs = ttk.Notebook(root)
+        self.tabs.pack(fill=tk.BOTH, expand=True, padx=10, pady=(4, 6))
 
-        self.tree.column("#0", width=240, stretch=True)
-        self.tree.column("abbr", width=50, anchor=tk.CENTER)
-        self.tree.column("direct", width=70, anchor=tk.CENTER)
-        self.tree.column("notes", width=280)
+        # --- TAB 1: Scrape ---
+        self.tab_scrape = ModernFrame(self.tabs)
+        self.tabs.add(self.tab_scrape, text="📥 Scrape")
+        self._build_scrape_tab()
 
-        self.tree.pack(fill=tk.BOTH, expand=True)
-        self.tree.bind("<<TreeviewSelect>>", self._on_selection_change)
+        # --- TAB 2: Search ---
+        self.tab_search = ModernFrame(self.tabs)
+        self.tabs.add(self.tab_search, text="🔎 Search")
+        self._build_search_tab()
 
-        # Selection buttons
-        btn_frame = ttk.Frame(left_frame)
-        btn_frame.pack(fill=tk.X, pady=6)
+        # --- TAB 3: Misclassification ---
+        self.tab_misclass = ModernFrame(self.tabs)
+        self.tabs.add(self.tab_misclass, text="⚠️ Misclassification")
+        self._build_misclass_tab()
 
-        ttk.Button(btn_frame, text="Select All Direct", command=self._select_all_direct).pack(side=tk.LEFT, padx=2)
-        ttk.Button(btn_frame, text="Clear Selection", command=self._clear_selection).pack(side=tk.LEFT, padx=2)
-        ttk.Button(btn_frame, text="Refresh List", command=self._refresh_list).pack(side=tk.LEFT, padx=2)
+        # --- TAB 4: Data Viewer ---
+        self.tab_viewer = ModernFrame(self.tabs)
+        self.tabs.add(self.tab_viewer, text="📊 Data Viewer")
+        self._build_data_viewer_tab()
 
-        # Right side: Controls
-        right_frame = ttk.Frame(main)
-        right_frame.pack(side=tk.RIGHT, fill=tk.Y)
-
-        # Options
-        opts = ttk.LabelFrame(right_frame, text="Options", padding=10)
-        opts.pack(fill=tk.X, pady=(0, 10))
-
-        ttk.Label(opts, text="Output folder:").pack(anchor=tk.W)
-        out_frame = ttk.Frame(opts)
-        out_frame.pack(fill=tk.X, pady=2)
-        # Smart default for output directory
-        # In bundled exe, prefer a folder next to the exe or in user's Documents
-        if getattr(sys, "frozen", False):
-            exe_dir = Path(sys.executable).parent
-            default_out = exe_dir / "SOR_Archives"
-        else:
-            default_out = Path.cwd() / "archives"
-        self.output_var = tk.StringVar(value=str(default_out))
-        ttk.Entry(out_frame, textvariable=self.output_var, width=30).pack(side=tk.LEFT, fill=tk.X, expand=True)
-        ttk.Button(out_frame, text="Browse...", command=self._browse_output).pack(side=tk.LEFT, padx=4)
-
-        ttk.Label(opts, text="Delay between downloads (seconds):").pack(anchor=tk.W, pady=(8, 0))
-        self.delay_var = tk.DoubleVar(value=DEFAULT_DELAY)
-        delay_scale = ttk.Scale(opts, from_=0.5, to=10.0, variable=self.delay_var, orient=tk.HORIZONTAL)
-        delay_scale.pack(fill=tk.X, pady=2)
-        self.delay_label = ttk.Label(opts, text=f"{DEFAULT_DELAY:.1f} s")
-        self.delay_label.pack(anchor=tk.W)
-        delay_scale.bind("<Motion>", self._update_delay_label)
-
-        # Action buttons
-        action_frame = ttk.Frame(right_frame)
-        action_frame.pack(fill=tk.X, pady=10)
-
-        self.download_btn = ttk.Button(
-            action_frame,
-            text="⬇ Start Selected Downloads",
-            command=self._start_download,
-            style="Accent.TButton"
-        )
-        self.download_btn.pack(fill=tk.X, ipady=8)
-
-        ttk.Button(
-            action_frame,
-            text="Open Output Folder",
-            command=self._open_output_folder
-        ).pack(fill=tk.X, pady=(6, 0))
-
-        ttk.Button(
-            action_frame,
-            text="Open Local Data Search (for downloaded CSVs)",
-            command=self._open_data_viewer
-        ).pack(fill=tk.X, pady=(6, 0))
-
-        ttk.Button(
-            action_frame,
-            text="Exit",
-            command=self.root.destroy
-        ).pack(fill=tk.X, pady=(12, 0))
-
-        # Status
-        self.status_var = tk.StringVar(value="Ready. Select sources with direct downloads and click Start.")
-        status_label = ttk.Label(right_frame, textvariable=self.status_var, wraplength=280)
-        status_label.pack(fill=tk.X, pady=6)
-
-        # Progress
-        self.progress = ttk.Progressbar(right_frame, mode="determinate", maximum=100)
-        self.progress.pack(fill=tk.X, pady=4)
-
-        # Log
-        log_frame = ttk.LabelFrame(self.root, text="Activity Log", padding=6)
-        log_frame.pack(fill=tk.BOTH, expand=False, padx=10, pady=8)
+        # Bottom log panel
+        log_frame = ModernFrameWithBorder(root, text="Activity Log")
+        log_frame.pack(fill=tk.X, padx=10, pady=(4, 8))
 
         self.log_text = scrolledtext.ScrolledText(
-            log_frame,
-            height=14,
-            wrap=tk.WORD,
-            state=tk.DISABLED,
-            font=("Consolas", 9)
+            log_frame, height=8, wrap=tk.WORD, state=tk.DISABLED, font=FONT_MONO,
+            background=COLORS["bg"], foreground=COLORS["fg"]
         )
         self.log_text.pack(fill=tk.BOTH, expand=True)
 
-    def _update_delay_label(self, event=None):
-        val = self.delay_var.get()
-        self.delay_label.config(text=f"{val:.1f} s")
+    # -----------------------------------------------------------------------
+    # Scrape tab
+    # -----------------------------------------------------------------------
+    def _build_scrape_tab(self):
+        frame = self.tab_scrape
 
-    def _load_sources(self):
-        try:
-            self.sources = load_sources()
-            self.direct_sources = get_direct_sources(self.sources)
-            self._refresh_list()
-            self._log("Loaded sources. Direct bulk downloads available for a small number of jurisdictions.")
-        except Exception as e:
-            messagebox.showerror("Error loading sources", str(e))
-            self._log(f"ERROR loading sources: {e}")
+        # Top controls
+        ctrl = ModernFrame(frame)
+        ctrl.pack(fill=tk.X, padx=10, pady=(8, 4))
 
-    def _refresh_list(self):
-        self.tree.delete(*self.tree.get_children())
+        ModernLabel(ctrl, text="Select States:").pack(side=tk.LEFT, padx=(0, 6))
 
-        to_show = self.direct_sources if self.show_direct_only.get() else self.sources
+        self.scrape_direct_only = tk.BooleanVar(value=True)
+        ttk.Checkbutton(ctrl, text="Direct downloads only", variable=self.scrape_direct_only).pack(side=tk.LEFT, padx=4)
 
-        for s in to_show:
-            has_direct = bool(s.get("direct_downloads"))
-            direct_text = "YES" if has_direct else "search only"
-            notes = (s.get("notes") or "")[:80]
+        ttk.Button(ctrl, text="Select All", command=self._scrape_select_all).pack(side=tk.LEFT, padx=2)
+        ttk.Button(ctrl, text="Clear Selection", command=self._scrape_clear_selection).pack(side=tk.LEFT, padx=2)
 
-            item = self.tree.insert(
-                "",
-                "end",
-                text=s["jurisdiction"],
-                values=(s["abbr"], direct_text, notes),
-                tags=("direct",) if has_direct else ("search",)
-            )
+        # State list (left side)
+        left = ModernFrame(frame)
+        left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(10, 4), pady=6)
 
-            # Pre-select direct ones if filter is on
-            if has_direct and self.show_direct_only.get():
-                self.tree.selection_add(item)
+        ModernLabel(left, text="Available States", style="Header.TLabel").pack(anchor=tk.W)
 
-        # Color coding
-        self.tree.tag_configure("direct", background="#e8f5e9")
-        self.tree.tag_configure("search", background="#fff8e1")
+        # Treeview for states
+        columns = ("abbr", "method", "notes")
+        self.scrape_tree = ttk.Treeview(
+            left, columns=columns, show="tree headings", selectmode="extended"
+        )
+        self.scrape_tree.heading("#0", text="State")
+        self.scrape_tree.heading("abbr", text="Abbr")
+        self.scrape_tree.heading("method", text="Method")
+        self.scrape_tree.heading("notes", text="Notes")
 
-        self._update_selection_from_tree()
+        self.scrape_tree.column("#0", width=260, stretch=True)
+        self.scrape_tree.column("abbr", width=50, anchor=tk.CENTER)
+        self.scrape_tree.column("method", width=80, anchor=tk.CENTER)
+        self.scrape_tree.column("notes", width=300)
 
-    def _on_selection_change(self, event=None):
-        self._update_selection_from_tree()
+        vsb = ttk.Scrollbar(left, orient="vertical", command=self.scrape_tree.yview)
+        hsb = ttk.Scrollbar(left, orient="horizontal", command=self.scrape_tree.xview)
+        self.scrape_tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
 
-    def _update_selection_from_tree(self):
-        selected_items = self.tree.selection()
-        self.selected.clear()
-        for item in selected_items:
-            values = self.tree.item(item, "values")
-            if values:
-                abbr = values[0]
-                self.selected.add(abbr)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        hsb.pack(side=tk.BOTTOM, fill=tk.X)
+        self.scrape_tree.pack(fill=tk.BOTH, expand=True)
+        self.scrape_tree.bind("<<TreeviewSelect>>", self._scrape_on_select)
 
-        count = len(self.selected)
-        self.status_var.set(f"{count} source(s) selected for download.")
+        # Right panel: options + action
+        right = ModernFrame(frame)
+        right.pack(side=tk.RIGHT, fill=tk.Y, padx=(4, 10), pady=6)
 
-    def _select_all_direct(self):
-        self.tree.selection_remove(*self.tree.selection())
-        for item in self.tree.get_children():
-            vals = self.tree.item(item, "values")
-            if vals and vals[1] == "YES":
-                self.tree.selection_add(item)
-        self._update_selection_from_tree()
+        opts = ModernFrameWithBorder(right, text="Options")
+        opts.pack(fill=tk.X, pady=(0, 8))
 
-    def _clear_selection(self):
-        self.tree.selection_remove(*self.tree.selection())
-        self._update_selection_from_tree()
+        # Output folder
+        ModernLabel(opts, text="Output Folder:").pack(anchor=tk.W)
+        out_frame = ttk.Frame(opts)
+        out_frame.pack(fill=tk.X, pady=2)
+        default_out = Path("data/downloads")
+        self.scrape_output_var = tk.StringVar(value=str(default_out))
+        ModernEntry(out_frame, textvariable=self.scrape_output_var).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        ttk.Button(out_frame, text="Browse", command=self._scrape_browse_output).pack(side=tk.LEFT, padx=4)
 
-    def _browse_output(self):
-        folder = filedialog.askdirectory(initialdir=self.output_var.get())
+        # Delay
+        ModernLabel(opts, text="Delay (seconds):").pack(anchor=tk.W, pady=(6, 0))
+        self.scrape_delay_var = tk.DoubleVar(value=2.0)
+        ttk.Scale(opts, from_=0.5, to=10.0, variable=self.scrape_delay_var, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=2)
+
+        # Action buttons
+        act = ttk.Frame(right)
+        act.pack(fill=tk.X, pady=(8, 0))
+
+        self.scrape_btn = ModernButton(
+            act, text="▶ Start Scraping", style="Accent.TButton"
+        )
+        self.scrape_btn.config(command=self._start_scrape)
+        self.scrape_btn.pack(fill=tk.X, ipady=6)
+
+        ttk.Button(act, text="Open Output Folder", command=self._open_output_folder).pack(fill=tk.X, pady=(4, 0))
+
+        # Progress
+        self.scrape_progress = ttk.Progressbar(right, mode="determinate", maximum=100)
+        self.scrape_progress.pack(fill=tk.X, pady=(8, 4))
+
+    def _scrape_select_all(self):
+        for item in self.scrape_tree.get_children():
+            vals = self.scrape_tree.item(item, "values")
+            if not vals:
+                continue
+            # When "direct only" is checked, only select bulk-download states
+            if self.scrape_direct_only.get():
+                tags = self.scrape_tree.item(item, "tags")
+                if "direct" not in tags:
+                    continue
+            self.scrape_tree.selection_add(item)
+        self._update_scrape_selection()
+
+    def _scrape_clear_selection(self):
+        self.scrape_tree.selection_remove(*self.scrape_tree.selection())
+        self._update_scrape_selection()
+
+    def _scrape_on_select(self, event=None):
+        self._update_scrape_selection()
+
+    def _update_scrape_selection(self):
+        items = self.scrape_tree.selection()
+        self.selected_states.clear()
+        for item in items:
+            vals = self.scrape_tree.item(item, "values")
+            if vals:
+                self.selected_states.add(vals[0])
+        count = len(self.selected_states)
+        self.stats_label.config(text=f"{count} states selected")
+
+    def _scrape_browse_output(self):
+        folder = filedialog.askdirectory(initialdir=self.scrape_output_var.get())
         if folder:
-            self.output_var.set(folder)
+            self.scrape_output_var.set(folder)
 
+    def _start_scrape(self):
+        if self.is_running:
+            return
+
+        from scraper.config import REGISTRIES, get_registry_by_abbr
+        from scraper.scrapers.base import ScraperFactory
+
+        states = list(self.selected_states)
+        delay = self.scrape_delay_var.get()
+        direct_only = self.scrape_direct_only.get()
+
+        # Determine targets: honor tree selection when present; otherwise
+        # fall back to all (optionally filtered to direct-download sources).
+        if states:
+            registries = []
+            for s in states:
+                reg = get_registry_by_abbr(s)
+                if reg:
+                    registries.append(reg)
+            if direct_only:
+                registries = [r for r in registries if r.direct_downloads]
+        elif direct_only:
+            registries = [r for r in REGISTRIES if r.abbr != "US" and r.direct_downloads]
+        else:
+            messagebox.showwarning(
+                "No selection",
+                "Select one or more states, or enable 'Direct downloads only' "
+                "to scrape all bulk-download sources."
+            )
+            return
+
+        if not registries:
+            messagebox.showwarning("No targets", "No matching registries to scrape.")
+            return
+
+        output_dir = Path(self.scrape_output_var.get())
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        self._set_running(True)
+        self.scrape_progress["value"] = 0
+        total_targets = len(registries)
+
+        def log(msg):
+            self.log_queue.put(msg)
+
+        def worker():
+            import csv
+            try:
+                total_records = 0
+                for i, reg in enumerate(registries):
+                    abbr = reg.abbr
+                    log(f"[{abbr}] Scraping {reg.name}...")
+
+                    scraper = ScraperFactory.create(abbr, delay=delay)
+                    try:
+                        records = scraper.scrape()
+                    finally:
+                        scraper.close()
+
+                    if records:
+                        csv_path = output_dir / f"{abbr.lower()}_offenders.csv"
+                        fieldnames = []
+                        seen = set()
+                        for record in records:
+                            for key in record.keys():
+                                if key not in seen:
+                                    seen.add(key)
+                                    fieldnames.append(key)
+                        with open(csv_path, "w", newline="", encoding="utf-8") as f:
+                            writer = csv.DictWriter(
+                                f, fieldnames=fieldnames, extrasaction="ignore"
+                            )
+                            writer.writeheader()
+                            for record in records:
+                                writer.writerow(record)
+
+                        log(f"  ✓ Saved {len(records)} records to {csv_path}")
+                        total_records += len(records)
+                    else:
+                        log("  - No records found")
+
+                    pct = int(((i + 1) / max(total_targets, 1)) * 100)
+                    self.root.after(0, lambda p=pct: self.scrape_progress.configure(value=p))
+
+                log(f"\n{'='*50}")
+                log(f"Total records scraped: {total_records}")
+                log(f"Output directory: {output_dir}")
+                log(f"{'='*50}")
+
+            except Exception as e:
+                log(f"ERROR: {e}")
+            finally:
+                self.root.after(0, lambda: self._set_running(False))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    # -----------------------------------------------------------------------
+    # Search tab
+    # -----------------------------------------------------------------------
+    def _build_search_tab(self):
+        frame = self.tab_search
+
+        # Controls
+        ctrl = ModernFrame(frame)
+        ctrl.pack(fill=tk.X, padx=10, pady=(8, 4))
+
+        ModernLabel(ctrl, text="Search:").pack(side=tk.LEFT, padx=(0, 6))
+
+        self.search_name_var = tk.StringVar()
+        ModernEntry(ctrl, textvariable=self.search_name_var, width=25).pack(side=tk.LEFT, padx=2)
+
+        ttk.Label(ctrl, text="State:").pack(side=tk.LEFT, padx=(8, 2))
+        self.search_state_var = tk.StringVar(value="")
+        state_cb = ttk.Combobox(ctrl, textvariable=self.search_state_var, width=10, values=["", "ALL"])
+        state_cb.pack(side=tk.LEFT, padx=2)
+
+        ttk.Label(ctrl, text="Race:").pack(side=tk.LEFT, padx=(8, 2))
+        self.search_race_var = tk.StringVar(value="")
+        race_cb = ttk.Combobox(ctrl, textvariable=self.search_race_var, width=10, values=["", "WHITE", "BLACK", "HISPANIC", "ASIAN", "NATIVE AMERICAN"])
+        race_cb.pack(side=tk.LEFT, padx=2)
+
+        ttk.Button(ctrl, text="Search", command=self._do_search).pack(side=tk.LEFT, padx=(8, 4))
+        ttk.Button(ctrl, text="Show All", command=lambda: self._do_search(name="", state="", race="")).pack(side=tk.LEFT, padx=2)
+
+        # Results tree
+        res_frame = ModernFrame(frame)
+        res_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(6, 4))
+
+        columns = ("name", "race", "state", "county", "age", "address")
+        self.search_tree = ttk.Treeview(res_frame, columns=columns, show="headings")
+        for col in columns:
+            self.search_tree.heading(col, text=col.upper())
+            self.search_tree.column(col, width=120)
+
+        vsb = ttk.Scrollbar(res_frame, orient="vertical", command=self.search_tree.yview)
+        hsb = ttk.Scrollbar(res_frame, orient="horizontal", command=self.search_tree.xview)
+        self.search_tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        hsb.pack(side=tk.BOTTOM, fill=tk.X)
+        self.search_tree.pack(fill=tk.BOTH, expand=True)
+
+        # Status bar
+        self.search_status = ModernLabel(frame, text="Enter a name or click Show All", style="Status.TLabel")
+        self.search_status.pack(fill=tk.X, padx=10, pady=(4, 0))
+
+    def _do_search(self, name=None, state=None, race=None):
+        from scraper.searcher import SexOffenderSearcher
+
+        # Explicit empty-string args from "Show All" must win over widget values
+        name = self.search_name_var.get() if name is None else name
+        state = self.search_state_var.get() if state is None else state
+        race = self.search_race_var.get() if race is None else race
+
+        searcher = SexOffenderSearcher(db_path=self.db_path)
+        try:
+            if name:
+                results = searcher.search_by_name(
+                    name=name,
+                    state=state if state and state != "ALL" else None,
+                    race=race or None,
+                    limit=500,
+                )
+                self._populate_search_tree(results.records)
+                self.search_status.config(
+                    text=f"{len(results.records)} matches for '{name}' ({results.query_time_ms:.1f}ms)"
+                )
+            elif race:
+                results = searcher.search_by_race(
+                    race=race,
+                    state=state if state and state != "ALL" else None,
+                    limit=500,
+                )
+                self._populate_search_tree(results.records)
+                self.search_status.config(text=f"{len(results.records)} records with race '{race}'")
+            elif state and state != "ALL":
+                results = searcher.search_by_state(state=state, limit=500)
+                self._populate_search_tree(results.records)
+                self.search_status.config(text=f"{len(results.records)} offenders in {state}")
+            else:
+                dist = searcher.get_race_distribution()
+                self._show_race_distribution(dist)
+                total = searcher.get_total_count()
+                self.search_status.config(text=f"Race distribution ({total} total records)")
+        finally:
+            searcher.close()
+
+    def _populate_search_tree(self, records):
+        for item in self.search_tree.get_children():
+            self.search_tree.delete(item)
+        for r in records[:500]:
+            name = f"{r.get('first_name', '')} {r.get('last_name', '')}".strip() or "N/A"
+            race = (r.get("race") or "N/A")[:12]
+            state = (r.get("state") or "N/A")[:6]
+            county = (r.get("county") or "N/A")[:15]
+            age = str(r.get("age", ""))
+            addr = (r.get("address") or "")[:30]
+            self.search_tree.insert("", "end", values=(name, race, state, county, age, addr))
+
+    def _show_race_distribution(self, dist):
+        for item in self.search_tree.get_children():
+            self.search_tree.delete(item)
+        total = sum(d.get("count", 0) for d in dist)
+        for d in dist:
+            race = d.get("race", "N/A")
+            count = d.get("count", 0)
+            pct = (count / total * 100) if total else 0
+            bar = "#" * int(pct / 2)
+            self.search_tree.insert("", "end", values=(f"{race:<15}", str(count).rjust(8), "", f" {pct:6.1f}%", "", bar))
+
+    # -----------------------------------------------------------------------
+    # Misclassification tab
+    # -----------------------------------------------------------------------
+    def _build_misclass_tab(self):
+        frame = self.tab_misclass
+
+        ctrl = ModernFrame(frame)
+        ctrl.pack(fill=tk.X, padx=10, pady=(8, 4))
+
+        ModernLabel(ctrl, text="Analyze:").pack(side=tk.LEFT, padx=(0, 6))
+
+        self.misclass_ethnicity_var = tk.StringVar(value="all")
+        ttk.Combobox(ctrl, textvariable=self.misclass_ethnicity_var, width=15,
+                     values=["all", "hispanic", "asian", "african_american"]).pack(side=tk.LEFT, padx=2)
+
+        ModernLabel(ctrl, text="Min Confidence:").pack(side=tk.LEFT, padx=(8, 4))
+        self.misclass_conf_var = tk.DoubleVar(value=0.5)
+        ttk.Spinbox(ctrl, from_=0.1, to=1.0, increment=0.05, textvariable=self.misclass_conf_var, width=6).pack(side=tk.LEFT, padx=2)
+
+        ModernLabel(ctrl, text="Max Records:").pack(side=tk.LEFT, padx=(8, 4))
+        self.misclass_limit_var = tk.IntVar(value=10000)
+        ttk.Spinbox(ctrl, from_=1000, to=100000, increment=1000, textvariable=self.misclass_limit_var, width=8).pack(side=tk.LEFT, padx=2)
+
+        ttk.Button(ctrl, text="Analyze", command=self._run_misclassification).pack(side=tk.LEFT, padx=(10, 4))
+        ttk.Button(ctrl, text="Export to CSV", command=self._export_misclass).pack(side=tk.LEFT, padx=2)
+
+        # Results tree
+        res_frame = ModernFrame(frame)
+        res_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(6, 4))
+
+        columns = ("name", "recorded_race", "likely_ethnicity", "confidence", "matching_names")
+        self.misclass_tree = ttk.Treeview(res_frame, columns=columns, show="headings")
+        for col in columns:
+            self.misclass_tree.heading(col, text=col.upper())
+            self.misclass_tree.column(col, width=140)
+
+        vsb = ttk.Scrollbar(res_frame, orient="vertical", command=self.misclass_tree.yview)
+        self.misclass_tree.configure(yscrollcommand=vsb.set)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        self.misclass_tree.pack(fill=tk.BOTH, expand=True)
+
+        self.misclass_status = ModernLabel(frame, text="Click Analyze to find misclassifications", style="Status.TLabel")
+        self.misclass_status.pack(fill=tk.X, padx=10, pady=(4, 0))
+
+    def _run_misclassification(self):
+        from scraper.searcher import SexOffenderSearcher
+
+        searcher = SexOffenderSearcher(db_path=self.db_path)
+
+        ethnicity = self.misclass_ethnicity_var.get()
+        min_conf = self.misclass_conf_var.get()
+        limit = self.misclass_limit_var.get()
+
+        try:
+            if ethnicity == "hispanic":
+                results = searcher.find_hispanic_misclassifications(min_confidence=min_conf, limit=limit)
+            elif ethnicity == "asian":
+                results = searcher.find_asian_misclassifications(min_confidence=min_conf, limit=limit)
+            elif ethnicity == "african_american":
+                results = searcher.find_african_american_misclassifications(min_confidence=min_conf, limit=limit)
+            else:
+                results = searcher.analyze_ethnicities(min_confidence=min_conf, limit=limit)
+        finally:
+            searcher.close()
+
+        for item in self.misclass_tree.get_children():
+            self.misclass_tree.delete(item)
+
+        for mc in results[:500]:
+            name = f"{mc.record.get('first_name', '') or ''} {mc.record.get('last_name', '') or ''}".strip() or "N/A"
+            race = (mc.expected_race or "N/A")[:12]
+            likely = (mc.likely_ethnicity or "")[:15]
+            conf = f"{mc.confidence:.3f}"
+            names = "; ".join(mc.matching_names[:3])
+            self.misclass_tree.insert("", "end", values=(name, race, likely, conf, names))
+
+        self.misclass_status.config(text=f"Found {len(results)} potential misclassifications")
+        self.log_queue.put(f"Misclassification analysis complete: {len(results)} results.")
+
+    def _export_misclass(self):
+        from scraper.searcher import SexOffenderSearcher
+
+        filepath = filedialog.asksaveasfilename(defaultextension=".csv", title="Export misclassifications")
+        if not filepath:
+            return
+
+        searcher = SexOffenderSearcher(db_path=self.db_path)
+        ethnicity = self.misclass_ethnicity_var.get()
+        eth_filter = None if ethnicity == "all" else ethnicity
+        try:
+            count = searcher.export_misclassifications(
+                filepath,
+                min_confidence=self.misclass_conf_var.get(),
+                ethnicity_filter=eth_filter,
+            )
+        finally:
+            searcher.close()
+        messagebox.showinfo("Exported", f"Exported {count} records to {filepath}")
+
+    # -----------------------------------------------------------------------
+    # Data Viewer tab
+    # -----------------------------------------------------------------------
+    def _build_data_viewer_tab(self):
+        frame = self.tab_viewer
+
+        ctrl = ModernFrame(frame)
+        ctrl.pack(fill=tk.X, padx=10, pady=(8, 4))
+
+        ttk.Button(ctrl, text="Load CSV File...", command=self._load_csv_to_viewer).pack(side=tk.LEFT, padx=2)
+        ttk.Label(ctrl, text="Search:").pack(side=tk.LEFT, padx=(8, 2))
+        self.viewer_search_var = tk.StringVar()
+        ModernEntry(ctrl, textvariable=self.viewer_search_var, width=20).pack(side=tk.LEFT, padx=2)
+        ttk.Button(ctrl, text="Filter", command=lambda: self._apply_viewer_filter()).pack(side=tk.LEFT, padx=2)
+
+        # Treeview
+        tree_frame = ModernFrame(frame)
+        tree_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(6, 4))
+
+        self.viewer_tree = ttk.Treeview(tree_frame, show="headings")
+        vsb = ttk.Scrollbar(tree_frame, orient="vertical", command=self.viewer_tree.yview)
+        hsb = ttk.Scrollbar(tree_frame, orient="horizontal", command=self.viewer_tree.xview)
+        self.viewer_tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        hsb.pack(side=tk.BOTTOM, fill=tk.X)
+        self.viewer_tree.pack(fill=tk.BOTH, expand=True)
+
+        self.viewer_status = ModernLabel(frame, text="Load a CSV file to view data", style="Status.TLabel")
+        self.viewer_status.pack(fill=tk.X, padx=10, pady=(4, 0))
+
+    def _load_csv_to_viewer(self):
+        filepath = filedialog.askopenfilename(filetypes=[("CSV files", "*.csv"), ("All files", "*.*")])
+        if not filepath:
+            return
+
+        try:
+            import csv
+            with open(filepath, "r", encoding="utf-8", errors="replace") as f:
+                reader = csv.DictReader(f)
+                headers = list(reader.fieldnames or [])
+                rows = list(reader)
+
+            self.viewer_tree.delete(*self.viewer_tree.get_children())
+            self.viewer_tree["columns"] = headers
+            for col in headers:
+                self.viewer_tree.heading(col, text=col, anchor=tk.W)
+                self.viewer_tree.column(col, width=120, minwidth=50)
+
+            max_show = 300
+            for i, row in enumerate(rows[:max_show]):
+                values = [str(row.get(h, ""))[:80] for h in headers]
+                self.viewer_tree.insert("", "end", iid=str(i), values=values)
+
+            self._viewer_data = rows
+            self._viewer_headers = headers
+            self._viewer_filtered = list(rows)
+            self.viewer_status.config(text=f"Loaded {len(rows)} records from {Path(filepath).name}")
+        except Exception as e:
+            messagebox.showerror("Error", f"Could not load CSV: {e}")
+
+    def _apply_viewer_filter(self):
+        term = self.viewer_search_var.get().lower().strip()
+        if not hasattr(self, '_viewer_data'):
+            return
+
+        if not term:
+            filtered = list(self._viewer_data)
+        else:
+            filtered = [r for r in self._viewer_data if any(term in str(v).lower() for v in r.values())]
+
+        self.viewer_tree.delete(*self.viewer_tree.get_children())
+        max_show = 300
+        for i, row in enumerate(filtered[:max_show]):
+            values = [str(row.get(h, ""))[:80] for h in self._viewer_headers]
+            self.viewer_tree.insert("", "end", iid=str(i), values=values)
+
+        self.viewer_status.config(text=f"Filtered to {len(filtered)} records")
+
+    # -----------------------------------------------------------------------
+    # Shared helpers
+    # -----------------------------------------------------------------------
     def _log(self, message: str):
-        """Thread-safe log from main or worker thread."""
         self.log_queue.put(message)
 
     def _poll_log_queue(self):
@@ -267,80 +749,37 @@ class SorArchiverGUI:
 
     def _set_running(self, running: bool):
         self.is_running = running
-        state = tk.DISABLED if running else tk.NORMAL
-        self.download_btn.config(state=state)
-        # Disable other controls during run
-        for child in self.tree.winfo_children():
-            pass  # tree is hard to fully disable, we just control the button
+        self.scrape_btn.config(state=tk.DISABLED if running else tk.NORMAL)
 
-    def _start_download(self):
-        if self.is_running:
-            return
+    def _load_sources(self):
+        from scraper.config import REGISTRIES
+        try:
+            self.sources = REGISTRIES
+            self._refresh_scrape_list()
+            self.log_queue.put("Loaded registry configurations for all 50 states + DC.")
+        except Exception as e:
+            messagebox.showerror("Error", str(e))
 
-        # Build list of selected source objects
-        selected_abbrs = self.selected
-        if not selected_abbrs:
-            messagebox.showinfo("No selection", "Please select at least one source with direct downloads.")
-            return
-
-        targets = [s for s in self.sources if s["abbr"] in selected_abbrs and s.get("direct_downloads")]
-        if not targets:
-            messagebox.showwarning("Nothing to download", "Selected sources do not have direct download URLs.")
-            return
-
-        output_dir = Path(self.output_var.get())
-        delay = self.delay_var.get()
-
-        # Confirm
-        if not messagebox.askyesno(
-            "Confirm Download",
-            f"Download data for {len(targets)} jurisdiction(s) to:\n{output_dir}\n\n"
-            "This will fetch publicly available files.\nProceed?"
-        ):
-            return
-
-        self._set_running(True)
-        self.progress["value"] = 0
-        self._append_log(f"Starting download of {len(targets)} source(s) with {delay:.1f}s delay...")
-
-        # Run in background thread
-        def worker():
-            try:
-                def log_cb(msg):
-                    self.log_queue.put(msg)
-
-                def prog_cb(current, total, msg):
-                    pct = int((current / max(total, 1)) * 100)
-                    self.root.after(0, lambda: self.progress.configure(value=pct))
-                    if msg:
-                        self.log_queue.put(msg)
-
-                perform_downloads(
-                    targets,
-                    output_dir,
-                    delay=delay,
-                    log_callback=log_cb,
-                    progress_callback=prog_cb
-                )
-
-                self.log_queue.put("✓ All selected downloads finished.")
-                self.root.after(0, lambda: self.progress.configure(value=100))
-                self.root.after(0, lambda: messagebox.showinfo("Complete", "Downloads finished. Check the log and output folder."))
-
-            except Exception as e:
-                self.log_queue.put(f"ERROR: {e}")
-                self.root.after(0, lambda: messagebox.showerror("Error", str(e)))
-            finally:
-                self.root.after(0, lambda: self._set_running(False))
-
-        threading.Thread(target=worker, daemon=True).start()
+    def _refresh_scrape_list(self):
+        self.scrape_tree.delete(*self.scrape_tree.get_children())
+        # Configure tag styles once (tag_configure takes a tag name, not an item id)
+        self.scrape_tree.tag_configure("direct", background="#1a3a2a")
+        for reg in self.sources:
+            if reg.abbr == "US":
+                continue  # Skip national
+            method = reg.scrape_method.upper()
+            notes = (reg.notes or "")[:60]
+            tags = ("direct",) if reg.direct_downloads else ()
+            self.scrape_tree.insert(
+                "", "end", text=reg.name, values=(reg.abbr, method, notes), tags=tags
+            )
 
     def _open_output_folder(self):
-        path = Path(self.output_var.get())
+        path = Path(self.scrape_output_var.get())
         path.mkdir(parents=True, exist_ok=True)
         try:
             import os
-            if os.name == "nt":  # Windows
+            if os.name == "nt":
                 os.startfile(str(path))
             else:
                 import subprocess
@@ -348,361 +787,14 @@ class SorArchiverGUI:
         except Exception as e:
             messagebox.showerror("Cannot open folder", str(e))
 
-    def _open_data_viewer(self):
-        """Open a separate window for searching loaded CSV data from downloads.
-        This is a general purpose local search tool only.
-        """
-        viewer = tk.Toplevel(self.root)
-        viewer.title("Local Data Search Tool - Public Registry CSVs")
-        viewer.geometry("1100x650")
-        viewer.minsize(800, 500)
 
-        # Controls
-        ctrl = ttk.Frame(viewer)
-        ctrl.pack(fill=tk.X, padx=5, pady=5)
-
-        ttk.Button(ctrl, text="Load CSV File...", command=lambda: self._load_csv(viewer)).pack(side=tk.LEFT, padx=2)
-
-        ttk.Label(ctrl, text="Search / Filter term:").pack(side=tk.LEFT, padx=(10, 2))
-        search_var = tk.StringVar()
-        ttk.Entry(ctrl, textvariable=search_var, width=25).pack(side=tk.LEFT, padx=2)
-        ttk.Button(ctrl, text="Apply Filter", command=lambda: self._apply_filter(viewer, search_var.get())).pack(side=tk.LEFT, padx=2)
-        ttk.Button(ctrl, text="Clear Filter / Show All", command=lambda: self._apply_filter(viewer, "")).pack(side=tk.LEFT, padx=2)
-
-        ttk.Button(ctrl, text="Export Filtered to CSV", command=lambda: self._export_filtered(viewer)).pack(side=tk.LEFT, padx=10)
-
-        ttk.Label(ctrl, text="Custom keywords (comma sep):").pack(side=tk.LEFT, padx=5)
-        custom_keywords_var = tk.StringVar(value="")
-        ttk.Entry(ctrl, textvariable=custom_keywords_var, width=30).pack(side=tk.LEFT, padx=2)
-        ttk.Button(ctrl, text="Apply Custom Filter", command=lambda: self._apply_keywords(viewer)).pack(side=tk.LEFT, padx=5)
-
-        # Quick stats and additional filters for nice browsing
-        viewer.stats_var = tk.StringVar(value="Load a CSV to see record counts and stats.")
-        stats_frame = ttk.Frame(viewer)
-        stats_frame.pack(fill=tk.X, padx=5, pady=2)
-        ttk.Label(stats_frame, textvariable=viewer.stats_var).pack(side=tk.LEFT)
-        ttk.Button(stats_frame, text="Show All", command=lambda: self._apply_filter(viewer, "")).pack(side=tk.RIGHT, padx=2)
-        ttk.Button(stats_frame, text="Show Filtered Only", command=lambda: self._show_filtered_only(viewer)).pack(side=tk.RIGHT, padx=2)
-        ttk.Button(stats_frame, text="Export Filtered to CSV", command=lambda: self._export_filtered_view(viewer)).pack(side=tk.RIGHT, padx=2)
-        ttk.Label(viewer, text="Tip: Click any column header to sort the table.", font=("TkDefaultFont", 8)).pack(fill=tk.X, padx=5)
-
-        # Custom keyword editor for filtering
-        kw_frame = ttk.LabelFrame(viewer, text="Custom Keywords for Filtering", padding=5)
-        kw_frame.pack(fill=tk.X, padx=5, pady=5)
-
-        viewer.kw_text = scrolledtext.ScrolledText(kw_frame, height=3, width=100)
-        viewer.kw_text.pack(fill=tk.X)
-
-        kw_btn_frame = ttk.Frame(kw_frame)
-        kw_btn_frame.pack(fill=tk.X, pady=2)
-        ttk.Button(kw_btn_frame, text="Load from 'custom_keywords.txt'", command=lambda: self._load_keywords(viewer)).pack(side=tk.LEFT)
-        ttk.Button(kw_btn_frame, text="Save to 'custom_keywords.txt'", command=lambda: self._save_keywords(viewer)).pack(side=tk.LEFT, padx=5)
-        ttk.Button(kw_btn_frame, text="Apply Keywords", command=lambda: self._apply_keywords(viewer)).pack(side=tk.LEFT, padx=5)
-
-        # Initialize with file if present (user must provide their list; no list in source code)
-        self._load_keywords_to_text(viewer)
-
-        # Ensure stats_var for stats_frame (initialized early)
-        if not hasattr(viewer, 'stats_var'):
-            viewer.stats_var = tk.StringVar(value="Load a CSV to see stats.")
-
-        # Treeview for results
-        tree_frame = ttk.Frame(viewer)
-        tree_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-
-        tree = ttk.Treeview(tree_frame, show="headings", selectmode="browse")
-        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
-        vsb = ttk.Scrollbar(tree_frame, orient="vertical", command=tree.yview)
-        vsb.pack(side=tk.RIGHT, fill=tk.Y)
-        tree.configure(yscrollcommand=vsb.set)
-
-        hsb = ttk.Scrollbar(viewer, orient="horizontal", command=tree.xview)
-        hsb.pack(side=tk.BOTTOM, fill=tk.X)
-        tree.configure(xscrollcommand=hsb.set)
-
-        # Status
-        status_var = tk.StringVar(value="Load a CSV from your archives (e.g. from SOR_Archives or archives folder). Then use the search box.")
-        ttk.Label(viewer, textvariable=status_var).pack(fill=tk.X, padx=5, pady=2)
-
-        # Attach data to the viewer window for easy access in callbacks
-        viewer.tree = tree
-        viewer.data_rows = []
-        viewer.headers = []
-        viewer.status_var = status_var
-        viewer.search_var = search_var  # not strictly needed
-        viewer.filter_status_var = tk.StringVar(value="")
-        viewer.custom_keywords_var = custom_keywords_var
-        viewer.sort_col = None
-        viewer.sort_reverse = False
-        viewer.current_data = []
-
-        ttk.Label(viewer, textvariable=viewer.filter_status_var).pack(fill=tk.X, padx=5)
-
-        # Initial message
-        tree.insert("", "end", values=("Load a CSV file to see columns and data here.",))
-
-    def _load_csv(self, viewer):
-        filepath = filedialog.askopenfilename(
-            title="Select downloaded CSV",
-            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
-            initialdir=Path(self.output_var.get()) if hasattr(self, 'output_var') else "."
-        )
-        if not filepath:
-            return
-
-        try:
-            with open(filepath, "r", encoding="utf-8", errors="replace") as f:
-                reader = csv.DictReader(f)
-                headers = reader.fieldnames or []
-                rows = list(reader)
-
-            viewer.headers = headers
-            viewer.data_rows = rows
-
-            # Setup tree columns
-            tree = viewer.tree
-            tree.delete(*tree.get_children())
-            tree["columns"] = headers
-
-            for col in headers:
-                tree.heading(col, text=col, anchor=tk.W, command=lambda c=col: self._sort_tree(viewer, c))
-                # Reasonable width
-                tree.column(col, width=120, minwidth=50, stretch=False)
-
-            viewer.current_data = list(rows)
-            viewer.current_filtered = list(rows)
-            # Insert first 100 rows or all if small (for preview)
-            max_preview = 200
-            for i, row in enumerate(rows[:max_preview]):
-                values = [row.get(h, "")[:100] for h in headers]  # truncate long
-                tree.insert("", "end", iid=str(i), values=values)
-
-            # Load keywords into the editor if file exists (user managed, no list in source)
-            self._load_keywords_to_text(viewer)
-
-            viewer.status_var.set(f"Loaded {len(rows)} records from {Path(filepath).name}. Showing up to {min(len(rows), max_preview)} preview rows. Use search to filter.")
-
-            # Compute matches using keywords from the editor if present
-            kw_content = viewer.kw_text.get("1.0", tk.END).strip() if hasattr(viewer, 'kw_text') else ""
-            keywords = []
-            for line in kw_content.splitlines():
-                for part in line.split(','):
-                    kw = part.strip().lower()
-                    if kw and not kw.startswith('#'):
-                        keywords.append(kw)
-            if keywords:
-                match_count = sum(1 for row in rows if self._matches_keywords(row, keywords))
-                viewer.filter_status_var.set(f"Auto-detected {match_count} matches with current keywords in editor.")
-                viewer.stats_var.set(f"Total records: {len(rows)} | Matches with current keywords: {match_count} | Columns: {len(headers)}")
-            else:
-                viewer.filter_status_var.set("Enter keywords in the editor above, then click 'Apply Keywords'.")
-                viewer.stats_var.set(f"Total records: {len(rows)} | Columns: {len(headers)}")
-
-            messagebox.showinfo("Loaded", f"Loaded {len(rows)} records. Use the search box to filter (searches all text fields).")
-
-        except Exception as e:
-            messagebox.showerror("Load Error", f"Could not load CSV: {str(e)}")
-            viewer.status_var.set(f"Error loading: {e}")
-
-    def _apply_filter(self, viewer, search_term):
-        tree = viewer.tree
-        rows = viewer.data_rows
-        headers = viewer.headers
-
-        if not rows or not headers:
-            return
-
-        tree.delete(*tree.get_children())
-
-        term = search_term.lower().strip() if search_term else ""
-
-        filtered = []
-        if not term:
-            filtered = rows
-        else:
-            for row in rows:
-                # Search across all fields
-                if any(term in str(v).lower() for v in row.values()):
-                    filtered.append(row)
-
-        viewer.current_filtered = filtered
-        # Limit display for performance
-        max_show = 500
-        for i, row in enumerate(filtered[:max_show]):
-            values = [str(row.get(h, ""))[:80] for h in headers]
-            tree.insert("", "end", values=values)
-
-        viewer.status_var.set(f"Filtered to {len(filtered)} matching records (showing up to {min(len(filtered), max_show)}). Search term: '{search_term}'")
-
-    def _export_filtered(self, viewer):
-        tree = viewer.tree
-        headers = viewer.headers
-        if not headers:
-            messagebox.showinfo("Nothing to export", "Load and filter data first.")
-            return
-
-        # Collect currently visible rows from tree (simplified: re-filter or use all if no term)
-        # For simplicity, export the current filtered if we have data
-        filepath = filedialog.asksaveasfilename(
-            defaultextension=".csv",
-            filetypes=[("CSV", "*.csv")],
-            title="Export filtered results"
-        )
-        if not filepath:
-            return
-
-        try:
-            # Export the current filtered view if available, otherwise full data
-            export_data = getattr(viewer, 'current_filtered', None) or viewer.data_rows
-            with open(filepath, "w", newline="", encoding="utf-8") as f:
-                writer = csv.DictWriter(f, fieldnames=headers)
-                writer.writeheader()
-                writer.writerows(export_data)
-
-            messagebox.showinfo("Exported", f"Exported {len(export_data)} records (current view) to {filepath}.")
-        except Exception as e:
-            messagebox.showerror("Export Error", str(e))
-
-    def _matches_keywords(self, row, keywords):
-        """Helper to check if record matches any custom keyword in name fields."""
-        name_text = ' '.join(str(v).lower() for k, v in row.items() if any(x in k.lower() for x in ['name', 'last', 'first', 'offender']))
-        return any(kw in name_text for kw in keywords)
-
-    def _apply_custom_filter(self, viewer, keywords_str):
-        """Apply custom keyword filter to name fields and display matching records."""
-        if not viewer.data_rows or not viewer.headers:
-            return
-        keywords = [k.strip().lower() for k in keywords_str.split(',') if k.strip()]
-        if not keywords:
-            messagebox.showinfo("No keywords", "Please enter keywords in the editor box above.")
-            return
-        filtered = [row for row in viewer.data_rows if self._matches_keywords(row, keywords)]
-        viewer.current_filtered = filtered
-        tree = viewer.tree
-        tree.delete(*tree.get_children())
-        max_show = 500
-        for i, row in enumerate(filtered[:max_show]):
-            values = [str(row.get(h, ''))[:80] for h in viewer.headers]
-            tree.insert("", "end", values=values)
-        viewer.filter_status_var.set(f"Filtered {len(filtered)} records matching keywords.")
-        viewer.status_var.set(f"Showing filtered records for: {keywords_str}")
-        viewer.stats_var.set(f"Showing filtered: {len(filtered)} / {len(viewer.data_rows)}")
-
-    def _show_filtered_only(self, viewer):
-        """Filter to only the custom keyword matches."""
-        if not hasattr(viewer, 'custom_keywords_var'):
-            viewer.custom_keywords_var = tk.StringVar(value="")
-        keywords_str = viewer.custom_keywords_var.get()
-        self._apply_custom_filter(viewer, keywords_str)
-
-    def _export_filtered_view(self, viewer):
-        """Export the currently filtered results to CSV."""
-        if not hasattr(viewer, 'current_filtered') or not viewer.current_filtered:
-            messagebox.showinfo("Nothing to export", "No filtered results currently displayed. Apply a filter first.")
-            return
-        filepath = filedialog.asksaveasfilename(
-            defaultextension=".csv",
-            filetypes=[("CSV", "*.csv")],
-            title="Export filtered results"
-        )
-        if not filepath:
-            return
-        try:
-            headers = viewer.headers
-            with open(filepath, "w", newline="", encoding="utf-8") as f:
-                writer = csv.DictWriter(f, fieldnames=headers)
-                writer.writeheader()
-                writer.writerows(viewer.current_filtered)
-            messagebox.showinfo("Exported", f"Exported {len(viewer.current_filtered)} records to {filepath}.")
-        except Exception as e:
-            messagebox.showerror("Export Error", str(e))
-
-    def _load_keywords(self, viewer):
-        """Load keywords from custom_keywords.txt next to the app or cwd."""
-        try:
-            kw_file = Path("custom_keywords.txt")
-            if kw_file.exists():
-                content = kw_file.read_text(encoding="utf-8")
-                viewer.kw_text.delete("1.0", tk.END)
-                viewer.kw_text.insert("1.0", content)
-                messagebox.showinfo("Loaded", "Keywords loaded from custom_keywords.txt")
-            else:
-                messagebox.showinfo("No file", "custom_keywords.txt not found. You can create one with your keywords.")
-        except Exception as e:
-            messagebox.showerror("Load Error", str(e))
-
-    def _load_keywords_to_text(self, viewer):
-        """Load keywords into the text editor on CSV load (user-managed)."""
-        try:
-            kw_file = Path("custom_keywords.txt")
-            if kw_file.exists():
-                content = kw_file.read_text(encoding="utf-8").strip()
-                viewer.kw_text.delete("1.0", tk.END)
-                viewer.kw_text.insert("1.0", content)
-            else:
-                viewer.kw_text.delete("1.0", tk.END)
-                viewer.kw_text.insert("1.0", "# Enter custom keywords here (one per line or comma-separated)\n# Click 'Apply Keywords' to filter the data.")
-        except Exception:
-            pass
-
-    def _save_keywords(self, viewer):
-        """Save current keywords to custom_keywords.txt."""
-        try:
-            content = viewer.kw_text.get("1.0", tk.END).strip()
-            Path("custom_keywords.txt").write_text(content, encoding="utf-8")
-            messagebox.showinfo("Saved", "Keywords saved to custom_keywords.txt")
-        except Exception as e:
-            messagebox.showerror("Save Error", str(e))
-
-    def _apply_keywords(self, viewer):
-        """Apply the current keywords from the editor to filter the data."""
-        content = viewer.kw_text.get("1.0", tk.END).strip()
-        keywords = []
-        for line in content.splitlines():
-            for part in line.split(','):
-                kw = part.strip().lower()
-                if kw:
-                    keywords.append(kw)
-        if not keywords:
-            messagebox.showinfo("No keywords", "Please enter some keywords in the editor.")
-            return
-        if hasattr(viewer, 'custom_keywords_var'):
-            viewer.custom_keywords_var.set(','.join(keywords))
-        self._apply_custom_filter(viewer, ','.join(keywords))
-
-    def _sort_tree(self, viewer, col):
-        """Sort the tree by the given column."""
-        if not hasattr(viewer, 'current_data') or not viewer.current_data:
-            return
-        data = viewer.current_data
-        # Toggle reverse if same column
-        reverse = False
-        if viewer.sort_col == col:
-            reverse = not viewer.sort_reverse
-        viewer.sort_col = col
-        viewer.sort_reverse = reverse
-        # Sort
-        data.sort(key=lambda r: str(r.get(col, '')).lower(), reverse=reverse)
-        # Repopulate tree with current filter or all
-        tree = viewer.tree
-        tree.delete(*tree.get_children())
-        search_term = viewer.search_var.get() if hasattr(viewer, 'search_var') else ""
-        term = search_term.lower().strip() if search_term else ""
-        to_show = data
-        if term:
-            to_show = [r for r in data if any(term in str(v).lower() for v in r.values())]
-        viewer.current_filtered = to_show
-        max_show = 500
-        for i, row in enumerate(to_show[:max_show]):
-            values = [str(row.get(h, ''))[:80] for h in viewer.headers]
-            tree.insert("", "end", values=values)
-        viewer.status_var.set(f"Sorted by {col} ({'desc' if reverse else 'asc'}). Showing {min(len(to_show), max_show)} / {len(to_show)}")
-
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
 def main():
     root = tk.Tk()
 
-    # Try to use a slightly nicer theme if available
+    # Try to use a nicer theme if available
     try:
         style = ttk.Style(root)
         if "vista" in style.theme_names():
@@ -712,7 +804,7 @@ def main():
     except Exception:
         pass
 
-    app = SorArchiverGUI(root)
+    app = SexOffenderGUI(root)
     root.mainloop()
 
 

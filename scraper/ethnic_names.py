@@ -1,0 +1,233 @@
+"""Ethnic name database for misclassification detection."""
+
+import json
+from pathlib import Path
+from typing import Dict, List, Tuple, Optional
+
+
+class EthnicNameDatabase:
+    """Loads and queries ethnic surname databases."""
+
+    def __init__(self):
+        self.hispanic_surnames = set()
+        self.asian_surnames = {}  # nested dict by sub-ethnicity
+        self.african_american_surnames = set()
+        self.native_american_surnames = set()
+        self.european_surnames = {}  # nested dict by country
+        self.jewish_surnames = set()
+        self.portuguese_surnames = set()
+        self.arabic_surnames = set()
+        self.african_surnames = {}  # nested dict by region
+
+        self._load_ethnic_names()
+
+    def _load_ethnic_names(self):
+        """Load ethnic names from the JSON file."""
+        json_path = Path(__file__).parent / "ethnic_names.json"
+
+        if not json_path.exists():
+            # Fallback: use embedded defaults
+            self._use_defaults()
+            return
+
+        with open(json_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        # Hispanic surnames (also includes some common ones that overlap)
+        self.hispanic_surnames = set(data.get("hispanic_surnames", []))
+
+        # Asian surnames by sub-group
+        asian_data = data.get("asian_surnames", {})
+        for group, names in asian_data.items():
+            if isinstance(names, list):
+                self.asian_surnames[group] = set(n.strip() for n in names)
+
+        # African-American surnames
+        self.african_american_surnames = set(data.get("african_american_surnames", []))
+
+        # Native American surnames
+        self.native_american_surnames = set(data.get("native_american_surnames", []))
+
+        # European surnames by country
+        european_data = data.get("european_surnames", {})
+        for country, names in european_data.items():
+            if isinstance(names, list):
+                self.european_surnames[country] = set(n.strip() for n in names)
+
+        # Jewish surnames
+        self.jewish_surnames = set(data.get("jewish_surnames", []))
+
+        # Portuguese surnames
+        self.portuguese_surnames = set(data.get("portuguese_surnames", []))
+
+        # Arabic surnames
+        self.arabic_surnames = set(data.get("arabic_surnames", []))
+
+        # African surnames by region
+        african_data = data.get("african_surnames", {})
+        for region, names in african_data.items():
+            if isinstance(names, list):
+                self.african_surnames[region] = set(n.strip() for n in names)
+
+    def _use_defaults(self):
+        """Use default embedded name lists."""
+        self.hispanic_surnames = {
+            "Garcia", "Rodriguez", "Martinez", "Hernandez", "Lopez", "Gonzalez",
+            "Perez", "Sanchez", "Ramirez", "Torres", "Flores", "Rivera", "Gomez",
+            "Diaz", "Cruz", "Morales", "Ortiz", "Ramos", "Gutierrez", "Alvarez"
+        }
+
+    def _build_lookup_sets(self) -> None:
+        """Cache lowercased sets for O(1) surname membership checks."""
+        if getattr(self, "_lookups_ready", False):
+            return
+        self._hispanic_lc = {n.lower() for n in self.hispanic_surnames}
+        self._african_american_lc = {n.lower() for n in self.african_american_surnames}
+        self._native_american_lc = {n.lower() for n in self.native_american_surnames}
+        self._jewish_lc = {n.lower() for n in self.jewish_surnames}
+        self._portuguese_lc = {n.lower() for n in self.portuguese_surnames}
+        self._arabic_lc = {n.lower() for n in self.arabic_surnames}
+        self._asian_lc = {
+            group: {n.lower() for n in names}
+            for group, names in self.asian_surnames.items()
+        }
+        self._european_lc = {
+            country: {n.lower() for n in names}
+            for country, names in self.european_surnames.items()
+        }
+        self._african_lc = {
+            region: {n.lower() for n in names}
+            for region, names in self.african_surnames.items()
+        }
+        self._lookups_ready = True
+
+    def classify_by_name(self, surname: str) -> Tuple[str, float, List[str]]:
+        """Classify a surname by ethnicity. Returns (ethnicity, confidence, matching_names)."""
+        if not surname:
+            return ("Unknown", 0.0, [])
+
+        self._build_lookup_sets()
+        surname_lc = surname.strip().lower()
+        if not surname_lc:
+            return ("Unknown", 0.0, [])
+
+        matches: List[Tuple[str, str]] = []
+
+        if surname_lc in self._hispanic_lc:
+            matches.append(("Hispanic", "hispanic_surnames"))
+
+        for group, names in self._asian_lc.items():
+            if surname_lc in names:
+                matches.append((f"Asian ({group})", f"asian_{group}"))
+
+        if surname_lc in self._african_american_lc:
+            matches.append(("African American", "african_american_surnames"))
+
+        if surname_lc in self._native_american_lc:
+            matches.append(("Native American", "native_american_surnames"))
+
+        for country, names in self._european_lc.items():
+            if surname_lc in names:
+                matches.append((f"European ({country})", f"european_{country}"))
+
+        if surname_lc in self._jewish_lc:
+            matches.append(("Jewish", "jewish_surnames"))
+
+        if surname_lc in self._portuguese_lc:
+            matches.append(("Portuguese", "portuguese_surnames"))
+
+        if surname_lc in self._arabic_lc:
+            matches.append(("Arabic", "arabic_surnames"))
+
+        for region, names in self._african_lc.items():
+            if surname_lc in names:
+                matches.append((f"African ({region})", f"african_{region}"))
+
+        if not matches:
+            return ("Unknown", 0.0, [])
+
+        # Prefer distinctive ethnic matches over broad/overlapping ones.
+        # African American is separate from African (regional).
+        def sort_key(item: Tuple[str, str]) -> float:
+            ethnicity, _source = item
+            if ethnicity.startswith("Asian"):
+                return -1.0
+            if ethnicity == "Hispanic":
+                return -0.95
+            if ethnicity == "African American":
+                return -0.9
+            if ethnicity in ("Jewish", "Portuguese", "Arabic"):
+                return -0.85
+            if ethnicity.startswith("African ("):
+                return -0.8
+            if ethnicity == "Native American":
+                return -0.55  # many generic nature/English overlaps
+            if ethnicity.startswith("European"):
+                return -0.4
+            return -0.3
+
+        matches.sort(key=sort_key)
+        best_match, _ = matches[0]
+        confidence = self._calculate_confidence(surname_lc, matches)
+
+        return (best_match, confidence, [m[0] for m in matches])
+
+    def get_likely_ethnicity(self, surname: str) -> Tuple[str, float]:
+        """Get the most likely ethnicity for a surname."""
+        ethnicity, confidence, _ = self.classify_by_name(surname)
+        return (ethnicity, confidence)
+
+    def is_hispanic_surname(self, surname: str) -> bool:
+        """Check if a surname is commonly Hispanic."""
+        self._build_lookup_sets()
+        return surname.strip().lower() in self._hispanic_lc
+
+    def is_asian_surname(self, surname: str) -> Tuple[bool, str]:
+        """Check if a surname is commonly Asian. Returns (is_asian, sub_group)."""
+        self._build_lookup_sets()
+        surname_lc = surname.strip().lower()
+        for group, names in self._asian_lc.items():
+            if surname_lc in names:
+                return True, group
+        return False, ""
+
+    def is_african_american_surname(self, surname: str) -> bool:
+        """Check if a surname is commonly African-American."""
+        self._build_lookup_sets()
+        return surname.strip().lower() in self._african_american_lc
+
+    def _calculate_confidence(self, surname: str, matches: List[Tuple[str, str]]) -> float:
+        """Calculate confidence score based on match specificity and ambiguity."""
+        if not matches:
+            return 0.0
+
+        # Single clean match → high confidence
+        base = 0.85 if len(matches) == 1 else 0.7
+
+        # Distinct family groups that also matched reduce confidence
+        families = set()
+        for ethnicity, _source in matches:
+            if ethnicity.startswith("Asian"):
+                families.add("asian")
+            elif ethnicity.startswith("European"):
+                families.add("european")
+            elif ethnicity.startswith("African ("):
+                families.add("african")
+            else:
+                families.add(ethnicity.lower())
+
+        if len(families) > 1:
+            base -= 0.1 * (len(families) - 1)
+
+        return max(0.4, min(base, 1.0))
+
+
+# Singleton instance
+_ethnic_db = None
+
+def get_ethnic_database() -> EthnicNameDatabase:
+    """Get the singleton ethnic name database."""
+    global _ethnic_db
+    if _ethnic_db is None:
+        _ethnic_db = EthnicNameDatabase()
+    return _ethnic_db

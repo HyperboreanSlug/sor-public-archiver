@@ -1,0 +1,104 @@
+{
+  "hispanic_surnames": [
+    "Garcia", "Rodriguez", "Martinez", "Hernandez", "Lopez", "Gonzalez", "Perez", "Sanchez",
+    "Ramirez", "Torres", "Flores", "Rivera", "Gomez", "Diaz", "Cruz", "Morales", "Ortiz",
+    "Ramos", "Gutierrez", "Alvarez", "Castillo", "Jimenez", "Ruiz", "Reyes", "Mendoza",
+    "Herrera", "Medina", "Vargas", "Sandoval", "Campos", "Romero", "Delgado", "Cabrera",
+    "Castaneda", "Rojas", "Soto", "Aguilar", "Navarro", "Mendez", "Serrano",
+    "Vazquez", "Molina", "Ortega", "Guerrero", "Escobar", "Figueroa", "Alvarado", "Nunez",
+    "Carrillo", "Rios", "Salazar", "Santiago", "Castro", "Deleon", "Arias", "Valdez",
+    "Maldonado", "Vega", "Ochoa", "Cisneros", "Valencia", "Pineda", "Acosta", "Guzman",
+    "Fuentes", "Munoz", "Marquez"
+  ],
+
+  "asian_surnames": {
+    "chinese": [
+      "Chen", "Wang", "Li", "Zhang", "Liu", "Yang", "Huang", "Wu", "Zhao", "Zhou",
+      "Xu", "Sun", "Ma", "Zhu", "Hu", "Guo", "He", "Lin", "Gao", "Luo",
+      "Zheng", "Xie", "Tang", "Han", "Cao", "Yan", "Yuan", "Jiang", "Shi", "Pan"
+    ],
+    "korean": [
+      "Kim", "Lee", "Park", "Choi", "Jung", "Kang", "Cho", "Yoon", "Han",
+      "Oh", "Seo", "Shin", "Kwon", "Hwang", "Ahn", "Song", "Hong", "Ko", "Moon"
+    ],
+    "vietnamese": [
+      "Nguyen", "Tran", "Le", "Pham", "Hoang", "Huynh", "Ngo", "Vu", "Do", "Bui",
+      "Dang", "Vo", "Duong", "Mai", "Thai", "Phan", "Truong", "Ho"
+    ],
+    "indian": [
+      "Patel", "Shah", "Singh", "Kumar", "Gupta", "Agarwal", "Joshi", "Pandey",
+      "Verma", "Mehta", "Rao", "Reddy", "Nair", "Iyer", "Pillai", "Srivastava"
+    ],
+    "japanese": [
+      "Yamamoto", "Tanaka", "Ito", "Nakamura", "Kobayashi", "Sato", "Watanabe", "Yoshida",
+      "Yamada", "Suzuki", "Takahashi", "Kato", "Shimizu", "Yamazaki", "Mori", "Ikeda"
+    ],
+    "thai": [
+      "Chaiyaphum", "Srisawat", "Wong", "Tan", "Lim", "Ng"
+    ]
+  },
+
+  "african_american_surnames": [
+    "Washington", "Jefferson", "Booker", "Freeman", "Mosley", "Baptiste",
+    "Pierre", "Desir", "Diallo", "Keita", "Traore", "Kamara", "Mensah",
+    "Okeke", "Carver", "Douglass", "Tubman", "Bluford", "Smalls", "Gullah",
+    "Boykins", "Witherspoon", "Pickett", "Hartsfield", "Winfield"
+  ],
+
+  "native_american_surnames": [
+    "Bear", "Bird", "Cedar", "Cloud", "Coyote", "Crow", "Dove", "Eagle", "Fox",
+    "Hawk", "Hunter", "Iron", "Little", "Long", "Moccasin", "Morning", "Mountain",
+    "Pine", "Red", "Rock", "Running", "Sage", "Sharp", "Silver", "Spirit", "Stone",
+    "Tall", "Thunder", "Two", "Wolf"
+  ],
+
+  "european_surnames": {
+    "german": [
+      "Muller", "Schmidt", "Schneider", "Fischer", "Weber", "Meyer", "Wagner", "Becker",
+      "Schulz", "Hoffmann", "Koch", "Richter", "Braun", "Krueger", "Zimmermann", "Bauer"
+    ],
+    "italian": [
+      "Rossi", "Russo", "Ferrari", "Esposito", "Bianchi", "Romano", "Colombo", "Siciliano",
+      "Conti", "Mancini", "Costa", "Giordani", "Rizzo", "Lombardi", "Moretti", "Barbieri"
+    ],
+    "french": [
+      "Martin", "Bernard", "Dubois", "Thomas", "Robert", "Richard", "Petit", "Durand",
+      "Leroy", "Moreau", "Simon", "Laurent", "Lefebvre", "Michel", "David"
+    ],
+    "irish": [
+      "O'Brien", "O'Connor", "O'Sullivan", "Murphy", "Kelly", "Walsh", "Ryan",
+      "Doyle", "McCarthy", "Kennedy", "Gallagher", "Quinn", "Duffy", "Reilly", "Brennan"
+    ],
+    "scottish": [
+      "MacDonald", "Campbell", "Stewart", "Murray", "Wilson", "Cameron", "Craig", "Fraser",
+      "Gordon", "Irvine", "MacLean", "Mackay", "McLeod", "Ross", "Watson"
+    ],
+    "polish": [
+      "Nowak", "Kowalski", "Wisniewski", "Wojcik", "Krawczyk", "Zielinski", "Kozlak", "Szymanski"
+    ]
+  },
+
+  "jewish_surnames": [
+    "Cohen", "Kaplan", "Bernstein", "Goldman", "Schwartz", "Rosenberg", "Katz", "Goldstein",
+    "Rosenbaum", "Friedman", "Weiss", "Levy", "Abramowitz", "Stern", "Shapiro", "Waxman"
+  ],
+
+  "portuguese_surnames": [
+    "Silva", "Santos", "Oliveira", "Souza", "Rodrigues", "Ferreira", "Alves", "Pereira",
+    "Lima", "Pinto", "Martins", "Carvalho", "Ribeiro", "Correia", "Nunes"
+  ],
+
+  "arabic_surnames": [
+    "Ahmad", "Ali", "Hassan", "Mohammed", "Abdullah", "Ibrahim", "Mahmoud", "Omar",
+    "Yusuf", "Khalil", "Rashid", "Said", "Farid", "Nasser", "Hadi", "Karim"
+  ],
+
+  "african_surnames": {
+    "nigerian": [
+      "Adeyemi", "Obi", "Okafor", "Eze", "Chukwu", "Nwosu", "Uche", "Okonkwo", "Ibe"
+    ],
+    "ethiopian": [
+      "Tadesse", "Bekele", "Haile", "Alemayehu", "Wolde", "Girma", "Tesfaye", "Mekonnen"
+    ]
+  }
+}

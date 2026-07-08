@@ -7,11 +7,16 @@ Shared between CLI and GUI.
 import json
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Callable
+from urllib.parse import urlparse, unquote
 
 import requests
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 # Polite, identifiable User-Agent
 USER_AGENT = (
@@ -109,7 +114,7 @@ def download_file(
             "content_type": resp.headers.get("Content-Type", ""),
             "bytes_written": dest_path.stat().st_size if dest_path.exists() else 0,
             "elapsed_seconds": round(elapsed, 2),
-            "downloaded_at": datetime.utcnow().isoformat() + "Z",
+            "downloaded_at": _utc_now_iso(),
         }
 
         time.sleep(delay)
@@ -120,7 +125,7 @@ def download_file(
         return {
             "url": url,
             "error": str(e),
-            "downloaded_at": datetime.utcnow().isoformat() + "Z",
+            "downloaded_at": _utc_now_iso(),
         }
 
 
@@ -166,7 +171,12 @@ def perform_downloads(
 
         for url in urls:
             current += 1
-            safe_name = Path(url).name or f"{abbr.lower()}_data.csv"
+            # Strip query/fragment so open-data URLs don't produce invalid filenames
+            path_part = unquote(urlparse(url).path)
+            safe_name = Path(path_part).name or f"{abbr.lower()}_data.csv"
+            # Sanitize Windows-illegal characters
+            for ch in '<>:"|?*':
+                safe_name = safe_name.replace(ch, "_")
             if not any(safe_name.lower().endswith(ext) for ext in (".csv", ".txt", ".json", ".zip")):
                 safe_name = f"{abbr.lower()}_data.csv"
 
@@ -198,7 +208,7 @@ def perform_downloads(
     # Save overall metadata
     save_metadata(snapshot_dir, {
         "snapshot_date": snapshot_dir.name,
-        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "generated_at": _utc_now_iso(),
         "tool": "Public-SOR-Archiver (GUI/CLI)",
         "downloads": results,
     })

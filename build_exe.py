@@ -31,6 +31,7 @@ def main():
 
     # Build command - use onedir (folder) mode which is more reliable for tkinter apps
     # and avoids some python DLL extraction issues seen in onefile mode.
+    ethnic_json = project_dir / "scraper" / "ethnic_names.json"
     cmd = [
         sys.executable, "-m", "PyInstaller",
         "--noconfirm",
@@ -43,10 +44,23 @@ def main():
         "--hidden-import=tkinter.scrolledtext",
         "--hidden-import=tkinter.filedialog",
         "--hidden-import=tkinter.messagebox",
+        "--hidden-import=bs4",
+        "--hidden-import=scraper",
+        "--hidden-import=scraper.config",
+        "--hidden-import=scraper.database",
+        "--hidden-import=scraper.searcher",
+        "--hidden-import=scraper.ethnic_names",
+        "--hidden-import=scraper.scrapers",
+        "--hidden-import=scraper.scrapers.base",
+        "--hidden-import=scraper.scrapers.direct_download",
+        "--hidden-import=scraper.scrapers.api_scraper",
+        "--hidden-import=scraper.scrapers.html_scraper",
+        "--hidden-import=scraper.scrapers.hybrid_scraper",
         "--hidden-import=csv",
         "--hidden-import=pathlib",
-        "--add-data", f"{project_dir / 'sources.json'};.",   # include sources
+        "--add-data", f"{project_dir / 'sources.json'};.",
         "--add-data", f"{project_dir / 'README.md'};.",
+        "--add-data", f"{ethnic_json};scraper",
         str(project_dir / "gui.py"),
     ]
 

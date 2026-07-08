@@ -4,8 +4,29 @@ __pycache__/
 *$py.class
 *.so
 .Python
+*.egg
+*.egg-info/
+.installed.cfg
+MANIFEST
+pip-wheel-metadata/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+.env
+.env.*
+
+# Packaging / build
 build/
-develop-eggs/
 dist/
 downloads/
 eggs/
@@ -16,37 +37,35 @@ parts/
 sdist/
 var/
 wheels/
-*.egg-info/
-.installed.cfg
-*.egg
+*.spec
 
-# Virtual env
-.venv/
-venv/
-ENV/
-env/
-
-# IDE
+# IDE / editor
 .vscode/
 .idea/
 *.swp
 *.swo
-
-# Build artifacts
-*.spec
-SOR-Public-Archiver.exe
-SOR-Public-Archiver.spec
-
-# Data
-archives/
-SOR_Archives/
-*.csv
-ethnic_keywords.txt
-download_metadata.json
+*~
+.cursor/
 
 # OS
 .DS_Store
 Thumbs.db
+desktop.ini
 
-# Logs
+# Runtime / generated data (may contain registry PII — never commit)
+data/
+archives/
+SOR_Archives/
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs and local notes
 *.log
+custom_keywords.txt
+*.csv
+!scraper/ethnic_names.json
+
+# Local secrets
+secrets.*
+credentials.*

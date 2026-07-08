@@ -40,12 +40,17 @@ def cmd_download(args: argparse.Namespace) -> None:
         targets = [s for s in sources if s.get("direct_downloads")]
         print(f"Downloading direct sources for {len(targets)} jurisdictions...")
     elif args.states:
-        wanted = {x.strip().lower() for x in args.states.split(",")}
-        targets = [
+        wanted = {x.strip().lower() for x in args.states.split(",") if x.strip()}
+        matched = [
             s for s in sources
             if s["abbr"].lower() in wanted or s["jurisdiction"].lower() in wanted
         ]
-        print(f"Downloading for {len(targets)} matching jurisdiction(s)...")
+        no_direct = [s for s in matched if not s.get("direct_downloads")]
+        targets = [s for s in matched if s.get("direct_downloads")]
+        if no_direct:
+            names = ", ".join(s["abbr"] for s in no_direct)
+            print(f"Note: no bulk download URL configured for: {names}")
+        print(f"Downloading for {len(targets)} jurisdiction(s) with direct sources...")
     else:
         print("No targets specified. Use --all-direct or --states.")
         return
