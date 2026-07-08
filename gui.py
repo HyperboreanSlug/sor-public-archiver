@@ -729,13 +729,11 @@ class ArchiverApp(ctk.CTk):
         _section_label(scroll, "NSOPW ethnic name search").pack(anchor="w", padx=8, pady=(4, 2))
         _muted(
             scroll,
-            "Searches all ethnic surname lists with A–Z first-name prefixes (partial match). "
-            "Report links and HTML archives are saved automatically. "
-            "Adjust only the limits and delays below.",
+            "Searches the selected ethnic surname list with A–Z first-name prefixes (partial match). "
+            "Report links and HTML archives are saved automatically.",
         ).pack(anchor="w", padx=8, pady=(0, 12))
 
-        # Fixed defaults (no surnames/group or other search options in UI)
-        self.nsopw_ethnicity = "all"
+        # Fixed defaults (surnames/group and other search options stay out of UI)
         self.nsopw_surnames = 9999
         self.nsopw_first_mode = "initials"
         self.nsopw_db_path = self.db_path
@@ -744,7 +742,39 @@ class ArchiverApp(ctk.CTk):
         self.nsopw_enrich = True
         self.nsopw_skip_existing = True
 
-        # Limits & rate control (only user-facing settings)
+        # Ethnicity selector
+        eth_card = _card(scroll)
+        eth_card.pack(fill="x", padx=4, pady=6)
+        _section_label(eth_card, "Ethnicity").pack(anchor="w", padx=14, pady=(12, 6))
+        eth_row = ctk.CTkFrame(eth_card, fg_color="transparent")
+        eth_row.pack(fill="x", padx=14, pady=(0, 12))
+        ctk.CTkLabel(
+            eth_row, text="Surname list", font=FONT_SM, text_color=C["muted"], width=100, anchor="w"
+        ).pack(side="left")
+        self.nsopw_ethnicity = ctk.StringVar(value="hispanic")
+        ctk.CTkComboBox(
+            eth_row,
+            variable=self.nsopw_ethnicity,
+            width=200,
+            values=[
+                "hispanic",
+                "asian",
+                "african_american",
+                "arabic",
+                "jewish",
+                "portuguese",
+                "native_american",
+                "european",
+                "all",
+            ],
+            fg_color=C["bg"],
+            border_color=C["border"],
+            button_color=C["elevated"],
+            text_color=C["text"],
+            dropdown_fg_color=C["panel"],
+        ).pack(side="left", padx=6)
+
+        # Limits & rate control
         lim = _card(scroll)
         lim.pack(fill="x", padx=4, pady=6)
         _section_label(lim, "Limits & rate control").pack(anchor="w", padx=14, pady=(12, 8))
@@ -873,7 +903,7 @@ class ArchiverApp(ctk.CTk):
             )
             try:
                 stats = builder.build(
-                    ethnicity=self.nsopw_ethnicity,
+                    ethnicity=self.nsopw_ethnicity.get(),
                     surnames_limit=int(self.nsopw_surnames),
                     first_names=None,
                     first_mode=self.nsopw_first_mode,
