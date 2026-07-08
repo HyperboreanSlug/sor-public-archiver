@@ -1,9 +1,11 @@
-"""Base scraper class for all state registries."""
+"""Base scraper class and factory for state registries."""
+
+from __future__ import annotations
 
 import time
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List, Optional
 
 import requests
 
@@ -14,39 +16,47 @@ class BaseScraper(ABC):
     """Abstract base class for sex offender registry scrapers."""
 
     def __init__(self, state_abbr: str, delay: float = DEFAULT_DELAY):
-        self.state_abbr = state_abbr
+        self.state_abbr = state_abbr.upper()
         self.delay = delay
         self.session = requests.Session()
-        self.session.headers.update({
-            "User-Agent": USER_AGENT,
-            "Accept": "text/html,application/json,*/*;q=0.8",
-        })
+        self.session.headers.update(
+            {
+                "User-Agent": USER_AGENT,
+                "Accept": "text/html,application/json,text/csv,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.9",
+            }
+        )
 
     def _request(self, url: str, method: str = "GET", **kwargs) -> requests.Response:
         """Make a request with retries and polite delays."""
+        headers = kwargs.pop("headers", None)
+        merged_headers = dict(self.session.headers)
+        if headers:
+            merged_headers.update(headers)
         kwargs.setdefault("timeout", REQUEST_TIMEOUT)
+        last_exc: Optional[BaseException] = None
         for attempt in range(MAX_RETRIES):
             try:
-                resp = self.session.request(method, url, **kwargs)
+                resp = self.session.request(method, url, headers=merged_headers, **kwargs)
                 resp.raise_for_status()
                 time.sleep(self.delay)
                 return resp
-            except requests.RequestException:
+            except requests.RequestException as e:
+                last_exc = e
                 if attempt == MAX_RETRIES - 1:
                     raise
                 time.sleep(self.delay * (attempt + 1))
+        raise last_exc  # pragma: no cover
 
     def _get(self, url: str, **kwargs) -> requests.Response:
-        """Make a GET request."""
         return self._request(url, method="GET", **kwargs)
 
     def _post(self, url: str, **kwargs) -> requests.Response:
-        """Make a POST request."""
         return self._request(url, method="POST", **kwargs)
 
     @abstractmethod
     def scrape(self) -> List[Dict[str, Any]]:
-        """Scrape offender records from the registry. Returns list of record dicts."""
+        """Scrape offender records. Returns list of record dicts."""
         ...
 
     @abstractmethod
@@ -58,9 +68,9 @@ class BaseScraper(ABC):
         self,
         output_dir: Path,
         filename: Optional[str] = None,
-        fmt: str = "csv"
+        fmt: str = "csv",
     ) -> Path:
-        """Scrape and save to a file. Returns the path (empty Path if nothing scraped)."""
+        """Scrape and save to a file. Returns empty Path if nothing scraped."""
         records = self.scrape()
         if not records:
             return Path()
@@ -71,6 +81,7 @@ class BaseScraper(ABC):
 
         if fmt == "csv":
             import csv
+
             fieldnames: List[str] = []
             seen = set()
             for record in records:
@@ -86,8 +97,7 @@ class BaseScraper(ABC):
 
         return dest
 
-    def close(self):
-        """Close the session."""
+    def close(self) -> None:
         self.session.close()
 
 
@@ -101,29 +111,31 @@ class ScraperFactory:
         from .api_scraper import APIScraper
         from .html_scraper import HTMLScraper
         from .hybrid_scraper import HybridScraper
+        from .arcgis_scraper import ArcGISScraper
 
         registry = get_registry_by_abbr(state_abbr)
         if not registry:
             raise ValueError(f"Unknown state abbreviation: {state_abbr}")
 
-        method = (registry.scrape_method or "").lower().strip()
+        method = (registry.scrape_method or "interactive").lower().strip()
 
-        # Prefer direct bulk files whenever they are configured, regardless of
-        # a mis-set scrape_method (common config mistake for AZ/DC/GA).
-        if method in ("direct", "direct_download", "download") or (
-            registry.direct_downloads and method not in ("hybrid",)
-        ):
-            if registry.direct_downloads:
-                return DirectDownloadScraper(state_abbr, delay=delay)
-
+        if method in ("direct", "direct_download", "download"):
+            return DirectDownloadScraper(state_abbr, delay=delay)
+        if method in ("arcgis", "arcgis_rest", "feature_server"):
+            return ArcGISScraper(state_abbr, delay=delay)
         if method == "api":
             return APIScraper(state_abbr, delay=delay)
-        if method == "html":
-            return HTMLScraper(state_abbr, delay=delay)
         if method == "hybrid":
             return HybridScraper(state_abbr, delay=delay)
+        if method in ("html",):
+            return HTMLScraper(state_abbr, delay=delay)
+        if method in ("interactive", "unsupported", "manual", "search"):
+            # Interactive search sites — HTML scraper prints guidance and returns []
+            return HTMLScraper(state_abbr, delay=delay)
 
-        # Default: direct download if available, otherwise HTML
+        # Fallback heuristics
         if registry.direct_downloads:
             return DirectDownloadScraper(state_abbr, delay=delay)
+        if registry.search_api and "FeatureServer" in (registry.search_api or ""):
+            return ArcGISScraper(state_abbr, delay=delay)
         return HTMLScraper(state_abbr, delay=delay)

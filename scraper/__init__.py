@@ -15,8 +15,9 @@ from .scrapers.direct_download import DirectDownloadScraper
 from .scrapers.api_scraper import APIScraper
 from .scrapers.html_scraper import HTMLScraper
 from .scrapers.hybrid_scraper import HybridScraper
+from .scrapers.arcgis_scraper import ArcGISScraper
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 __all__ = [
     "Database",
@@ -36,5 +37,6 @@ __all__ = [
     "APIScraper",
     "HTMLScraper",
     "HybridScraper",
+    "ArcGISScraper",
     "__version__",
 ]

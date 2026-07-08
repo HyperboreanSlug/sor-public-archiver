@@ -91,15 +91,28 @@ Copy the entire `dist/SOR-Public-Archiver/` folder (not just the `.exe`).
     └── test_smoke.py
 ```
 
-## Direct bulk sources
+## Scrape support (verified)
 
-| Abbr | Notes |
-|------|--------|
-| AZ | Published CSV |
-| DC | Open data portal CSV |
-| GA | GBI published CSV |
+| Abbr | Method | Status |
+|------|--------|--------|
+| **GA** | Direct CSV | **Working** (~25k records) |
+| **DC** | ArcGIS FeatureServer (+ CSV fallback) | **Working** (~1k records) |
+| AZ | Direct CSV (iCrimewatch) | URL published; **HTTP 403** bot block — use browser |
+| FL | Hybrid / download page | CAPTCHA + email form — **manual only** |
+| All others | Interactive search sites | No public bulk API — not automatable |
 
-Most other jurisdictions only expose interactive search pages. HTML scraping is best-effort.
+```bash
+# Show per-state support matrix
+python -m scraper status -v
+
+# Scrape verified bulk sources only
+python -m scraper scrape --direct-only
+
+# Live smoke check
+python scripts/verify_scrapers.py
+```
+
+Most SOR websites are JavaScript search apps (disclaimer → CAPTCHA → query). Landing-page HTML does **not** contain the offender database.
 
 ## Tests
 

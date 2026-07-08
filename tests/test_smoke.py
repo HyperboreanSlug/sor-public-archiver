@@ -107,24 +107,31 @@ class ScraperFactoryTests(unittest.TestCase):
     def test_factory_routes(self):
         self.assertEqual(type(ScraperFactory.create("AZ")).__name__, "DirectDownloadScraper")
         self.assertEqual(type(ScraperFactory.create("GA")).__name__, "DirectDownloadScraper")
-        self.assertEqual(type(ScraperFactory.create("DC")).__name__, "DirectDownloadScraper")
+        self.assertEqual(type(ScraperFactory.create("DC")).__name__, "ArcGISScraper")
         self.assertEqual(type(ScraperFactory.create("FL")).__name__, "HybridScraper")
         self.assertEqual(type(ScraperFactory.create("AL")).__name__, "HTMLScraper")
-        # APIScraper must be instantiable (implements abstract methods)
         s = APIScraper("AK")
         self.assertEqual(s.get_direct_download_urls(), [])
         s.close()
 
-    def test_no_fabricated_apis(self):
-        for reg in REGISTRIES:
-            if reg.search_api:
-                # Only keep search_api when explicitly intended; currently none expected
-                self.fail(f"Unexpected search_api on {reg.abbr}: {reg.search_api}")
+    def test_dc_has_arcgis_endpoint(self):
+        reg = get_registry_by_abbr("DC")
+        self.assertIsNotNone(reg)
+        self.assertEqual(reg.scrape_method, "arcgis")
+        self.assertIn("FeatureServer", reg.search_api or "")
 
     def test_registry_count(self):
         self.assertGreaterEqual(len(REGISTRIES), 51)
         self.assertIsNotNone(get_registry_by_abbr("az"))
         self.assertIsNone(get_registry_by_abbr("XX"))
+
+    def test_interactive_scrape_returns_empty(self):
+        s = ScraperFactory.create("AL", delay=0)
+        try:
+            recs = s.scrape()
+            self.assertEqual(recs, [])
+        finally:
+            s.close()
 
 
 class CoreArchiverTests(unittest.TestCase):

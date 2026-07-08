@@ -29,7 +29,7 @@ from pathlib import Path
 
 def cmd_scrape(args: argparse.Namespace) -> None:
     """Scrape offender data from state registries."""
-    from .config import get_registry_by_abbr, REGISTRIES
+    from .config import get_registry_by_abbr, REGISTRIES, get_bulk_capable_sources
     from .scrapers.base import ScraperFactory
 
     states = [s.strip() for s in args.states.split(",")] if args.states else []
@@ -39,7 +39,10 @@ def cmd_scrape(args: argparse.Namespace) -> None:
     if args.all:
         registries = [r for r in REGISTRIES if r.abbr != "US"]
     elif args.direct_only:
-        registries = [r for r in REGISTRIES if r.direct_downloads]
+        # Prefer known bulk-capable paths (direct + arcgis + hybrid with files)
+        registries = get_bulk_capable_sources()
+        if not registries:
+            registries = [r for r in REGISTRIES if r.direct_downloads]
     elif states:
         registries = []
         for s in states:
@@ -50,6 +53,7 @@ def cmd_scrape(args: argparse.Namespace) -> None:
                 print(f"  Warning: Unknown state '{s}', skipping.")
     else:
         print("No targets specified. Use --all, --direct-only, or --states.")
+        print("Tip: --direct-only scrapes verified bulk sources (GA, DC, …).")
         return
 
     if not registries:
@@ -331,6 +335,28 @@ def cmd_export(args: argparse.Namespace) -> None:
         searcher.close()
 
 
+def cmd_status(args: argparse.Namespace) -> None:
+    """Show scrape support matrix for all registries."""
+    from .config import REGISTRIES
+
+    print(f"\n{'Abbr':<5} {'Method':<14} {'Bulk?':<7} Jurisdiction")
+    print("-" * 72)
+    bulk_n = 0
+    for r in REGISTRIES:
+        if r.abbr == "US":
+            continue
+        has_bulk = r.scrape_method in ("direct", "arcgis", "api") or bool(r.direct_downloads)
+        if has_bulk:
+            bulk_n += 1
+        flag = "YES" if has_bulk else "no"
+        print(f"{r.abbr:<5} {r.scrape_method:<14} {flag:<7} {r.name}")
+        if r.notes and args.verbose:
+            print(f"      {r.notes[:90]}")
+    print("-" * 72)
+    print(f"Bulk-capable (configured): {bulk_n}")
+    print("Most states are interactive search only and cannot be bulk-scraped.\n")
+
+
 def cmd_import(args: argparse.Namespace) -> None:
     """Import CSV files into the database."""
     from .database import Database
@@ -402,9 +428,13 @@ Examples:
     p_scrape = subparsers.add_parser("scrape", help="Scrape offender data from state registries")
     p_scrape.add_argument("--all", action="store_true", help="Scrape all states")
     p_scrape.add_argument("--states", type=str, help="Comma-separated state abbreviations (e.g., FL,TX,CA)")
-    p_scrape.add_argument("--direct-only", action="store_true", help="Only scrape states with direct downloads")
+    p_scrape.add_argument(
+        "--direct-only",
+        action="store_true",
+        help="Only scrape jurisdictions with bulk paths (direct/arcgis/hybrid)",
+    )
     p_scrape.add_argument("--output", default="data/downloads", help="Output directory for scraped data")
-    p_scrape.add_argument("--delay", type=float, default=2.0, help="Delay between requests (seconds)")
+    p_scrape.add_argument("--delay", type=float, default=1.0, help="Delay between requests (seconds)")
 
     # Search command
     p_search = subparsers.add_parser("search", help="Search offender database")
@@ -444,6 +474,10 @@ Examples:
     p_import.add_argument("--state", type=str, help="Default state for imported records")
     _add_database_arg(p_import)
 
+    # Status command
+    p_status = subparsers.add_parser("status", help="Show per-state scrape support matrix")
+    p_status.add_argument("-v", "--verbose", action="store_true", help="Show notes")
+
     args = parser.parse_args()
 
     commands = {
@@ -452,6 +486,7 @@ Examples:
         "misclassify": cmd_misclassify,
         "export": cmd_export,
         "import": cmd_import,
+        "status": cmd_status,
     }
     commands[args.command](args)
 

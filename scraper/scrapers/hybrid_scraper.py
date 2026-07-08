@@ -1,147 +1,137 @@
-"""Hybrid scraper - uses direct downloads when available, falls back to HTML/API."""
+"""Hybrid scraper: direct downloads → download page discovery → static HTML."""
 
-import csv
-from typing import List, Dict, Any
+from __future__ import annotations
+
+from typing import Any, Dict, List
+from urllib.parse import urljoin
 
 import requests
 from bs4 import BeautifulSoup
 
 from .base import BaseScraper
+from .normalize import normalize_records
 
 
 class HybridScraper(BaseScraper):
-    """Combines direct downloads with HTML scraping for maximum coverage."""
-
-    def __init__(self, state_abbr: str, delay: float = 2.0):
-        super().__init__(state_abbr, delay)
+    """Try bulk files, then discover links on download_page, then static HTML tables."""
 
     def scrape(self) -> List[Dict[str, Any]]:
-        """Try direct download first, then fall back to HTML scraping."""
         from ..config import get_registry_by_abbr
+
         registry = get_registry_by_abbr(self.state_abbr)
         if not registry:
             return []
 
-        # Try direct downloads first
-        records = self._try_direct_download(registry.direct_downloads)
-        if records:
-            print(f"  [{self.state_abbr}] Got {len(records)} records from direct download")
-            return records
+        # 1) Configured direct URLs
+        if registry.direct_downloads:
+            from .direct_download import DirectDownloadScraper
 
-        # Fall back to HTML scraping
-        records = self._scrape_html(registry.registry_url)
-        if records:
-            print(f"  [{self.state_abbr}] Got {len(records)} records from HTML scrape")
-            return records
+            records = DirectDownloadScraper(self.state_abbr, delay=self.delay).scrape()
+            if records:
+                print(f"  [{self.state_abbr}] Got {len(records)} records from direct download")
+                return records
 
+        # 2) Discover CSV links on download_page (no CAPTCHA automation)
+        if registry.download_page:
+            discovered = self._discover_file_links(registry.download_page)
+            if discovered:
+                print(f"  [{self.state_abbr}] Found download links: {discovered}")
+                # Only auto-fetch plain .csv/.json without captcha walls
+                for url in discovered:
+                    if self._looks_like_direct_file(url):
+                        try:
+                            from .direct_download import DirectDownloadScraper
+
+                            # Temporarily use discovered URL via a one-off get
+                            scraper = DirectDownloadScraper(self.state_abbr, delay=self.delay)
+                            batch = scraper._download_and_parse(url)
+                            if batch:
+                                print(f"  [{self.state_abbr}] Got {len(batch)} from {url}")
+                                return normalize_records(batch, state=self.state_abbr)
+                        except requests.RequestException as e:
+                            print(f"  [{self.state_abbr}] Could not fetch {url}: {e}")
+            print(
+                f"  [{self.state_abbr}] Download page requires interactive steps "
+                f"(CAPTCHA/email/form). Open: {registry.download_page}"
+            )
+
+        # 3) Static HTML tables on registry URL
+        records = self._scrape_html_tables(registry.registry_url)
+        if records:
+            print(f"  [{self.state_abbr}] Got {len(records)} records from HTML tables")
+            return normalize_records(records, state=self.state_abbr)
+
+        print(f"  [{self.state_abbr}] No automated bulk source available.")
         return []
 
-    def _try_direct_download(self, urls: List[str]) -> List[Dict[str, Any]]:
-        """Try to download and parse direct CSV/JSON files."""
-        for url in urls:
-            try:
-                resp = self._get(url)
-                content_type = resp.headers.get("Content-Type", "").lower()
-                url_lower = url.lower()
-                if "json" in content_type or url_lower.endswith(".json"):
-                    return self._parse_json(resp.json())
-                if "csv" in content_type or url_lower.endswith(".csv") or "text/" in content_type:
-                    return self._parse_csv_text(resp.text)
-                # Fallbacks
-                try:
-                    return self._parse_json(resp.json())
-                except ValueError:
-                    return self._parse_csv_text(resp.text)
+    def _looks_like_direct_file(self, url: str) -> bool:
+        lower = url.lower().split("?")[0]
+        return lower.endswith((".csv", ".json", ".txt", ".zip"))
 
-            except requests.RequestException as e:
-                print(f"  [{self.state_abbr}] Direct download failed for {url}: {e}")
+    def _discover_file_links(self, page_url: str) -> List[str]:
+        try:
+            resp = self._get(page_url)
+        except requests.RequestException as e:
+            print(f"  [{self.state_abbr}] Download page error: {e}")
+            return []
 
-        # Also check the download_page if available
-        from ..config import get_registry_by_abbr
-        registry = get_registry_by_abbr(self.state_abbr)
-        if registry and registry.download_page:
-            try:
-                resp = self._get(registry.download_page)
-                soup = BeautifulSoup(resp.text, "html.parser")
+        soup = BeautifulSoup(resp.text, "html.parser")
+        urls: List[str] = []
+        for a in soup.find_all("a", href=True):
+            href = a["href"]
+            full = urljoin(page_url, href)
+            text = (a.get_text(strip=True) or "").lower()
+            blob = (href + " " + text).lower()
+            if any(
+                token in blob
+                for token in (".csv", ".xlsx", ".xls", ".json", ".zip", "datafile", "data file", "download")
+            ):
+                urls.append(full)
 
-                for a in soup.find_all("a", href=True):
-                    href = a["href"]
-                    if any(ext in href.lower() for ext in (".csv", ".xlsx")):
-                        full_url = self._resolve_url(href, registry.download_page)
-                        resp2 = self._get(full_url)
-                        return self._parse_csv_text(resp2.text)
+        # de-dupe
+        seen = set()
+        out = []
+        for u in urls:
+            if u not in seen:
+                seen.add(u)
+                out.append(u)
+        return out
 
-            except requests.RequestException as e:
-                print(f"  [{self.state_abbr}] Download page error: {e}")
-
-        return []
-
-    def _scrape_html(self, url: str) -> List[Dict[str, Any]]:
-        """Scrape offender data from HTML tables."""
+    def _scrape_html_tables(self, url: str) -> List[Dict[str, Any]]:
         try:
             resp = self._get(url)
-            soup = BeautifulSoup(resp.text, "html.parser")
-
-            records = []
-            for table in soup.find_all("table"):
-                header_cells = table.find_all("th")
-                if header_cells:
-                    headers = [th.get_text(strip=True).lower() for th in header_cells]
-                else:
-                    first_row = table.find("tr")
-                    if not first_row:
-                        continue
-                    headers = [td.get_text(strip=True).lower() for td in first_row.find_all("td")]
-
-                if not headers or not any(headers):
-                    continue
-
-                rows = table.find_all("tr")
-                for row in rows[1:]:
-                    cells = [td.get_text(strip=True) for td in row.find_all("td")]
-                    if not cells:
-                        continue
-                    if len(cells) >= len(headers):
-                        record = dict(zip(headers, cells[:len(headers)]))
-                        records.append(record)
-
-            return records
-
         except requests.RequestException as e:
             print(f"  [{self.state_abbr}] HTML scrape error: {e}")
             return []
 
-    def _parse_json(self, data) -> List[Dict[str, Any]]:
-        """Parse JSON response."""
-        if isinstance(data, list):
-            return data
-        elif isinstance(data, dict):
-            for key in ("results", "data", "records", "items", "offenders"):
-                if key in data and isinstance(data[key], list):
-                    return data[key]
-            return [data]
-        return []
+        soup = BeautifulSoup(resp.text, "html.parser")
+        records: List[Dict[str, Any]] = []
+        for table in soup.find_all("table"):
+            header_cells = table.find_all("th")
+            if header_cells:
+                headers = [th.get_text(strip=True) for th in header_cells]
+            else:
+                first_row = table.find("tr")
+                if not first_row:
+                    continue
+                headers = [td.get_text(strip=True) for td in first_row.find_all("td")]
 
-    def _parse_csv_text(self, text: str) -> List[Dict[str, Any]]:
-        """Parse CSV text."""
-        reader = csv.DictReader(text.splitlines())
-        records = []
-        for row in reader:
-            cleaned = {}
-            for k, v in row.items():
-                if k is not None and v is not None:
-                    cleaned[k.strip()] = str(v).strip()
-            records.append(cleaned)
+            if not headers or not any(headers):
+                continue
+            header_blob = " ".join(h.lower() for h in headers)
+            if not any(t in header_blob for t in ("name", "offender", "address", "race", "county")):
+                continue
+
+            rows = table.find_all("tr")
+            for row in rows[1:]:
+                cells = [td.get_text(strip=True) for td in row.find_all("td")]
+                if len(cells) >= len(headers) and len(cells) >= 2:
+                    records.append(dict(zip(headers, cells[: len(headers)])))
         return records
 
-    def _resolve_url(self, href: str, base_url: str) -> str:
-        """Resolve relative URLs."""
-        from urllib.parse import urljoin
-        return urljoin(base_url, href)
-
     def get_direct_download_urls(self) -> List[str]:
-        """Return direct download URLs."""
         from ..config import get_registry_by_abbr
+
         registry = get_registry_by_abbr(self.state_abbr)
         urls = list(registry.direct_downloads) if registry else []
         if registry and registry.download_page:

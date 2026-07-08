@@ -27,7 +27,7 @@
     "direct_downloads": [
       "https://icrimewatch.net/az_offenders.csv"
     ],
-    "notes": "Direct CSV published for Level 2/3 and certain offenders. Confirm link works and review any conditions on the site."
+    "notes": "Direct CSV published via iCrimewatch (az_offenders.csv). Automated fetches often get HTTP 403 bot protection; download manually from DPS if needed."
   },
   {
     "jurisdiction": "Arkansas",
