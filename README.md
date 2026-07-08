@@ -109,7 +109,7 @@ Copy the entire folder (not just the `.exe`).
 |------|--------|--------|
 | **GA** | Direct CSV | **Working** (~25k records) |
 | **DC** | ArcGIS FeatureServer (+ CSV fallback) | **Working** (~1k records) |
-| AZ | Direct CSV (iCrimewatch) | URL published; **HTTP 403** bot block — use browser |
+| **AZ** | Direct CSV (iCrimewatch) | **Working** via Chrome TLS (`curl_cffi`; ~12k records) |
 | FL | Hybrid / download page | CAPTCHA + email form — **manual only** |
 | All others | Interactive search sites | No public bulk API — not automatable |
 

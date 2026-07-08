@@ -27,7 +27,7 @@
     "direct_downloads": [
       "https://icrimewatch.net/az_offenders.csv"
     ],
-    "notes": "Direct CSV published via iCrimewatch (az_offenders.csv). Automated fetches often get HTTP 403 bot protection; download manually from DPS if needed."
+    "notes": "Direct CSV via iCrimewatch (az_offenders.csv). Fetched with Chrome TLS impersonation (curl_cffi) to avoid 403 bot walls."
   },
   {
     "jurisdiction": "Arkansas",

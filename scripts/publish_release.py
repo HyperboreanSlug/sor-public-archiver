@@ -70,7 +70,7 @@ def api_request(
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--tag", default="v1.3.1")
+    ap.add_argument("--tag", default="v1.3.2")
     ap.add_argument(
         "--zip",
         type=Path,
@@ -120,6 +120,8 @@ Standalone **Windows** GUI package (no Python install required).
 4. If the app fails to start, install [VC++ Redistributable 2015–2022 x64](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist)
 
 ### Highlights
+- **Max names** caps unique offenders processed (not HTTP report count)
+- **AZ iCrimewatch CSV** fetch via `curl_cffi` Chrome TLS (bypasses HTTP 403 bot walls)
 - Live NSOPW Recent inserts with **race** from detail sheets
 - **Search all surnames**, **resume/skip completed searches**, **new HTML only**
 - Automatic **disclaimer click-through** (iCrimeWatch / sheriffalerts)

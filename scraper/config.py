@@ -34,7 +34,7 @@ class RegistryConfig:
 # Only methods that have been live-verified for bulk data:
 #   GA  — direct CSV works
 #   DC  — ArcGIS FeatureServer + CSV fallback
-#   AZ  — published CSV URL exists but currently bot-blocked (403)
+#   AZ  — direct CSV via curl_cffi Chrome TLS (iCrimewatch)
 #   FL  — bulk files behind CAPTCHA/email form (manual)
 # All others: interactive search only (HTML landing pages do not expose records).
 
