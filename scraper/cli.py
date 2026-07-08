@@ -586,12 +586,12 @@ Examples:
         help="Maximum jurisdiction report pages to fetch (default: 80)",
     )
     p_nsopw.add_argument(
-        "--delay", type=float, default=2.0,
-        help="Seconds between NSOPW API calls (default: 2.0)",
+        "--delay", type=float, default=3.0,
+        help="Seconds between NSOPW API searches (default: 3.0; floor 2.0 for Cloudflare)",
     )
     p_nsopw.add_argument(
-        "--report-delay", type=float, default=2.0,
-        help="Seconds between report page fetches (default: 2.0)",
+        "--report-delay", type=float, default=0.75,
+        help="Seconds between state report/HTML fetches (default: 0.75; floor 0.25)",
     )
     p_nsopw.add_argument(
         "--skip-reports", action="store_true",

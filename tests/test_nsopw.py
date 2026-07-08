@@ -75,16 +75,105 @@ class ReportFetcherTests(unittest.TestCase):
         self.assertIn(data.get("ethnicity"), ("Hispanic", "Hispanic"))
         fetcher.close()
 
+    def test_fl_border_panel_cells(self):
+        """Florida FDLE flyer: alternating borderPanelCell label/value."""
+        html = """
+        <html><body>
+        <div class="ui-g-12 ui-md-6 ui-lg-6 borderPanelCell">
+          <span class="Fs16 Fright">Race: </span></div>
+        <div class="ui-g-12 ui-md-6 ui-lg-6 borderPanelCell">
+          <span class="Fleft black">White</span></div>
+        <div class="ui-g-12 ui-md-6 ui-lg-6 borderPanelCell">
+          <span class="Fs16 Fright">Sex: </span></div>
+        <div class="ui-g-12 ui-md-6 ui-lg-6 borderPanelCell">
+          <span class="Fleft black">Male</span></div>
+        <div class="ui-g-12 ui-md-6 ui-lg-6 borderPanelCell">
+          <span class="Fs16 Fright">Hair: </span></div>
+        <div class="ui-g-12 ui-md-6 ui-lg-6 borderPanelCell">
+          <span class="Fleft black">Black</span></div>
+        </body></html>
+        """
+        fetcher = ReportFetcher(delay=0)
+        data = fetcher._from_html(html)
+        self.assertEqual(data.get("race"), "White")
+        self.assertEqual(data.get("gender"), "Male")
+        self.assertEqual(data.get("hair_color"), "Black")
+        fetcher.close()
+
+    def test_icrimewatch_bullet_labels(self):
+        """OffenderWatch tables use bullet-prefixed labels: '• Race:'."""
+        html = """
+        <html><body><table>
+        <tr>
+          <td><strong>&bull; Race:</strong></td><td>White</td>
+          <td><strong>&bull; Eyes:</strong></td><td>Brown</td>
+        </tr>
+        <tr>
+          <td><strong>&bull; Hair:</strong></td><td>Black</td>
+          <td><strong>&bull; Height:</strong></td><td>5'10\"</td>
+        </tr>
+        <tr>
+          <td><strong>&bull; Sex:</strong></td><td>Male</td>
+          <td><strong>&bull; Weight:</strong></td><td>180</td>
+        </tr>
+        </table></body></html>
+        """
+        fetcher = ReportFetcher(delay=0)
+        data = fetcher._from_html(html)
+        self.assertEqual(data.get("race"), "White")
+        self.assertEqual(data.get("eye_color"), "Brown")
+        self.assertEqual(data.get("hair_color"), "Black")
+        self.assertEqual(data.get("gender"), "Male")
+        fetcher.close()
+    def test_resolve_icrimewatch_fwd(self):
+        import base64
+        target = "http://www.icrimewatch.net/offenderdetails.php?OfndrID=1&AgencyID=2"
+        fwd = base64.b64encode(target.encode()).decode()
+        url = f"https://sheriffalerts.com/cap_office_disclaimer.php?office=1&fwd={fwd}"
+        resolved = ReportFetcher._resolve_gateway_url(url)
+        self.assertEqual(resolved, target)
+
+    def test_disclaimer_form_detection_and_post_data(self):
+        html = """
+        <html><body>
+        <h1>Disclaimer</h1>
+        <p>You must agree to the terms & conditions!</p>
+        <form method="post" action="">
+          <input type="hidden" name="fwd" value="abc123" />
+          <input id="agree" type="checkbox" name="agree" value="1" />
+          <label for="agree">I agree to the above terms &amp; conditions.</label>
+          <input id="continue" type="submit" name="continue" value="Continue" />
+        </form>
+        </body></html>
+        """
+        self.assertTrue(
+            ReportFetcher._looks_like_disclaimer(
+                html, "https://sheriffalerts.com/cap_office_disclaimer.php?office=1"
+            )
+        )
+        soup = __import__("bs4", fromlist=["BeautifulSoup"]).BeautifulSoup(html, "html.parser")
+        form = ReportFetcher._find_disclaimer_form(soup)
+        self.assertIsNotNone(form)
+        data = ReportFetcher._build_disclaimer_post_data(
+            form, "https://sheriffalerts.com/cap_office_disclaimer.php?office=1&fwd=abc123"
+        )
+        self.assertEqual(data.get("agree"), "1")
+        self.assertEqual(data.get("continue"), "Continue")
+        self.assertEqual(data.get("fwd"), "abc123")
+
 
 class BuilderSurnameTests(unittest.TestCase):
     def test_hispanic_surnames_selected(self):
-        b = NSOPWEthnicDatabaseBuilder(db_path=":memory:", delay=1.5, report_delay=1.5)
+        b = NSOPWEthnicDatabaseBuilder(db_path=":memory:", delay=1.5, report_delay=0.1)
         try:
             pairs = b.surnames_for_ethnicity("hispanic", limit_per_group=5)
             self.assertTrue(len(pairs) >= 1)
             self.assertTrue(all(label == "Hispanic" for _, label in pairs))
-            # Floor enforced on delays
-            self.assertGreaterEqual(b.search_limiter.min_interval, 2.0)
+            # Floors: search ≥2.0s, report ≥0.25s (no double-sleep on clients)
+            self.assertGreaterEqual(b.search_delay, 2.0)
+            self.assertGreaterEqual(b.report_delay, 0.25)
+            self.assertEqual(b.client.delay, 0.0)
+            self.assertEqual(b.reports.delay, 0.0)
         finally:
             b.close()
 

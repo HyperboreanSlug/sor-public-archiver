@@ -799,7 +799,8 @@ class ArchiverApp(ctk.CTk):
         _muted(
             scroll,
             "Searches the selected ethnic surname list with A–Z first-name prefixes (partial match). "
-            "Report links and HTML archives are saved automatically.",
+            "Race comes from each jurisdiction detail sheet (not NSOPW search itself). "
+            "Recent inserts update live. Report/HTML fetches can run faster than NSOPW searches.",
         ).pack(anchor="w", padx=8, pady=(0, 12))
 
         # Fixed defaults (surnames/group and other search options stay out of UI)
@@ -807,9 +808,8 @@ class ArchiverApp(ctk.CTk):
         self.nsopw_first_mode = "initials"
         self.nsopw_db_path = self.db_path
         self.nsopw_html_dir = "data/report_pages"
-        self.nsopw_save_html = True
-        self.nsopw_enrich = True
         self.nsopw_skip_existing = True
+        self._nsopw_insert_count = 0
 
         # Ethnicity selector
         eth_card = _card(scroll)
@@ -843,34 +843,69 @@ class ArchiverApp(ctk.CTk):
             dropdown_fg_color=C["panel"],
         ).pack(side="left", padx=6)
 
-        # Limits & rate control
+        # Limits & rate control (granular: search vs report/HTML)
         lim = _card(scroll)
         lim.pack(fill="x", padx=4, pady=6)
-        _section_label(lim, "Limits & rate control").pack(anchor="w", padx=14, pady=(12, 8))
+        _section_label(lim, "Limits & rate control").pack(anchor="w", padx=14, pady=(12, 6))
+        _muted(
+            lim,
+            "Search delay = NSOPW API (Cloudflare — keep ≥2s). "
+            "Report delay = state detail sheets + HTML archive (same request; can be much lower).",
+        ).pack(anchor="w", padx=14, pady=(0, 8))
 
         self.nsopw_max_searches = ctk.IntVar(value=40)
         self.nsopw_max_reports = ctk.IntVar(value=80)
         self.nsopw_search_delay = ctk.DoubleVar(value=3.0)
-        self.nsopw_report_delay = ctk.DoubleVar(value=2.0)
+        self.nsopw_report_delay = ctk.DoubleVar(value=0.75)
+        self.nsopw_enrich = ctk.BooleanVar(value=True)
+        self.nsopw_save_html = ctk.BooleanVar(value=True)
 
-        lr = ctk.CTkFrame(lim, fg_color="transparent")
-        lr.pack(fill="x", padx=14, pady=4)
-        for label, var in (
-            ("Max searches", self.nsopw_max_searches),
-            ("Max reports", self.nsopw_max_reports),
-            ("Search delay (s)", self.nsopw_search_delay),
-            ("Report delay (s)", self.nsopw_report_delay),
+        row1 = ctk.CTkFrame(lim, fg_color="transparent")
+        row1.pack(fill="x", padx=14, pady=2)
+        for label, var, width in (
+            ("Max searches", self.nsopw_max_searches, 72),
+            ("Max reports", self.nsopw_max_reports, 72),
         ):
-            ctk.CTkLabel(lr, text=label, font=FONT_SM, text_color=C["muted"]).pack(
-                side="left", padx=(8, 4)
+            ctk.CTkLabel(row1, text=label, font=FONT_SM, text_color=C["muted"]).pack(
+                side="left", padx=(0, 4)
             )
             ctk.CTkEntry(
-                lr, textvariable=var, width=72,
+                row1, textvariable=var, width=width,
                 fg_color=C["bg"], border_color=C["border"], text_color=C["text"],
-            ).pack(side="left")
+            ).pack(side="left", padx=(0, 14))
+
+        row2 = ctk.CTkFrame(lim, fg_color="transparent")
+        row2.pack(fill="x", padx=14, pady=6)
+        for label, var in (
+            ("Search delay (s)", self.nsopw_search_delay),
+            ("Report/HTML delay (s)", self.nsopw_report_delay),
+        ):
+            ctk.CTkLabel(row2, text=label, font=FONT_SM, text_color=C["muted"]).pack(
+                side="left", padx=(0, 4)
+            )
+            ctk.CTkEntry(
+                row2, textvariable=var, width=72,
+                fg_color=C["bg"], border_color=C["border"], text_color=C["text"],
+            ).pack(side="left", padx=(0, 14))
+
+        tog = ctk.CTkFrame(lim, fg_color="transparent")
+        tog.pack(fill="x", padx=14, pady=(2, 4))
+        ctk.CTkCheckBox(
+            tog, text="Fetch detail sheets (race / demos)",
+            variable=self.nsopw_enrich, font=FONT_SM, text_color=C["text"],
+            fg_color=C["accent"], hover_color=C["accent_hover"],
+            checkmark_color=C["bg"], border_color=C["border"],
+        ).pack(side="left", padx=(0, 16))
+        ctk.CTkCheckBox(
+            tog, text="Archive report HTML",
+            variable=self.nsopw_save_html, font=FONT_SM, text_color=C["text"],
+            fg_color=C["accent"], hover_color=C["accent_hover"],
+            checkmark_color=C["bg"], border_color=C["border"],
+        ).pack(side="left")
+
         ctk.CTkLabel(
             lim,
-            text="Min search delay 2s (Cloudflare). Data: data/offenders.db · HTML: data/report_pages/",
+            text="Floors: search ≥2.0s · report ≥0.25s · data/offenders.db · data/report_pages/",
             font=FONT_SM, text_color=C["dim"],
         ).pack(anchor="w", padx=14, pady=(4, 12))
 
@@ -896,6 +931,12 @@ class ArchiverApp(ctk.CTk):
             border_width=1, border_color=C["border"],
             command=self._nsopw_open_data_folder,
         ).pack(side="left", padx=4)
+        ctk.CTkButton(
+            act, text="Clear table", height=42, width=100,
+            fg_color=C["elevated"], hover_color=C["border"], text_color=C["text"],
+            border_width=1, border_color=C["border"],
+            command=self._nsopw_clear_tree,
+        ).pack(side="left", padx=4)
 
         self.nsopw_progress = ctk.CTkProgressBar(
             scroll, mode="indeterminate", progress_color=C["accent"], fg_color=C["elevated"], height=6
@@ -911,16 +952,56 @@ class ArchiverApp(ctk.CTk):
 
         prev = _card(scroll)
         prev.pack(fill="both", expand=True, padx=4, pady=(4, 12))
-        _section_label(prev, "Recent inserts · double-click to open HTML / URL").pack(
+        _section_label(prev, "Recent inserts (live) · race from detail sheet · double-click HTML/URL").pack(
             anchor="w", padx=14, pady=(12, 6)
         )
         wrap, self.nsopw_tree = _tree_frame(prev)
         wrap.pack(fill="both", expand=True, padx=10, pady=(0, 12))
-        self.nsopw_tree.configure(columns=("name", "state", "url", "html"), show="headings")
-        for c, w in zip(("name", "state", "url", "html"), (160, 60, 320, 220)):
+        self.nsopw_tree.configure(
+            columns=("name", "state", "race", "url", "html"), show="headings"
+        )
+        for c, w in zip(
+            ("name", "state", "race", "url", "html"),
+            (150, 50, 110, 280, 180),
+        ):
             self.nsopw_tree.heading(c, text=c.upper())
             self.nsopw_tree.column(c, width=w)
         self.nsopw_tree.bind("<Double-1>", self._nsopw_open_selected)
+
+    def _nsopw_clear_tree(self):
+        self.nsopw_tree.delete(*self.nsopw_tree.get_children())
+        self._nsopw_insert_count = 0
+
+    def _nsopw_append_row(self, record: Dict[str, Any]) -> None:
+        """UI-thread: prepend a live insert into the Recent inserts table."""
+        name = (
+            (record.get("full_name") or "").strip()
+            or f"{record.get('first_name') or ''} {record.get('last_name') or ''}".strip()
+        )
+        race = (record.get("race") or "").strip()
+        eth = (record.get("ethnicity") or "").strip()
+        race_disp = race
+        if eth and eth.lower() != race.lower():
+            race_disp = f"{race} / {eth}" if race else eth
+        if not race_disp:
+            race_disp = "—"
+        vals = (
+            name[:80],
+            (record.get("state") or record.get("source_state") or "")[:8],
+            race_disp[:40],
+            (record.get("source_url") or "")[:90],
+            (record.get("report_html_path") or "")[:70],
+        )
+        self.nsopw_tree.insert("", 0, values=vals)
+        # Cap live table size
+        kids = self.nsopw_tree.get_children()
+        if len(kids) > 200:
+            for iid in kids[200:]:
+                self.nsopw_tree.delete(iid)
+        self._nsopw_insert_count += 1
+        self.nsopw_status.configure(
+            text=f"Running… {self._nsopw_insert_count} inserted (live)"
+        )
 
     def _nsopw_open_data_folder(self):
         path = Path("data")
@@ -947,18 +1028,32 @@ class ArchiverApp(ctk.CTk):
 
         db_path = self.nsopw_db_path
         html_dir = self.nsopw_html_dir
-        search_delay = max(2.0, float(self.nsopw_search_delay.get()))
-        report_delay = max(1.5, float(self.nsopw_report_delay.get()))
+        try:
+            search_delay = max(2.0, float(self.nsopw_search_delay.get()))
+        except (TypeError, ValueError):
+            search_delay = 3.0
+        try:
+            report_delay = max(0.25, float(self.nsopw_report_delay.get()))
+        except (TypeError, ValueError):
+            report_delay = 0.75
+        enrich = bool(self.nsopw_enrich.get())
+        save_html = bool(self.nsopw_save_html.get())
 
         self._nsopw_cancel = False
+        self._nsopw_insert_count = 0
         self._set_running(True)
         self.nsopw_start_btn.configure(state="disabled")
         self.nsopw_cancel_btn.configure(state="normal")
         self.nsopw_progress.start()
         self.nsopw_status.configure(text="Running NSOPW search…")
+        self.nsopw_tree.delete(*self.nsopw_tree.get_children())
 
         def log(msg):
             self.log_queue.put(msg)
+
+        def on_insert(record: Dict[str, Any]) -> None:
+            # Marshal to UI thread
+            self.after(0, lambda r=dict(record): self._nsopw_append_row(r))
 
         def worker():
             from scraper.nsopw_builder import NSOPWEthnicDatabaseBuilder
@@ -980,18 +1075,11 @@ class ArchiverApp(ctk.CTk):
                     max_searches=int(self.nsopw_max_searches.get()),
                     max_report_fetches=int(self.nsopw_max_reports.get()),
                     skip_existing_urls=bool(self.nsopw_skip_existing),
-                    enrich_reports=bool(self.nsopw_enrich),
-                    save_html=bool(self.nsopw_save_html),
+                    enrich_reports=enrich,
+                    save_html=save_html,
                     log=log,
+                    on_insert=on_insert,
                 )
-                try:
-                    rows = builder.db._conn.execute(
-                        "SELECT first_name, last_name, state, source_url, report_html_path "
-                        "FROM offenders ORDER BY id DESC LIMIT 50"
-                    ).fetchall()
-                    preview = [dict(r) for r in rows]
-                except Exception:
-                    preview = []
 
                 def done():
                     self._set_running(False)
@@ -1002,26 +1090,19 @@ class ArchiverApp(ctk.CTk):
                     self.nsopw_status.configure(
                         text=(
                             f"Done · {stats.inserted} inserted · "
+                            f"{stats.reports_with_race} with race · "
                             f"{stats.html_saved} HTML · {stats.searches} searches"
                         )
                     )
                     self.db_path = db_path
-                    self.nsopw_tree.delete(*self.nsopw_tree.get_children())
-                    for r in preview:
-                        name = f"{r.get('first_name') or ''} {r.get('last_name') or ''}".strip()
-                        self.nsopw_tree.insert(
-                            "",
-                            "end",
-                            values=(
-                                name,
-                                r.get("state") or "",
-                                (r.get("source_url") or "")[:80],
-                                (r.get("report_html_path") or "")[:60],
-                            ),
-                        )
                     messagebox.showinfo(
                         "NSOPW complete",
-                        f"Inserted {stats.inserted}\nHTML saved {stats.html_saved}\n{db_path}",
+                        (
+                            f"Inserted {stats.inserted}\n"
+                            f"Reports with race: {stats.reports_with_race}\n"
+                            f"HTML saved: {stats.html_saved}\n"
+                            f"{db_path}"
+                        ),
                     )
 
                 self.after(0, done)
@@ -1047,10 +1128,16 @@ class ArchiverApp(ctk.CTk):
         if not sel:
             return
         vals = self.nsopw_tree.item(sel[0], "values")
-        if len(vals) < 4:
-            return
-        url, html_path = vals[2], vals[3]
-        if html_path:
+        # columns: name, state, race, url, html
+        if len(vals) < 5:
+            # backward-compatible if old 4-col rows somehow present
+            if len(vals) >= 4:
+                url, html_path = vals[2], vals[3]
+            else:
+                return
+        else:
+            url, html_path = vals[3], vals[4]
+        if html_path and html_path != "—":
             p = Path(html_path)
             if p.exists():
                 self._open_path(p)

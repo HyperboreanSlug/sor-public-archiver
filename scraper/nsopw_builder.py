@@ -10,10 +10,8 @@ minimize query count while maximizing coverage.
 from __future__ import annotations
 
 import json
-import re
 import time
 from dataclasses import dataclass, field
-from hashlib import sha1
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
@@ -34,11 +32,23 @@ DEFAULT_FIRST_NAMES = [
 FIRST_INITIALS = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
 # Default rate limits (seconds / caps)
-# Cloudflare in front of nsopw-api rate-limits bursty clients (403/429).
+# Search hits Cloudflare on nsopw-api — keep higher.
+# Report pages are per-jurisdiction and can be faster (HTML save is the same request).
 DEFAULT_SEARCH_DELAY = 3.0
-DEFAULT_REPORT_DELAY = 2.0
-DEFAULT_MIN_SEARCH_INTERVAL = 2.0  # hard floor even if UI sets lower
-DEFAULT_MIN_REPORT_INTERVAL = 1.5
+DEFAULT_REPORT_DELAY = 0.75
+DEFAULT_MIN_SEARCH_INTERVAL = 2.0
+DEFAULT_MIN_REPORT_INTERVAL = 0.25
+
+
+@dataclass
+class StateReportStats:
+    hits: int = 0
+    reports_attempted: int = 0
+    reports_ok: int = 0
+    with_race: int = 0
+    html_saved: int = 0
+    blocks: Dict[str, int] = field(default_factory=dict)
+    errors: int = 0
 
 
 @dataclass
@@ -51,12 +61,14 @@ class BuildStats:
     skipped_existing: int = 0
     reports_fetched: int = 0
     reports_with_demographics: int = 0
+    reports_with_race: int = 0
     html_saved: int = 0
     errors: List[str] = field(default_factory=list)
+    by_state: Dict[str, StateReportStats] = field(default_factory=dict)
 
 
 class RateLimiter:
-    """Simple minimum-interval rate limiter."""
+    """Minimum interval between *starts* of operations (caller waits then works)."""
 
     def __init__(self, min_interval: float):
         self.min_interval = max(0.0, float(min_interval))
@@ -64,6 +76,7 @@ class RateLimiter:
 
     def wait(self) -> None:
         if self.min_interval <= 0:
+            self._last = time.monotonic()
             return
         now = time.monotonic()
         elapsed = now - self._last
@@ -85,16 +98,22 @@ class NSOPWEthnicDatabaseBuilder:
         report_delay: float = DEFAULT_REPORT_DELAY,
         html_dir: str = "data/report_pages",
         cancel_check: Optional[Callable[[], bool]] = None,
+        # Clients sleep themselves only if >0; builder RateLimiters are primary.
+        client_owned_delay: bool = False,
     ):
         self.db = Database(db_path)
         self.ethnic_db = get_ethnic_database()
-        # Enforce floor on delays to protect NSOPW
         search_delay = max(DEFAULT_MIN_SEARCH_INTERVAL, float(delay))
         report_delay = max(DEFAULT_MIN_REPORT_INTERVAL, float(report_delay))
-        self.client = NSOPWClient(delay=search_delay)
-        self.reports = ReportFetcher(delay=report_delay)
-        self.search_limiter = RateLimiter(search_delay)
-        self.report_limiter = RateLimiter(report_delay)
+        self.search_delay = search_delay
+        self.report_delay = report_delay
+        # Avoid double-delay: either builder limiter OR client sleep, not both.
+        client_search_sleep = search_delay if client_owned_delay else 0.0
+        client_report_sleep = report_delay if client_owned_delay else 0.0
+        self.client = NSOPWClient(delay=client_search_sleep)
+        self.reports = ReportFetcher(delay=client_report_sleep)
+        self.search_limiter = RateLimiter(0.0 if client_owned_delay else search_delay)
+        self.report_limiter = RateLimiter(0.0 if client_owned_delay else report_delay)
         self.html_dir = Path(html_dir)
         self.html_dir.mkdir(parents=True, exist_ok=True)
         self.cancel_check = cancel_check or (lambda: False)
@@ -104,6 +123,12 @@ class NSOPWEthnicDatabaseBuilder:
         self.client.close()
         self.reports.close()
         self.db.close()
+
+    def _state_stats(self, state: str) -> StateReportStats:
+        key = (state or "UNK").upper()[:12] or "UNK"
+        if key not in self.stats.by_state:
+            self.stats.by_state[key] = StateReportStats()
+        return self.stats.by_state[key]
 
     def surnames_for_ethnicity(
         self,
@@ -160,6 +185,7 @@ class NSOPWEthnicDatabaseBuilder:
         enrich_reports: bool = True,
         save_html: bool = True,
         log: Optional[Callable[[str], None]] = None,
+        on_insert: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> BuildStats:
         """
         Run the ethnic-name NSOPW search pipeline.
@@ -168,6 +194,9 @@ class NSOPWEthnicDatabaseBuilder:
           - "initials" (default): A–Z single-letter prefixes (partial first-name match)
           - "full": use DEFAULT_FIRST_NAMES or provided first_names list
           - "custom": only the provided first_names list
+
+        on_insert: optional callback with the stored record after each successful insert
+        (used by the GUI for live Recent inserts).
         """
         def _log(msg: str) -> None:
             if log:
@@ -181,7 +210,6 @@ class NSOPWEthnicDatabaseBuilder:
         elif mode == "full":
             firsts = list(DEFAULT_FIRST_NAMES)
         else:
-            # Default: A–Z initials — leverages NSOPW partial first-name matching
             firsts = list(FIRST_INITIALS)
 
         if not firsts:
@@ -196,9 +224,13 @@ class NSOPWEthnicDatabaseBuilder:
         _log(f"  Prefixes: {', '.join(firsts[:12])}{'…' if len(firsts) > 12 else ''}")
         _log(f"Jurisdictions: {len(jurs)}")
         _log(f"Max searches: {max_searches}, max report fetches: {max_report_fetches}")
-        _log(f"Search delay ≥ {self.search_limiter.min_interval}s | "
-             f"Report delay ≥ {self.report_limiter.min_interval}s")
+        _log(
+            f"Rate limits — search: {self.search_delay:.2f}s  |  "
+            f"report/HTML: {self.report_delay:.2f}s  "
+            f"(search is slower: Cloudflare on nsopw-api)"
+        )
         _log(f"Save report HTML: {save_html} → {self.html_dir}")
+        _log(f"Enrich demographics: {enrich_reports}")
         _log("NSOPW Conditions of Use apply: https://www.nsopw.gov/")
         _log("Partial first names (e.g. 'M' + surname) expand to matching given names.")
         _log("")
@@ -233,14 +265,18 @@ class NSOPWEthnicDatabaseBuilder:
                     continue
 
                 self.stats.search_hits += len(hits)
-                # Show how partial expand worked
                 sample_firsts = sorted({(h.first_name or "?") for h in hits})[:8]
-                _log(f"  Hits: {len(hits)}"
-                     + (f"  first-names: {', '.join(sample_firsts)}" if sample_firsts else ""))
+                _log(
+                    f"  Hits: {len(hits)}"
+                    + (f"  first-names: {', '.join(sample_firsts)}" if sample_firsts else "")
+                )
 
                 for hit in hits:
                     if self.cancel_check():
                         break
+                    st = (hit.jurisdiction_id or hit.state or "UNK").upper()
+                    self._state_stats(st).hits += 1
+
                     url = (hit.offender_uri or "").strip()
                     dedupe_key = url or f"{hit.jurisdiction_id}:{hit.full_name}:{hit.date_of_birth}"
                     if dedupe_key in seen_urls:
@@ -270,23 +306,49 @@ class NSOPWEthnicDatabaseBuilder:
                     if enrich_reports and url and report_count < max_report_fetches:
                         report_count += 1
                         self.stats.reports_fetched = report_count
+                        sst = self._state_stats(st)
+                        sst.reports_attempted += 1
                         self.report_limiter.wait()
-                        _log(f"  Report ({report_count}/{max_report_fetches}): {url[:90]}")
+                        _log(f"  Report ({report_count}/{max_report_fetches}) [{st}]: {url[:90]}")
                         demo = self.reports.fetch_demographics(
                             url,
                             save_html=save_html,
                             html_dir=self.html_dir,
-                            jurisdiction=hit.jurisdiction_id or hit.state or "UNK",
+                            jurisdiction=st,
                         )
                         self._merge_demographics(record, demo)
+                        if demo.get("report_fetch_ok"):
+                            sst.reports_ok += 1
+                        if demo.get("race"):
+                            self.stats.reports_with_race += 1
+                            sst.with_race += 1
                         if demo.get("race") or demo.get("ethnicity"):
                             self.stats.reports_with_demographics += 1
                         if demo.get("report_html_path"):
                             record["report_html_path"] = demo["report_html_path"]
                             self.stats.html_saved += 1
+                            sst.html_saved += 1
+                        block = demo.get("report_block_reason") or ""
+                        status = str(demo.get("report_fetch_status") or "")
+                        if block or status.startswith("blocked:") or status.startswith("error:"):
+                            reason = block or status
+                            sst.blocks[reason] = sst.blocks.get(reason, 0) + 1
+                            if status.startswith("error:"):
+                                sst.errors += 1
+                        if not demo.get("report_fetch_ok"):
+                            _log(
+                                f"    ↳ no demographics "
+                                f"(status={demo.get('report_fetch_status')}"
+                                f"{', ' + block if block else ''})"
+                            )
+                        else:
+                            _log(
+                                f"    ↳ race={demo.get('race') or '—'} "
+                                f"eth={demo.get('ethnicity') or '—'} "
+                                f"gender={demo.get('gender') or '—'}"
+                            )
                         record["source_url"] = demo.get("report_final_url") or url
                     elif save_html and url and not enrich_reports:
-                        # Still allow link-only mode without fetch
                         pass
 
                     if url:
@@ -295,6 +357,11 @@ class NSOPWEthnicDatabaseBuilder:
                     try:
                         self.db.insert_offender(record)
                         self.stats.inserted += 1
+                        if on_insert:
+                            try:
+                                on_insert(dict(record))
+                            except Exception:
+                                pass
                     except Exception as e:
                         msg = f"  Insert error: {e}"
                         self.stats.errors.append(msg)
@@ -308,9 +375,30 @@ class NSOPWEthnicDatabaseBuilder:
         _log(f"Inserted:              {self.stats.inserted}")
         _log(f"Skipped existing:      {self.stats.skipped_existing}")
         _log(f"Reports fetched:       {self.stats.reports_fetched}")
+        _log(f"Reports with race:     {self.stats.reports_with_race}")
         _log(f"Reports with race/eth: {self.stats.reports_with_demographics}")
         _log(f"HTML pages saved:      {self.stats.html_saved}")
         _log(f"Errors:                {len(self.stats.errors)}")
+        if self.stats.by_state:
+            _log("")
+            _log("Per-state report coverage (attempted → ok / race / html):")
+            for st in sorted(self.stats.by_state.keys()):
+                s = self.stats.by_state[st]
+                if s.reports_attempted == 0 and s.hits == 0:
+                    continue
+                blocks = ""
+                if s.blocks:
+                    top = sorted(s.blocks.items(), key=lambda x: -x[1])[:2]
+                    blocks = "  blocks=" + ",".join(f"{k}:{v}" for k, v in top)
+                _log(
+                    f"  {st:6} hits={s.hits:4}  reports={s.reports_attempted:3} "
+                    f"ok={s.reports_ok:3}  race={s.with_race:3}  html={s.html_saved:3}"
+                    f"{blocks}"
+                )
+            _log(
+                "Note: iCrimeWatch/OffenderWatch disclaimers are auto-accepted when possible. "
+                "NY reCAPTCHA and some WAF walls still cannot yield full sheets."
+            )
         return self.stats
 
     def _url_exists(self, url: str) -> bool:
@@ -342,9 +430,10 @@ class NSOPWEthnicDatabaseBuilder:
         raw["report_enrichment"] = {
             k: demo.get(k)
             for k in (
-                "report_url", "report_final_url", "report_fetch_status",
-                "report_fetch_ok", "report_html_path", "race", "ethnicity",
-                "gender", "height", "weight", "hair_color", "eye_color",
+                "report_url", "report_final_url", "report_resolved_url",
+                "report_fetch_status", "report_fetch_ok", "report_html_path",
+                "report_block_reason", "race", "ethnicity", "gender",
+                "height", "weight", "hair_color", "eye_color",
             )
             if k in demo
         }
@@ -358,5 +447,10 @@ class NSOPWEthnicDatabaseBuilder:
             flags = []
         if demo.get("report_html_path"):
             flags.append("html_archived")
-        flags.append("report_enriched" if demo.get("report_fetch_ok") else "report_link_saved")
+        if demo.get("report_fetch_ok"):
+            flags.append("report_enriched")
+        else:
+            flags.append("report_link_saved")
+            if demo.get("report_block_reason"):
+                flags.append(f"blocked:{demo['report_block_reason']}")
         record["flags"] = json.dumps(flags)
