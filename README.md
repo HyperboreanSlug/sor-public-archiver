@@ -65,12 +65,21 @@ Dark CustomTkinter UI (scrape, search, misclassify, NSOPW, CSV viewer).
 
 ### Standalone Windows EXE
 
+**Pre-built package:** download **SOR-Public-Archiver-Windows.zip** from the
+[latest GitHub Release](https://github.com/HyperboreanSlug/sor-public-archiver/releases/latest).
+
+Extract the zip, then run `SOR-Public-Archiver\SOR-Public-Archiver.exe`
+(keep the `_internal` folder next to the exe).
+
+Build from source:
+
 ```bash
 pip install pyinstaller
 python build_exe.py
 ```
 
-Copy the entire `dist/SOR-Public-Archiver/` folder (not just the `.exe`).
+Output: `dist/SOR-Public-Archiver/` and `dist/SOR-Public-Archiver-Windows.zip`.
+Copy the entire folder (not just the `.exe`).
 
 ## Project layout
 
