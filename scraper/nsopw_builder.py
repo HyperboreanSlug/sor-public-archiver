@@ -310,8 +310,8 @@ class NSOPWEthnicDatabaseBuilder:
         first_names: Optional[Sequence[str]] = None,
         first_mode: str = "initials",
         jurisdictions: Optional[Sequence[str]] = None,
-        max_searches: int = 50,
-        max_report_fetches: int = 100,
+        max_searches: Optional[int] = 50,
+        max_report_fetches: Optional[int] = 100,
         skip_existing_urls: bool = True,
         skip_completed_searches: bool = True,
         new_files_only: bool = True,
@@ -328,6 +328,9 @@ class NSOPWEthnicDatabaseBuilder:
           - "full": use DEFAULT_FIRST_NAMES or provided first_names list
           - "custom": only the provided first_names list
 
+        max_searches / max_report_fetches:
+          None or <= 0 means unlimited.
+
         skip_completed_searches:
           Resume mode — skip (first, surname) pairs already in nsopw_query_log.
         new_files_only:
@@ -343,6 +346,19 @@ class NSOPWEthnicDatabaseBuilder:
                 log(msg)
             else:
                 print(msg)
+
+        def _cap(value: Optional[int]) -> Optional[int]:
+            """Normalize limit: None / <=0 → unlimited (None)."""
+            if value is None:
+                return None
+            try:
+                n = int(value)
+            except (TypeError, ValueError):
+                return None
+            return None if n <= 0 else n
+
+        search_cap = _cap(max_searches)
+        report_cap = _cap(max_report_fetches)
 
         mode = (first_mode or "initials").lower().strip()
         if first_names is not None:
@@ -374,7 +390,10 @@ class NSOPWEthnicDatabaseBuilder:
         _log(f"First-name mode: {mode} ({len(firsts)} prefixes/names)")
         _log(f"  Prefixes: {', '.join(firsts[:12])}{'…' if len(firsts) > 12 else ''}")
         _log(f"Jurisdictions: {len(jurs)}")
-        _log(f"Max new searches: {max_searches}, max report fetches: {max_report_fetches}")
+        _log(
+            f"Max new searches: {'unlimited' if search_cap is None else search_cap}, "
+            f"max report fetches: {'unlimited' if report_cap is None else report_cap}"
+        )
         _log(
             f"Rate limits — search: {self.search_delay:.2f}s  |  "
             f"report/HTML: {self.report_delay:.2f}s  "
@@ -393,17 +412,23 @@ class NSOPWEthnicDatabaseBuilder:
         search_count = 0
         report_count = 0
 
+        def _search_limit_reached() -> bool:
+            return search_cap is not None and search_count >= search_cap
+
+        def _report_limit_reached() -> bool:
+            return report_cap is not None and report_count >= report_cap
+
         for surname, eth_label in surname_pairs:
             if self.cancel_check():
                 _log("Cancelled by user.")
                 break
-            if search_count >= max_searches:
+            if _search_limit_reached():
                 break
             for first in firsts:
                 if self.cancel_check():
                     _log("Cancelled by user.")
                     break
-                if search_count >= max_searches:
+                if _search_limit_reached():
                     break
 
                 # Resume: skip API queries already completed successfully
@@ -415,9 +440,11 @@ class NSOPWEthnicDatabaseBuilder:
                 search_count += 1
                 self.stats.searches = search_count
                 self.search_limiter.wait()
+                cap_label = "∞" if search_cap is None else str(search_cap)
                 _log(
-                    f"[{search_count}/{max_searches}] NSOPW: '{first}' {surname} ({eth_label})"
+                    f"[{search_count}/{cap_label}] NSOPW: '{first}' {surname} ({eth_label})"
                 )
+
                 try:
                     hits = self.client.search_by_name(first, surname, jurisdictions=jurs)
                 except Exception as e:
@@ -467,7 +494,7 @@ class NSOPWEthnicDatabaseBuilder:
                         self.stats.skipped_existing += 1
                         continue
 
-                    if enrich_reports and url and report_count < max_report_fetches:
+                    if enrich_reports and url and not _report_limit_reached():
                         existing_html = (
                             self._existing_html_path(url, st) if new_files_only else None
                         )
@@ -484,8 +511,9 @@ class NSOPWEthnicDatabaseBuilder:
                             sst = self._state_stats(st)
                             sst.reports_attempted += 1
                             self.report_limiter.wait()
+                            rcap_label = "∞" if report_cap is None else str(report_cap)
                             _log(
-                                f"  Report ({report_count}/{max_report_fetches}) "
+                                f"  Report ({report_count}/{rcap_label}) "
                                 f"[{st}]: {url[:90]}"
                             )
                             demo = self.reports.fetch_demographics(

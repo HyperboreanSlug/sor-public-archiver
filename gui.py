@@ -924,8 +924,9 @@ class ArchiverApp(ctk.CTk):
             "Report delay = state detail sheets + HTML archive (same request; can be much lower).",
         ).pack(anchor="w", padx=14, pady=(0, 8))
 
-        self.nsopw_max_searches = ctk.IntVar(value=40)
-        self.nsopw_max_reports = ctk.IntVar(value=80)
+        # StringVars so blank fields are allowed (blank = unlimited)
+        self.nsopw_max_searches = ctk.StringVar(value="40")
+        self.nsopw_max_reports = ctk.StringVar(value="80")
         self.nsopw_search_delay = ctk.DoubleVar(value=3.0)
         self.nsopw_report_delay = ctk.DoubleVar(value=0.75)
         self.nsopw_enrich = ctk.BooleanVar(value=True)
@@ -946,6 +947,7 @@ class ArchiverApp(ctk.CTk):
             ctk.CTkEntry(
                 row1, textvariable=var, width=width,
                 fg_color=C["bg"], border_color=C["border"], text_color=C["text"],
+                placeholder_text="blank=∞",
             ).pack(side="left", padx=(0, 14))
 
         row2 = ctk.CTkFrame(lim, fg_color="transparent")
@@ -1001,7 +1003,10 @@ class ArchiverApp(ctk.CTk):
 
         ctk.CTkLabel(
             lim,
-            text="Resume logs queries in the DB. Floors: search ≥2.0s · report ≥0.25s · data/offenders.db",
+            text=(
+                "Leave Max new searches / Max reports blank for unlimited. "
+                "Resume logs queries in the DB. Floors: search ≥2.0s · report ≥0.25s."
+            ),
             font=FONT_SM, text_color=C["dim"],
         ).pack(anchor="w", padx=14, pady=(6, 12))
 
@@ -1216,6 +1221,20 @@ class ArchiverApp(ctk.CTk):
         skip_existing = bool(self.nsopw_skip_existing.get())
         new_files_only = bool(self.nsopw_new_files_only.get())
 
+        def _parse_optional_limit(raw: str) -> Optional[int]:
+            """Blank / 0 / non-numeric → None (unlimited)."""
+            text = (raw or "").strip()
+            if not text:
+                return None
+            try:
+                n = int(text)
+            except ValueError:
+                return None
+            return None if n <= 0 else n
+
+        max_searches = _parse_optional_limit(self.nsopw_max_searches.get())
+        max_reports = _parse_optional_limit(self.nsopw_max_reports.get())
+
         self._nsopw_cancel = False
         self._nsopw_insert_count = 0
         self._set_running(True)
@@ -1251,8 +1270,8 @@ class ArchiverApp(ctk.CTk):
                     first_names=None,
                     first_mode=self.nsopw_first_mode,
                     jurisdictions=None,
-                    max_searches=int(self.nsopw_max_searches.get()),
-                    max_report_fetches=int(self.nsopw_max_reports.get()),
+                    max_searches=max_searches,
+                    max_report_fetches=max_reports,
                     skip_existing_urls=skip_existing,
                     skip_completed_searches=resume,
                     new_files_only=new_files_only,

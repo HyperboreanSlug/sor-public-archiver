@@ -599,11 +599,11 @@ Examples:
     )
     p_nsopw.add_argument(
         "--max-searches", type=int, default=40,
-        help="Maximum NSOPW name queries to run (default: 40)",
+        help="Maximum NSOPW name queries to run (default: 40; 0 = unlimited)",
     )
     p_nsopw.add_argument(
         "--max-reports", type=int, default=80,
-        help="Maximum jurisdiction report pages to fetch (default: 80)",
+        help="Maximum jurisdiction report pages to fetch (default: 80; 0 = unlimited)",
     )
     p_nsopw.add_argument(
         "--delay", type=float, default=3.0,
