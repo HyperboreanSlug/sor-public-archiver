@@ -57,8 +57,11 @@ python -m scraper export --output results.csv --state FL
 ### GUI
 
 ```bash
+pip install -r requirements.txt
 python gui.py
 ```
+
+Dark CustomTkinter UI (scrape, search, misclassify, NSOPW, CSV viewer).
 
 ### Standalone Windows EXE
 

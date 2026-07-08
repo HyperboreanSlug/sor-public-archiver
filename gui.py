@@ -1,324 +1,373 @@
 #!/usr/bin/env python3
 """
-Sex Offender Database Scraper - Modern GUI
+Public SOR Archiver — desktop GUI (CustomTkinter).
 
-A sleek tkinter-based GUI for mass-downloading US sex offender registries,
-searching records by name/race/state, and detecting ethnic misclassifications.
-
-Run with: python gui.py
+Dark, high-contrast UI for scrape / search / analysis / NSOPW.
+Run:  python gui.py
 """
 
-import threading
+from __future__ import annotations
+
+import csv
+import os
 import queue
-from pathlib import Path
+import subprocess
+import threading
+import webbrowser
 from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
-import tkinter as tk
-from tkinter import ttk, filedialog, messagebox, scrolledtext
-
+import customtkinter as ctk
+from tkinter import filedialog, messagebox, ttk
 
 # ---------------------------------------------------------------------------
-# Modern styling constants
+# Theme — zinc / slate, warm accent (no blue-on-white)
 # ---------------------------------------------------------------------------
-COLORS = {
-    "bg": "#1e1e2e",           # dark background (catppuccin-mocha)
-    "fg": "#cdd6f4",           # text
-    "panel": "#313244",        # panels / frames
-    "accent": "#89b4fa",       # blue accent
-    "green": "#a6e3a1",        # success green
-    "red": "#f38ba8",          # error red
-    "yellow": "#f9e2af",       # warning yellow
-    "border": "#585b70",       # borders
-    "input_bg": "#45475a",     # input backgrounds
-    "hover": "#585b70",        # hover state
+ctk.set_appearance_mode("dark")
+ctk.set_default_color_theme("dark-blue")  # base; we override colors below
+
+C = {
+    "bg": "#0c0c0e",
+    "surface": "#141418",
+    "panel": "#1a1a20",
+    "elevated": "#22222a",
+    "border": "#2e2e38",
+    "text": "#ececf1",
+    "muted": "#9b9ba8",
+    "dim": "#6b6b78",
+    "accent": "#e8a87c",       # warm sand
+    "accent_hover": "#f0bc98",
+    "accent_dim": "#3d2e24",
+    "success": "#7dcea0",
+    "danger": "#e07a7a",
+    "info": "#8ab4c9",
+    "row_alt": "#121216",
+    "select": "#3d342c",
+    "tree_bg": "#101014",
+    "tree_fg": "#e8e8ef",
+    "tree_head": "#1c1c24",
 }
 
-# Remove thick ttk borders by using plain frames with subtle styling
-BORDER_WIDTH = 1
-
-FONT_TITLE = ("Segoe UI", 13, "bold")
-FONT_BODY = ("Segoe UI", 9)
-FONT_MONO = ("Consolas", 9)
-
-
-# ---------------------------------------------------------------------------
-# Helper widgets
-# ---------------------------------------------------------------------------
-class ModernFrame(tk.Frame):
-    """A styled frame with padding and subtle border."""
-    def __init__(self, parent, bg=None, **kwargs):
-        if bg is None:
-            bg = COLORS["bg"]
-        tk.Frame.__init__(self, parent, background=bg, **kwargs)
+FONT_UI = ("Segoe UI", 13)
+FONT_SM = ("Segoe UI", 12)
+FONT_BOLD = ("Segoe UI", 13, "bold")
+FONT_TITLE = ("Segoe UI", 20, "bold")
+FONT_SECTION = ("Segoe UI", 14, "bold")
+FONT_MONO = ("Consolas", 12)
 
 
-class ModernButton(ttk.Button):
-    def __init__(self, parent, text="", **kwargs):
-        style = kwargs.pop("style", "Modern.TButton")
-        super().__init__(parent, text=text, style=style, **kwargs)
+def _style_treeview(root: ctk.CTk) -> None:
+    """Force dark ttk Treeview (Windows otherwise paints blue-on-white)."""
+    style = ttk.Style(root)
+    try:
+        style.theme_use("clam")
+    except Exception:
+        pass
+
+    style.configure(
+        "Dark.Treeview",
+        background=C["tree_bg"],
+        foreground=C["tree_fg"],
+        fieldbackground=C["tree_bg"],
+        borderwidth=0,
+        relief="flat",
+        rowheight=28,
+        font=FONT_SM,
+    )
+    style.configure(
+        "Dark.Treeview.Heading",
+        background=C["tree_head"],
+        foreground=C["muted"],
+        relief="flat",
+        borderwidth=0,
+        font=FONT_BOLD,
+        padding=6,
+    )
+    style.map(
+        "Dark.Treeview",
+        background=[("selected", C["select"])],
+        foreground=[("selected", C["text"])],
+    )
+    style.map(
+        "Dark.Treeview.Heading",
+        background=[("active", C["elevated"])],
+        foreground=[("active", C["accent"])],
+    )
+    style.configure(
+        "Dark.Vertical.TScrollbar",
+        background=C["elevated"],
+        troughcolor=C["bg"],
+        borderwidth=0,
+        arrowsize=12,
+    )
+    style.configure(
+        "Dark.Horizontal.TScrollbar",
+        background=C["elevated"],
+        troughcolor=C["bg"],
+        borderwidth=0,
+        arrowsize=12,
+    )
 
 
-class ModernLabel(ttk.Label):
-    def __init__(self, parent, text="", bg=None, fg=None, **kwargs):
-        style = kwargs.pop("style", "Modern.TLabel")
-        # Prefer style; optional bg/fg only if explicitly provided
-        opts = {"text": text, "style": style}
-        if bg is not None:
-            opts["background"] = bg
-        if fg is not None:
-            opts["foreground"] = fg
-        super().__init__(parent, **opts, **kwargs)
+def _card(parent, **kwargs) -> ctk.CTkFrame:
+    return ctk.CTkFrame(
+        parent,
+        fg_color=C["panel"],
+        border_color=C["border"],
+        border_width=1,
+        corner_radius=12,
+        **kwargs,
+    )
 
 
-class ModernEntry(ttk.Entry):
-    def __init__(self, parent, **kwargs):
-        # ttk.Entry styling is controlled via styles, not constructor bg/fg kwargs
-        style = kwargs.pop("style", "Modern.TEntry")
-        kwargs.pop("bg", None)
-        kwargs.pop("fg", None)
-        kwargs.pop("insertbackground", None)
-        super().__init__(parent, style=style, **kwargs)
+def _section_label(parent, text: str) -> ctk.CTkLabel:
+    return ctk.CTkLabel(
+        parent,
+        text=text,
+        font=FONT_SECTION,
+        text_color=C["text"],
+        anchor="w",
+    )
 
 
-class ModernFrameWithBorder(tk.Frame):
-    """A Frame styled to look like a LabelFrame but without thick ttk borders."""
-    def __init__(self, parent, text="", padding=8, bg=None, fg=None, **kwargs):
-        if bg is None:
-            bg = COLORS["bg"]
-        if fg is None:
-            fg = COLORS["fg"]
-
-        # Create a container frame with subtle border
-        tk.Frame.__init__(self, parent, background=bg, padx=padding, pady=padding, **kwargs)
-
-        # Add label at top (use positive values only for tkinter compatibility)
-        self._label = tk.Label(self, text=text, font=("Segoe UI", 9, "bold"),
-                               foreground=COLORS["accent"], background=bg)
-        self._label.pack(fill=tk.X, padx=(0, padding), pady=(0, padding))
-
-    def pack(self, **kwargs):
-        kwargs.setdefault("fill", tk.BOTH)
-        return super().pack(**kwargs)
+def _muted(parent, text: str) -> ctk.CTkLabel:
+    return ctk.CTkLabel(
+        parent,
+        text=text,
+        font=FONT_SM,
+        text_color=C["muted"],
+        anchor="w",
+        wraplength=900,
+        justify="left",
+    )
 
 
-class ModernTreeview(ttk.Treeview):
-    """A Treeview with dark theme styling."""
-    def __init__(self, parent, **kwargs):
-        super().__init__(parent, **kwargs)
+def _tree_frame(parent) -> tuple[ctk.CTkFrame, ttk.Treeview]:
+    """Dark treeview inside a card with scrollbars."""
+    wrap = ctk.CTkFrame(parent, fg_color=C["tree_bg"], corner_radius=10, border_width=1, border_color=C["border"])
+    tree = ttk.Treeview(wrap, style="Dark.Treeview", show="headings")
+    vsb = ttk.Scrollbar(wrap, orient="vertical", command=tree.yview, style="Dark.Vertical.TScrollbar")
+    hsb = ttk.Scrollbar(wrap, orient="horizontal", command=tree.xview, style="Dark.Horizontal.TScrollbar")
+    tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+    vsb.pack(side="right", fill="y", padx=(0, 4), pady=4)
+    hsb.pack(side="bottom", fill="x", padx=4, pady=(0, 4))
+    tree.pack(side="left", fill="both", expand=True, padx=4, pady=4)
+    return wrap, tree
 
 
-# ---------------------------------------------------------------------------
-# Main GUI application
-# ---------------------------------------------------------------------------
-class SexOffenderGUI:
-    """Main application window with tabs for scraping, searching, and analysis."""
+# ===========================================================================
+# App
+# ===========================================================================
+class ArchiverApp(ctk.CTk):
+    def __init__(self):
+        super().__init__()
+        self.title("SOR Public Archiver")
+        self.geometry("1280x820")
+        self.minsize(980, 640)
+        self.configure(fg_color=C["bg"])
 
-    def __init__(self, root):
-        self.root = root
-        self._setup_styles()
-        self.root.title("Sex Offender Database Scraper")
-        self.root.geometry("1200x750")
-        self.root.minsize(900, 600)
+        _style_treeview(self)
 
         # State
-        self.sources = []
-        self.selected_states = set()
-        self.log_queue = queue.Queue()
+        self.sources: list = []
+        self.selected_states: set = set()
+        self.log_queue: queue.Queue = queue.Queue()
         self.is_running = False
         self.db_path = "data/offenders.db"
-
-        # Build UI
-        self._build_ui()
-        self._load_sources()
-        self._poll_log_queue()
-
-    def _setup_styles(self):
-        """Configure ttk styles for a modern dark theme."""
-        style = ttk.Style(self.root)
-        try:
-            if "vista" in style.theme_names():
-                style.theme_use("vista")
-            elif "clam" in style.theme_names():
-                style.theme_use("clam")
-        except Exception:
-            pass
-
-        # Frame styles
-        style.configure("Modern.TFrame", background=COLORS["bg"])
-        style.configure("Panel.TFrame", background=COLORS["panel"])
-        style.configure("Header.TLabel", font=("Segoe UI", 14, "bold"), foreground=COLORS["accent"], background=COLORS["bg"])
-        style.configure("Modern.TLabel", font=FONT_BODY, foreground=COLORS["fg"], background=COLORS["bg"])
-        style.configure("Status.TLabel", font=("Segoe UI", 9), foreground=COLORS["green"], background=COLORS["panel"])
-
-        # Button styles
-        style.configure("Modern.TButton", font=("Segoe UI", 9), padding=6)
-        style.map("Modern.TButton",
-                  background=[("active", COLORS["hover"]), ("pressed", COLORS["accent"])])
-
-        style.configure("Accent.TButton", font=("Segoe UI", 10, "bold"), foreground="#fff")
-        style.map("Accent.TButton",
-                  background=[("active", COLORS["accent"]), ("pressed", "#74a8fc")],
-                  foreground=[("active", "#fff"), ("pressed", "#fff")])
-
-        # Treeview styles
-        style.configure("Treeview.Heading", font=("Segoe UI", 9, "bold"), foreground=COLORS["fg"], background=COLORS["panel"])
-        style.configure("Treeview", font=FONT_BODY, fieldbackground=COLORS["bg"], foreground=COLORS["fg"])
-
-        # Entry styles
-        style.configure("Modern.TEntry", fieldbackground=COLORS["input_bg"], foreground=COLORS["fg"], insertcolor=COLORS["accent"])
-
-        # LabelFrame with subtle border
-        style.configure("Modern.TLabelFrame", background=COLORS["bg"], foreground=COLORS["fg"], borderwidth=1)
-
-    # -----------------------------------------------------------------------
-    # UI construction
-    # -----------------------------------------------------------------------
-    def _build_ui(self):
-        """Build the full application layout."""
-        root = self.root
-
-        # Top bar with title and stats
-        top_bar = ModernFrame(root)
-        top_bar.pack(fill=tk.X, padx=10, pady=(8, 4))
-
-        ModernLabel(top_bar, text="🔍 Sex Offender Database Scraper", style="Header.TLabel").pack(side=tk.LEFT)
-        self.stats_label = ModernLabel(top_bar, text="Ready", style="Status.TLabel")
-        self.stats_label.pack(side=tk.RIGHT, padx=10)
-
-        # Tab control
-        self.tabs = ttk.Notebook(root)
-        self.tabs.pack(fill=tk.BOTH, expand=True, padx=10, pady=(4, 6))
-
-        # --- TAB 1: Scrape ---
-        self.tab_scrape = ModernFrame(self.tabs)
-        self.tabs.add(self.tab_scrape, text="📥 Scrape")
-        self._build_scrape_tab()
-
-        # --- TAB 2: Search ---
-        self.tab_search = ModernFrame(self.tabs)
-        self.tabs.add(self.tab_search, text="🔎 Search")
-        self._build_search_tab()
-
-        # --- TAB 3: Misclassification ---
-        self.tab_misclass = ModernFrame(self.tabs)
-        self.tabs.add(self.tab_misclass, text="⚠️ Misclassification")
-        self._build_misclass_tab()
-
-        # --- TAB 4: NSOPW ethnic search ---
-        self.tab_nsopw = ModernFrame(self.tabs)
-        self.tabs.add(self.tab_nsopw, text="🌐 NSOPW")
-        self._build_nsopw_tab()
         self._nsopw_cancel = False
+        self._viewer_data: List[Dict[str, Any]] = []
+        self._viewer_headers: List[str] = []
 
-        # --- TAB 5: Data Viewer ---
-        self.tab_viewer = ModernFrame(self.tabs)
-        self.tabs.add(self.tab_viewer, text="📊 Data Viewer")
-        self._build_data_viewer_tab()
-
-        # Bottom log panel
-        log_frame = ModernFrameWithBorder(root, text="Activity Log")
-        log_frame.pack(fill=tk.X, padx=10, pady=(4, 8))
-
-        self.log_text = scrolledtext.ScrolledText(
-            log_frame, height=8, wrap=tk.WORD, state=tk.DISABLED, font=FONT_MONO,
-            background=COLORS["bg"], foreground=COLORS["fg"]
-        )
-        self.log_text.pack(fill=tk.BOTH, expand=True)
+        self._build()
+        self._load_sources()
+        self._poll_log()
 
     # -----------------------------------------------------------------------
-    # Scrape tab
+    # Shell
     # -----------------------------------------------------------------------
-    def _build_scrape_tab(self):
-        frame = self.tab_scrape
+    def _build(self):
+        # Header
+        header = ctk.CTkFrame(self, fg_color=C["surface"], height=64, corner_radius=0)
+        header.pack(fill="x")
+        header.pack_propagate(False)
 
-        # Top controls
-        ctrl = ModernFrame(frame)
-        ctrl.pack(fill=tk.X, padx=10, pady=(8, 4))
+        ctk.CTkLabel(
+            header,
+            text="SOR Public Archiver",
+            font=FONT_TITLE,
+            text_color=C["text"],
+        ).pack(side="left", padx=24, pady=16)
 
-        ModernLabel(ctrl, text="Select States:").pack(side=tk.LEFT, padx=(0, 6))
-
-        self.scrape_direct_only = tk.BooleanVar(value=True)
-        ttk.Checkbutton(ctrl, text="Direct downloads only", variable=self.scrape_direct_only).pack(side=tk.LEFT, padx=4)
-
-        ttk.Button(ctrl, text="Select All", command=self._scrape_select_all).pack(side=tk.LEFT, padx=2)
-        ttk.Button(ctrl, text="Clear Selection", command=self._scrape_clear_selection).pack(side=tk.LEFT, padx=2)
-
-        # State list (left side)
-        left = ModernFrame(frame)
-        left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(10, 4), pady=6)
-
-        ModernLabel(left, text="Available States", style="Header.TLabel").pack(anchor=tk.W)
-
-        # Treeview for states
-        columns = ("abbr", "method", "notes")
-        self.scrape_tree = ttk.Treeview(
-            left, columns=columns, show="tree headings", selectmode="extended"
+        self.stats_label = ctk.CTkLabel(
+            header,
+            text="Ready",
+            font=FONT_SM,
+            text_color=C["accent"],
         )
-        self.scrape_tree.heading("#0", text="State")
-        self.scrape_tree.heading("abbr", text="Abbr")
+        self.stats_label.pack(side="right", padx=24)
+
+        # Body: tabs + log
+        body = ctk.CTkFrame(self, fg_color=C["bg"])
+        body.pack(fill="both", expand=True, padx=16, pady=(12, 8))
+
+        self.tabs = ctk.CTkTabview(
+            body,
+            fg_color=C["surface"],
+            segmented_button_fg_color=C["elevated"],
+            segmented_button_selected_color=C["accent_dim"],
+            segmented_button_selected_hover_color=C["select"],
+            segmented_button_unselected_color=C["elevated"],
+            segmented_button_unselected_hover_color=C["panel"],
+            text_color=C["text"],
+            text_color_disabled=C["dim"],
+            corner_radius=12,
+            border_width=1,
+            border_color=C["border"],
+        )
+        self.tabs.pack(fill="both", expand=True)
+
+        for name in ("Scrape", "Search", "Misclassify", "NSOPW", "Viewer"):
+            self.tabs.add(name)
+
+        self._build_scrape(self.tabs.tab("Scrape"))
+        self._build_search(self.tabs.tab("Search"))
+        self._build_misclass(self.tabs.tab("Misclassify"))
+        self._build_nsopw(self.tabs.tab("NSOPW"))
+        self._build_viewer(self.tabs.tab("Viewer"))
+
+        # Log
+        log_card = _card(self)
+        log_card.pack(fill="x", padx=16, pady=(0, 16))
+        ctk.CTkLabel(
+            log_card, text="Activity", font=FONT_BOLD, text_color=C["muted"], anchor="w"
+        ).pack(fill="x", padx=14, pady=(10, 4))
+        self.log_text = ctk.CTkTextbox(
+            log_card,
+            height=120,
+            font=FONT_MONO,
+            fg_color=C["bg"],
+            text_color=C["muted"],
+            border_color=C["border"],
+            border_width=1,
+            corner_radius=8,
+            activate_scrollbars=True,
+        )
+        self.log_text.pack(fill="x", padx=12, pady=(0, 12))
+        self.log_text.configure(state="disabled")
+
+    # -----------------------------------------------------------------------
+    # Scrape
+    # -----------------------------------------------------------------------
+    def _build_scrape(self, tab):
+        tab.configure(fg_color=C["surface"])
+        top = ctk.CTkFrame(tab, fg_color="transparent")
+        top.pack(fill="x", padx=12, pady=(12, 6))
+
+        self.scrape_direct_only = ctk.BooleanVar(value=True)
+        ctk.CTkCheckBox(
+            top,
+            text="Direct / bulk only",
+            variable=self.scrape_direct_only,
+            font=FONT_SM,
+            text_color=C["text"],
+            fg_color=C["accent"],
+            hover_color=C["accent_hover"],
+            checkmark_color=C["bg"],
+            border_color=C["border"],
+        ).pack(side="left", padx=(0, 12))
+
+        ctk.CTkButton(
+            top, text="Select all", width=100, command=self._scrape_select_all,
+            fg_color=C["elevated"], hover_color=C["border"], text_color=C["text"],
+            border_width=1, border_color=C["border"],
+        ).pack(side="left", padx=4)
+        ctk.CTkButton(
+            top, text="Clear", width=80, command=self._scrape_clear_selection,
+            fg_color=C["elevated"], hover_color=C["border"], text_color=C["text"],
+            border_width=1, border_color=C["border"],
+        ).pack(side="left", padx=4)
+
+        mid = ctk.CTkFrame(tab, fg_color="transparent")
+        mid.pack(fill="both", expand=True, padx=12, pady=6)
+
+        left = _card(mid)
+        left.pack(side="left", fill="both", expand=True, padx=(0, 8))
+        _section_label(left, "Jurisdictions").pack(anchor="w", padx=14, pady=(12, 6))
+
+        tree_wrap, self.scrape_tree = _tree_frame(left)
+        tree_wrap.pack(fill="both", expand=True, padx=10, pady=(0, 12))
+        self.scrape_tree.configure(columns=("abbr", "method", "notes"), show="tree headings", selectmode="extended")
+        self.scrape_tree.heading("#0", text="Jurisdiction")
+        self.scrape_tree.heading("abbr", text="Code")
         self.scrape_tree.heading("method", text="Method")
         self.scrape_tree.heading("notes", text="Notes")
-
-        self.scrape_tree.column("#0", width=260, stretch=True)
-        self.scrape_tree.column("abbr", width=50, anchor=tk.CENTER)
-        self.scrape_tree.column("method", width=80, anchor=tk.CENTER)
-        self.scrape_tree.column("notes", width=300)
-
-        vsb = ttk.Scrollbar(left, orient="vertical", command=self.scrape_tree.yview)
-        hsb = ttk.Scrollbar(left, orient="horizontal", command=self.scrape_tree.xview)
-        self.scrape_tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
-
-        vsb.pack(side=tk.RIGHT, fill=tk.Y)
-        hsb.pack(side=tk.BOTTOM, fill=tk.X)
-        self.scrape_tree.pack(fill=tk.BOTH, expand=True)
+        self.scrape_tree.column("#0", width=220)
+        self.scrape_tree.column("abbr", width=50, anchor="center")
+        self.scrape_tree.column("method", width=90, anchor="center")
+        self.scrape_tree.column("notes", width=280)
         self.scrape_tree.bind("<<TreeviewSelect>>", self._scrape_on_select)
+        self.scrape_tree.tag_configure("direct", background="#1a241c")
 
-        # Right panel: options + action
-        right = ModernFrame(frame)
-        right.pack(side=tk.RIGHT, fill=tk.Y, padx=(4, 10), pady=6)
+        right = _card(mid, width=300)
+        right.pack(side="right", fill="y")
+        right.pack_propagate(False)
+        _section_label(right, "Options").pack(anchor="w", padx=14, pady=(12, 8))
 
-        opts = ModernFrameWithBorder(right, text="Options")
-        opts.pack(fill=tk.X, pady=(0, 8))
-
-        # Output folder
-        ModernLabel(opts, text="Output Folder:").pack(anchor=tk.W)
-        out_frame = ttk.Frame(opts)
-        out_frame.pack(fill=tk.X, pady=2)
-        default_out = Path("data/downloads")
-        self.scrape_output_var = tk.StringVar(value=str(default_out))
-        ModernEntry(out_frame, textvariable=self.scrape_output_var).pack(side=tk.LEFT, fill=tk.X, expand=True)
-        ttk.Button(out_frame, text="Browse", command=self._scrape_browse_output).pack(side=tk.LEFT, padx=4)
-
-        # Delay
-        ModernLabel(opts, text="Delay (seconds):").pack(anchor=tk.W, pady=(6, 0))
-        self.scrape_delay_var = tk.DoubleVar(value=2.0)
-        ttk.Scale(opts, from_=0.5, to=10.0, variable=self.scrape_delay_var, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=2)
-
-        # Action buttons
-        act = ttk.Frame(right)
-        act.pack(fill=tk.X, pady=(8, 0))
-
-        self.scrape_btn = ModernButton(
-            act, text="▶ Start Scraping", style="Accent.TButton"
+        ctk.CTkLabel(right, text="Output folder", font=FONT_SM, text_color=C["muted"]).pack(
+            anchor="w", padx=14
         )
-        self.scrape_btn.config(command=self._start_scrape)
-        self.scrape_btn.pack(fill=tk.X, ipady=6)
+        out_row = ctk.CTkFrame(right, fg_color="transparent")
+        out_row.pack(fill="x", padx=14, pady=4)
+        self.scrape_output_var = ctk.StringVar(value=str(Path("data/downloads")))
+        ctk.CTkEntry(
+            out_row, textvariable=self.scrape_output_var, fg_color=C["bg"],
+            border_color=C["border"], text_color=C["text"],
+        ).pack(side="left", fill="x", expand=True)
+        ctk.CTkButton(
+            out_row, text="…", width=36, command=self._scrape_browse_output,
+            fg_color=C["elevated"], hover_color=C["border"],
+        ).pack(side="left", padx=(6, 0))
 
-        ttk.Button(act, text="Open Output Folder", command=self._open_output_folder).pack(fill=tk.X, pady=(4, 0))
+        ctk.CTkLabel(right, text="Delay (seconds)", font=FONT_SM, text_color=C["muted"]).pack(
+            anchor="w", padx=14, pady=(12, 0)
+        )
+        self.scrape_delay_var = ctk.DoubleVar(value=2.0)
+        ctk.CTkSlider(
+            right, from_=0.5, to=10.0, variable=self.scrape_delay_var,
+            progress_color=C["accent"], button_color=C["accent"],
+            button_hover_color=C["accent_hover"], fg_color=C["elevated"],
+        ).pack(fill="x", padx=14, pady=8)
 
-        # Progress
-        self.scrape_progress = ttk.Progressbar(right, mode="determinate", maximum=100)
-        self.scrape_progress.pack(fill=tk.X, pady=(8, 4))
+        self.scrape_btn = ctk.CTkButton(
+            right,
+            text="Start scraping",
+            font=FONT_BOLD,
+            height=42,
+            fg_color=C["accent"],
+            hover_color=C["accent_hover"],
+            text_color=C["bg"],
+            command=self._start_scrape,
+        )
+        self.scrape_btn.pack(fill="x", padx=14, pady=(16, 6))
+
+        ctk.CTkButton(
+            right, text="Open output folder", height=36,
+            fg_color=C["elevated"], hover_color=C["border"], text_color=C["text"],
+            border_width=1, border_color=C["border"],
+            command=self._open_output_folder,
+        ).pack(fill="x", padx=14, pady=4)
+
+        self.scrape_progress = ctk.CTkProgressBar(
+            right, progress_color=C["accent"], fg_color=C["elevated"], height=8
+        )
+        self.scrape_progress.pack(fill="x", padx=14, pady=(16, 16))
+        self.scrape_progress.set(0)
 
     def _scrape_select_all(self):
         for item in self.scrape_tree.get_children():
-            vals = self.scrape_tree.item(item, "values")
-            if not vals:
-                continue
-            # When "direct only" is checked, only select bulk-download states
             if self.scrape_direct_only.get():
-                tags = self.scrape_tree.item(item, "tags")
-                if "direct" not in tags:
+                if "direct" not in self.scrape_tree.item(item, "tags"):
                     continue
             self.scrape_tree.selection_add(item)
         self._update_scrape_selection()
@@ -327,18 +376,16 @@ class SexOffenderGUI:
         self.scrape_tree.selection_remove(*self.scrape_tree.selection())
         self._update_scrape_selection()
 
-    def _scrape_on_select(self, event=None):
+    def _scrape_on_select(self, _event=None):
         self._update_scrape_selection()
 
     def _update_scrape_selection(self):
-        items = self.scrape_tree.selection()
         self.selected_states.clear()
-        for item in items:
+        for item in self.scrape_tree.selection():
             vals = self.scrape_tree.item(item, "values")
             if vals:
                 self.selected_states.add(vals[0])
-        count = len(self.selected_states)
-        self.stats_label.config(text=f"{count} states selected")
+        self.stats_label.configure(text=f"{len(self.selected_states)} selected")
 
     def _scrape_browse_output(self):
         folder = filedialog.askdirectory(initialdir=self.scrape_output_var.get())
@@ -348,22 +395,16 @@ class SexOffenderGUI:
     def _start_scrape(self):
         if self.is_running:
             return
-
         from scraper.config import REGISTRIES, get_registry_by_abbr
         from scraper.scrapers.base import ScraperFactory
 
         states = list(self.selected_states)
-        delay = self.scrape_delay_var.get()
-        direct_only = self.scrape_direct_only.get()
+        delay = float(self.scrape_delay_var.get())
+        direct_only = bool(self.scrape_direct_only.get())
 
-        # Determine targets: honor tree selection when present; otherwise
-        # fall back to all (optionally filtered to direct-download sources).
         if states:
-            registries = []
-            for s in states:
-                reg = get_registry_by_abbr(s)
-                if reg:
-                    registries.append(reg)
+            registries = [get_registry_by_abbr(s) for s in states]
+            registries = [r for r in registries if r]
             if direct_only:
                 registries = [r for r in registries if r.direct_downloads]
         elif direct_only:
@@ -371,134 +412,121 @@ class SexOffenderGUI:
         else:
             messagebox.showwarning(
                 "No selection",
-                "Select one or more states, or enable 'Direct downloads only' "
-                "to scrape all bulk-download sources."
+                "Select jurisdictions or enable Direct / bulk only.",
             )
             return
-
         if not registries:
-            messagebox.showwarning("No targets", "No matching registries to scrape.")
+            messagebox.showwarning("No targets", "No matching registries.")
             return
 
         output_dir = Path(self.scrape_output_var.get())
         output_dir.mkdir(parents=True, exist_ok=True)
-
         self._set_running(True)
-        self.scrape_progress["value"] = 0
-        total_targets = len(registries)
+        self.scrape_progress.set(0)
+        total = len(registries)
 
         def log(msg):
             self.log_queue.put(msg)
 
         def worker():
-            import csv
             try:
                 total_records = 0
                 for i, reg in enumerate(registries):
-                    abbr = reg.abbr
-                    log(f"[{abbr}] Scraping {reg.name}...")
-
-                    scraper = ScraperFactory.create(abbr, delay=delay)
+                    log(f"[{reg.abbr}] Scraping {reg.name}…")
+                    scraper = ScraperFactory.create(reg.abbr, delay=delay)
                     try:
                         records = scraper.scrape()
                     finally:
                         scraper.close()
-
                     if records:
-                        csv_path = output_dir / f"{abbr.lower()}_offenders.csv"
-                        fieldnames = []
+                        csv_path = output_dir / f"{reg.abbr.lower()}_offenders.csv"
+                        fields: List[str] = []
                         seen = set()
-                        for record in records:
-                            for key in record.keys():
-                                if key not in seen:
-                                    seen.add(key)
-                                    fieldnames.append(key)
+                        for rec in records:
+                            for k in rec:
+                                if k not in seen:
+                                    seen.add(k)
+                                    fields.append(k)
                         with open(csv_path, "w", newline="", encoding="utf-8") as f:
-                            writer = csv.DictWriter(
-                                f, fieldnames=fieldnames, extrasaction="ignore"
-                            )
-                            writer.writeheader()
-                            for record in records:
-                                writer.writerow(record)
-
-                        log(f"  ✓ Saved {len(records)} records to {csv_path}")
+                            w = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
+                            w.writeheader()
+                            w.writerows(records)
+                        log(f"  Saved {len(records)} → {csv_path}")
                         total_records += len(records)
                     else:
-                        log("  - No records found")
-
-                    pct = int(((i + 1) / max(total_targets, 1)) * 100)
-                    self.root.after(0, lambda p=pct: self.scrape_progress.configure(value=p))
-
-                log(f"\n{'='*50}")
-                log(f"Total records scraped: {total_records}")
-                log(f"Output directory: {output_dir}")
-                log(f"{'='*50}")
-
+                        log("  No records")
+                    pct = (i + 1) / max(total, 1)
+                    self.after(0, lambda p=pct: self.scrape_progress.set(p))
+                log(f"Done. Total records: {total_records}")
             except Exception as e:
                 log(f"ERROR: {e}")
             finally:
-                self.root.after(0, lambda: self._set_running(False))
+                self.after(0, lambda: self._set_running(False))
 
         threading.Thread(target=worker, daemon=True).start()
 
     # -----------------------------------------------------------------------
-    # Search tab
+    # Search
     # -----------------------------------------------------------------------
-    def _build_search_tab(self):
-        frame = self.tab_search
+    def _build_search(self, tab):
+        tab.configure(fg_color=C["surface"])
+        bar = ctk.CTkFrame(tab, fg_color="transparent")
+        bar.pack(fill="x", padx=12, pady=12)
 
-        # Controls
-        ctrl = ModernFrame(frame)
-        ctrl.pack(fill=tk.X, padx=10, pady=(8, 4))
+        self.search_name_var = ctk.StringVar()
+        ctk.CTkEntry(
+            bar, textvariable=self.search_name_var, placeholder_text="Name…",
+            width=200, fg_color=C["bg"], border_color=C["border"], text_color=C["text"],
+        ).pack(side="left", padx=(0, 8))
 
-        ModernLabel(ctrl, text="Search:").pack(side=tk.LEFT, padx=(0, 6))
+        self.search_state_var = ctk.StringVar(value="")
+        ctk.CTkComboBox(
+            bar, variable=self.search_state_var, width=90,
+            values=["", "ALL", "AL", "AK", "AZ", "CA", "DC", "FL", "GA", "NY", "TX"],
+            fg_color=C["bg"], border_color=C["border"], button_color=C["elevated"],
+            button_hover_color=C["border"], dropdown_fg_color=C["panel"],
+            dropdown_hover_color=C["elevated"], text_color=C["text"],
+        ).pack(side="left", padx=4)
 
-        self.search_name_var = tk.StringVar()
-        ModernEntry(ctrl, textvariable=self.search_name_var, width=25).pack(side=tk.LEFT, padx=2)
+        self.search_race_var = ctk.StringVar(value="")
+        ctk.CTkComboBox(
+            bar, variable=self.search_race_var, width=140,
+            values=["", "WHITE", "BLACK", "HISPANIC", "ASIAN", "NATIVE AMERICAN"],
+            fg_color=C["bg"], border_color=C["border"], button_color=C["elevated"],
+            button_hover_color=C["border"], dropdown_fg_color=C["panel"],
+            text_color=C["text"],
+        ).pack(side="left", padx=4)
 
-        ttk.Label(ctrl, text="State:").pack(side=tk.LEFT, padx=(8, 2))
-        self.search_state_var = tk.StringVar(value="")
-        state_cb = ttk.Combobox(ctrl, textvariable=self.search_state_var, width=10, values=["", "ALL"])
-        state_cb.pack(side=tk.LEFT, padx=2)
+        ctk.CTkButton(
+            bar, text="Search", width=100, command=self._do_search,
+            fg_color=C["accent"], hover_color=C["accent_hover"], text_color=C["bg"],
+        ).pack(side="left", padx=8)
+        ctk.CTkButton(
+            bar, text="Show all", width=100,
+            command=lambda: self._do_search(name="", state="", race=""),
+            fg_color=C["elevated"], hover_color=C["border"], text_color=C["text"],
+            border_width=1, border_color=C["border"],
+        ).pack(side="left")
 
-        ttk.Label(ctrl, text="Race:").pack(side=tk.LEFT, padx=(8, 2))
-        self.search_race_var = tk.StringVar(value="")
-        race_cb = ttk.Combobox(ctrl, textvariable=self.search_race_var, width=10, values=["", "WHITE", "BLACK", "HISPANIC", "ASIAN", "NATIVE AMERICAN"])
-        race_cb.pack(side=tk.LEFT, padx=2)
+        wrap, self.search_tree = _tree_frame(tab)
+        wrap.pack(fill="both", expand=True, padx=12, pady=(0, 8))
+        cols = ("name", "race", "state", "county", "age", "address")
+        self.search_tree.configure(columns=cols, show="headings")
+        for c in cols:
+            self.search_tree.heading(c, text=c.upper())
+            self.search_tree.column(c, width=120)
 
-        ttk.Button(ctrl, text="Search", command=self._do_search).pack(side=tk.LEFT, padx=(8, 4))
-        ttk.Button(ctrl, text="Show All", command=lambda: self._do_search(name="", state="", race="")).pack(side=tk.LEFT, padx=2)
-
-        # Results tree
-        res_frame = ModernFrame(frame)
-        res_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(6, 4))
-
-        columns = ("name", "race", "state", "county", "age", "address")
-        self.search_tree = ttk.Treeview(res_frame, columns=columns, show="headings")
-        for col in columns:
-            self.search_tree.heading(col, text=col.upper())
-            self.search_tree.column(col, width=120)
-
-        vsb = ttk.Scrollbar(res_frame, orient="vertical", command=self.search_tree.yview)
-        hsb = ttk.Scrollbar(res_frame, orient="horizontal", command=self.search_tree.xview)
-        self.search_tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
-
-        vsb.pack(side=tk.RIGHT, fill=tk.Y)
-        hsb.pack(side=tk.BOTTOM, fill=tk.X)
-        self.search_tree.pack(fill=tk.BOTH, expand=True)
-
-        # Status bar
-        self.search_status = ModernLabel(frame, text="Enter a name or click Show All", style="Status.TLabel")
-        self.search_status.pack(fill=tk.X, padx=10, pady=(4, 0))
+        self.search_status = ctk.CTkLabel(
+            tab, text="Query the local SQLite database", font=FONT_SM, text_color=C["muted"]
+        )
+        self.search_status.pack(anchor="w", padx=14, pady=(0, 10))
 
     def _do_search(self, name=None, state=None, race=None):
         from scraper.searcher import SexOffenderSearcher
 
-        # Explicit empty-string args from "Show All" must win over widget values
         name = self.search_name_var.get() if name is None else name
         state = self.search_state_var.get() if state is None else state
         race = self.search_race_var.get() if race is None else race
-
         searcher = SexOffenderSearcher(db_path=self.db_path)
         try:
             if name:
@@ -509,8 +537,8 @@ class SexOffenderGUI:
                     limit=500,
                 )
                 self._populate_search_tree(results.records)
-                self.search_status.config(
-                    text=f"{len(results.records)} matches for '{name}' ({results.query_time_ms:.1f}ms)"
+                self.search_status.configure(
+                    text=f"{len(results.records)} matches · {results.query_time_ms:.0f} ms"
                 )
             elif race:
                 results = searcher.search_by_race(
@@ -519,338 +547,381 @@ class SexOffenderGUI:
                     limit=500,
                 )
                 self._populate_search_tree(results.records)
-                self.search_status.config(text=f"{len(results.records)} records with race '{race}'")
+                self.search_status.configure(text=f"{len(results.records)} with race {race}")
             elif state and state != "ALL":
                 results = searcher.search_by_state(state=state, limit=500)
                 self._populate_search_tree(results.records)
-                self.search_status.config(text=f"{len(results.records)} offenders in {state}")
+                self.search_status.configure(text=f"{len(results.records)} in {state}")
             else:
                 dist = searcher.get_race_distribution()
                 self._show_race_distribution(dist)
-                total = searcher.get_total_count()
-                self.search_status.config(text=f"Race distribution ({total} total records)")
+                self.search_status.configure(
+                    text=f"Race distribution · {searcher.get_total_count()} total"
+                )
         finally:
             searcher.close()
 
     def _populate_search_tree(self, records):
-        for item in self.search_tree.get_children():
-            self.search_tree.delete(item)
+        self.search_tree.delete(*self.search_tree.get_children())
         for r in records[:500]:
-            name = f"{r.get('first_name', '')} {r.get('last_name', '')}".strip() or "N/A"
-            race = (r.get("race") or "N/A")[:12]
-            state = (r.get("state") or "N/A")[:6]
-            county = (r.get("county") or "N/A")[:15]
-            age = str(r.get("age", ""))
-            addr = (r.get("address") or "")[:30]
-            self.search_tree.insert("", "end", values=(name, race, state, county, age, addr))
+            name = f"{r.get('first_name', '') or ''} {r.get('last_name', '') or ''}".strip() or "—"
+            self.search_tree.insert(
+                "",
+                "end",
+                values=(
+                    name,
+                    (r.get("race") or "—")[:14],
+                    (r.get("state") or "—")[:6],
+                    (r.get("county") or "—")[:16],
+                    str(r.get("age") or ""),
+                    (r.get("address") or "")[:36],
+                ),
+            )
 
     def _show_race_distribution(self, dist):
-        for item in self.search_tree.get_children():
-            self.search_tree.delete(item)
-        total = sum(d.get("count", 0) for d in dist)
+        self.search_tree.delete(*self.search_tree.get_children())
+        total = sum(d.get("count", 0) for d in dist) or 1
         for d in dist:
-            race = d.get("race", "N/A")
+            race = d.get("race") or "—"
             count = d.get("count", 0)
-            pct = (count / total * 100) if total else 0
-            bar = "#" * int(pct / 2)
-            self.search_tree.insert("", "end", values=(f"{race:<15}", str(count).rjust(8), "", f" {pct:6.1f}%", "", bar))
+            pct = count / total * 100
+            bar = "▮" * max(1, int(pct / 4))
+            self.search_tree.insert(
+                "", "end", values=(race, str(count), f"{pct:.1f}%", bar, "", "")
+            )
 
     # -----------------------------------------------------------------------
-    # Misclassification tab
+    # Misclassify
     # -----------------------------------------------------------------------
-    def _build_misclass_tab(self):
-        frame = self.tab_misclass
+    def _build_misclass(self, tab):
+        tab.configure(fg_color=C["surface"])
+        bar = ctk.CTkFrame(tab, fg_color="transparent")
+        bar.pack(fill="x", padx=12, pady=12)
 
-        ctrl = ModernFrame(frame)
-        ctrl.pack(fill=tk.X, padx=10, pady=(8, 4))
+        self.misclass_ethnicity_var = ctk.StringVar(value="all")
+        ctk.CTkComboBox(
+            bar, variable=self.misclass_ethnicity_var, width=160,
+            values=["all", "hispanic", "asian", "african_american"],
+            fg_color=C["bg"], border_color=C["border"], button_color=C["elevated"],
+            text_color=C["text"], dropdown_fg_color=C["panel"],
+        ).pack(side="left", padx=(0, 8))
 
-        ModernLabel(ctrl, text="Analyze:").pack(side=tk.LEFT, padx=(0, 6))
+        ctk.CTkLabel(bar, text="Min conf.", font=FONT_SM, text_color=C["muted"]).pack(
+            side="left", padx=(8, 4)
+        )
+        self.misclass_conf_var = ctk.DoubleVar(value=0.5)
+        ctk.CTkEntry(
+            bar, textvariable=self.misclass_conf_var, width=60,
+            fg_color=C["bg"], border_color=C["border"], text_color=C["text"],
+        ).pack(side="left")
 
-        self.misclass_ethnicity_var = tk.StringVar(value="all")
-        ttk.Combobox(ctrl, textvariable=self.misclass_ethnicity_var, width=15,
-                     values=["all", "hispanic", "asian", "african_american"]).pack(side=tk.LEFT, padx=2)
+        ctk.CTkLabel(bar, text="Max rows", font=FONT_SM, text_color=C["muted"]).pack(
+            side="left", padx=(12, 4)
+        )
+        self.misclass_limit_var = ctk.IntVar(value=10000)
+        ctk.CTkEntry(
+            bar, textvariable=self.misclass_limit_var, width=80,
+            fg_color=C["bg"], border_color=C["border"], text_color=C["text"],
+        ).pack(side="left")
 
-        ModernLabel(ctrl, text="Min Confidence:").pack(side=tk.LEFT, padx=(8, 4))
-        self.misclass_conf_var = tk.DoubleVar(value=0.5)
-        ttk.Spinbox(ctrl, from_=0.1, to=1.0, increment=0.05, textvariable=self.misclass_conf_var, width=6).pack(side=tk.LEFT, padx=2)
+        ctk.CTkButton(
+            bar, text="Analyze", width=100, command=self._run_misclassification,
+            fg_color=C["accent"], hover_color=C["accent_hover"], text_color=C["bg"],
+        ).pack(side="left", padx=12)
+        ctk.CTkButton(
+            bar, text="Export CSV", width=100, command=self._export_misclass,
+            fg_color=C["elevated"], hover_color=C["border"], text_color=C["text"],
+            border_width=1, border_color=C["border"],
+        ).pack(side="left")
 
-        ModernLabel(ctrl, text="Max Records:").pack(side=tk.LEFT, padx=(8, 4))
-        self.misclass_limit_var = tk.IntVar(value=10000)
-        ttk.Spinbox(ctrl, from_=1000, to=100000, increment=1000, textvariable=self.misclass_limit_var, width=8).pack(side=tk.LEFT, padx=2)
+        wrap, self.misclass_tree = _tree_frame(tab)
+        wrap.pack(fill="both", expand=True, padx=12, pady=(0, 8))
+        cols = ("name", "recorded_race", "likely_ethnicity", "confidence", "matching_names")
+        self.misclass_tree.configure(columns=cols, show="headings")
+        for c in cols:
+            self.misclass_tree.heading(c, text=c.replace("_", " ").upper())
+            self.misclass_tree.column(c, width=140)
 
-        ttk.Button(ctrl, text="Analyze", command=self._run_misclassification).pack(side=tk.LEFT, padx=(10, 4))
-        ttk.Button(ctrl, text="Export to CSV", command=self._export_misclass).pack(side=tk.LEFT, padx=2)
-
-        # Results tree
-        res_frame = ModernFrame(frame)
-        res_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(6, 4))
-
-        columns = ("name", "recorded_race", "likely_ethnicity", "confidence", "matching_names")
-        self.misclass_tree = ttk.Treeview(res_frame, columns=columns, show="headings")
-        for col in columns:
-            self.misclass_tree.heading(col, text=col.upper())
-            self.misclass_tree.column(col, width=140)
-
-        vsb = ttk.Scrollbar(res_frame, orient="vertical", command=self.misclass_tree.yview)
-        self.misclass_tree.configure(yscrollcommand=vsb.set)
-        vsb.pack(side=tk.RIGHT, fill=tk.Y)
-        self.misclass_tree.pack(fill=tk.BOTH, expand=True)
-
-        self.misclass_status = ModernLabel(frame, text="Click Analyze to find misclassifications", style="Status.TLabel")
-        self.misclass_status.pack(fill=tk.X, padx=10, pady=(4, 0))
+        self.misclass_status = ctk.CTkLabel(
+            tab, text="Compare recorded race to surname ethnicity lists",
+            font=FONT_SM, text_color=C["muted"],
+        )
+        self.misclass_status.pack(anchor="w", padx=14, pady=(0, 10))
 
     def _run_misclassification(self):
         from scraper.searcher import SexOffenderSearcher
 
         searcher = SexOffenderSearcher(db_path=self.db_path)
-
-        ethnicity = self.misclass_ethnicity_var.get()
-        min_conf = self.misclass_conf_var.get()
-        limit = self.misclass_limit_var.get()
-
+        eth = self.misclass_ethnicity_var.get()
         try:
-            if ethnicity == "hispanic":
+            min_conf = float(self.misclass_conf_var.get())
+            limit = int(self.misclass_limit_var.get())
+            if eth == "hispanic":
                 results = searcher.find_hispanic_misclassifications(min_confidence=min_conf, limit=limit)
-            elif ethnicity == "asian":
+            elif eth == "asian":
                 results = searcher.find_asian_misclassifications(min_confidence=min_conf, limit=limit)
-            elif ethnicity == "african_american":
-                results = searcher.find_african_american_misclassifications(min_confidence=min_conf, limit=limit)
+            elif eth == "african_american":
+                results = searcher.find_african_american_misclassifications(
+                    min_confidence=min_conf, limit=limit
+                )
             else:
                 results = searcher.analyze_ethnicities(min_confidence=min_conf, limit=limit)
         finally:
             searcher.close()
 
-        for item in self.misclass_tree.get_children():
-            self.misclass_tree.delete(item)
-
+        self.misclass_tree.delete(*self.misclass_tree.get_children())
         for mc in results[:500]:
-            name = f"{mc.record.get('first_name', '') or ''} {mc.record.get('last_name', '') or ''}".strip() or "N/A"
-            race = (mc.expected_race or "N/A")[:12]
-            likely = (mc.likely_ethnicity or "")[:15]
-            conf = f"{mc.confidence:.3f}"
-            names = "; ".join(mc.matching_names[:3])
-            self.misclass_tree.insert("", "end", values=(name, race, likely, conf, names))
-
-        self.misclass_status.config(text=f"Found {len(results)} potential misclassifications")
-        self.log_queue.put(f"Misclassification analysis complete: {len(results)} results.")
+            name = (
+                f"{mc.record.get('first_name', '') or ''} "
+                f"{mc.record.get('last_name', '') or ''}"
+            ).strip() or "—"
+            self.misclass_tree.insert(
+                "",
+                "end",
+                values=(
+                    name,
+                    (mc.expected_race or "—")[:14],
+                    (mc.likely_ethnicity or "")[:18],
+                    f"{mc.confidence:.3f}",
+                    "; ".join(mc.matching_names[:3]),
+                ),
+            )
+        self.misclass_status.configure(text=f"{len(results)} potential mismatches")
+        self.log_queue.put(f"Misclassification: {len(results)} results")
 
     def _export_misclass(self):
         from scraper.searcher import SexOffenderSearcher
 
-        filepath = filedialog.asksaveasfilename(defaultextension=".csv", title="Export misclassifications")
-        if not filepath:
+        path = filedialog.asksaveasfilename(defaultextension=".csv")
+        if not path:
             return
-
         searcher = SexOffenderSearcher(db_path=self.db_path)
-        ethnicity = self.misclass_ethnicity_var.get()
-        eth_filter = None if ethnicity == "all" else ethnicity
+        eth = self.misclass_ethnicity_var.get()
         try:
-            count = searcher.export_misclassifications(
-                filepath,
-                min_confidence=self.misclass_conf_var.get(),
-                ethnicity_filter=eth_filter,
+            n = searcher.export_misclassifications(
+                path,
+                min_confidence=float(self.misclass_conf_var.get()),
+                ethnicity_filter=None if eth == "all" else eth,
             )
         finally:
             searcher.close()
-        messagebox.showinfo("Exported", f"Exported {count} records to {filepath}")
+        messagebox.showinfo("Exported", f"{n} rows → {path}")
 
     # -----------------------------------------------------------------------
-    # NSOPW ethnic search tab
+    # NSOPW
     # -----------------------------------------------------------------------
-    def _build_nsopw_tab(self):
-        frame = self.tab_nsopw
+    def _build_nsopw(self, tab):
+        tab.configure(fg_color=C["surface"])
+        scroll = ctk.CTkScrollableFrame(tab, fg_color=C["surface"])
+        scroll.pack(fill="both", expand=True, padx=8, pady=8)
 
-        # Scrollable container for many settings
-        canvas = tk.Canvas(frame, background=COLORS["bg"], highlightthickness=0)
-        scroll = ttk.Scrollbar(frame, orient="vertical", command=canvas.yview)
-        inner = ModernFrame(canvas)
-        inner.bind(
-            "<Configure>",
-            lambda e: canvas.configure(scrollregion=canvas.bbox("all")),
+        _section_label(scroll, "NSOPW ethnic name search").pack(anchor="w", padx=8, pady=(4, 2))
+        _muted(
+            scroll,
+            "Partial first names (A–Z initials) cut query count. Rate limits protect servers. "
+            "Report HTML is archived and linked on each row for validation.",
+        ).pack(anchor="w", padx=8, pady=(0, 12))
+
+        # Search card
+        s = _card(scroll)
+        s.pack(fill="x", padx=4, pady=6)
+        _section_label(s, "Search").pack(anchor="w", padx=14, pady=(12, 8))
+
+        r1 = ctk.CTkFrame(s, fg_color="transparent")
+        r1.pack(fill="x", padx=14, pady=4)
+        ctk.CTkLabel(r1, text="Ethnicity", font=FONT_SM, text_color=C["muted"], width=120, anchor="w").pack(
+            side="left"
         )
-        canvas.create_window((0, 0), window=inner, anchor="nw")
-        canvas.configure(yscrollcommand=scroll.set)
-        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scroll.pack(side=tk.RIGHT, fill=tk.Y)
-
-        ModernLabel(
-            inner,
-            text="NSOPW Ethnic Name Search → Local Database",
-            style="Header.TLabel",
-        ).pack(anchor=tk.W, padx=10, pady=(8, 2))
-        ModernLabel(
-            inner,
-            text="Uses partial first-name matching (e.g. 'M' + surname) to cut query count. "
-                 "Rate limits protect nsopw.gov. Report HTML is archived for validation.",
-        ).pack(anchor=tk.W, padx=10, pady=(0, 8))
-
-        # --- Search settings ---
-        search_box = ModernFrameWithBorder(inner, text="Search settings")
-        search_box.pack(fill=tk.X, padx=10, pady=4)
-
-        row1 = ModernFrame(search_box)
-        row1.pack(fill=tk.X, pady=2)
-        ModernLabel(row1, text="Ethnicity list:").pack(side=tk.LEFT)
-        self.nsopw_ethnicity = tk.StringVar(value="hispanic")
-        ttk.Combobox(
-            row1, textvariable=self.nsopw_ethnicity, width=18, state="readonly",
+        self.nsopw_ethnicity = ctk.StringVar(value="hispanic")
+        ctk.CTkComboBox(
+            r1, variable=self.nsopw_ethnicity, width=180,
             values=[
                 "hispanic", "asian", "african_american", "arabic",
                 "jewish", "portuguese", "native_american", "european", "all",
             ],
-        ).pack(side=tk.LEFT, padx=6)
-
-        ModernLabel(row1, text="Surnames / group:").pack(side=tk.LEFT, padx=(12, 0))
-        self.nsopw_surnames = tk.IntVar(value=10)
-        ttk.Spinbox(row1, from_=1, to=100, textvariable=self.nsopw_surnames, width=6).pack(
-            side=tk.LEFT, padx=4
+            fg_color=C["bg"], border_color=C["border"], button_color=C["elevated"],
+            text_color=C["text"], dropdown_fg_color=C["panel"],
+        ).pack(side="left", padx=6)
+        ctk.CTkLabel(r1, text="Surnames / group", font=FONT_SM, text_color=C["muted"]).pack(
+            side="left", padx=(16, 4)
         )
+        self.nsopw_surnames = ctk.IntVar(value=10)
+        ctk.CTkEntry(
+            r1, textvariable=self.nsopw_surnames, width=70,
+            fg_color=C["bg"], border_color=C["border"], text_color=C["text"],
+        ).pack(side="left")
 
-        row2 = ModernFrame(search_box)
-        row2.pack(fill=tk.X, pady=2)
-        ModernLabel(row2, text="First-name mode:").pack(side=tk.LEFT)
-        self.nsopw_first_mode = tk.StringVar(value="initials")
-        ttk.Combobox(
-            row2, textvariable=self.nsopw_first_mode, width=12, state="readonly",
+        r2 = ctk.CTkFrame(s, fg_color="transparent")
+        r2.pack(fill="x", padx=14, pady=4)
+        ctk.CTkLabel(r2, text="First-name mode", font=FONT_SM, text_color=C["muted"], width=120, anchor="w").pack(
+            side="left"
+        )
+        self.nsopw_first_mode = ctk.StringVar(value="initials")
+        ctk.CTkComboBox(
+            r2, variable=self.nsopw_first_mode, width=140,
             values=["initials", "full", "custom"],
-        ).pack(side=tk.LEFT, padx=6)
-        ModernLabel(
-            row2,
-            text="initials = A–Z partial match (fewest queries)",
-        ).pack(side=tk.LEFT, padx=4)
+            fg_color=C["bg"], border_color=C["border"], button_color=C["elevated"],
+            text_color=C["text"], dropdown_fg_color=C["panel"],
+        ).pack(side="left", padx=6)
+        ctk.CTkLabel(
+            r2, text="initials = A–Z partial match (fewest queries)",
+            font=FONT_SM, text_color=C["dim"],
+        ).pack(side="left", padx=8)
 
-        row3 = ModernFrame(search_box)
-        row3.pack(fill=tk.X, pady=2)
-        ModernLabel(row3, text="Custom first names/prefixes:").pack(side=tk.LEFT)
-        self.nsopw_custom_firsts = tk.StringVar(value="")
-        ModernEntry(row3, textvariable=self.nsopw_custom_firsts, width=50).pack(
-            side=tk.LEFT, padx=6, fill=tk.X, expand=True
+        r3 = ctk.CTkFrame(s, fg_color="transparent")
+        r3.pack(fill="x", padx=14, pady=4)
+        ctk.CTkLabel(r3, text="Custom prefixes", font=FONT_SM, text_color=C["muted"], width=120, anchor="w").pack(
+            side="left"
         )
+        self.nsopw_custom_firsts = ctk.StringVar(value="")
+        ctk.CTkEntry(
+            r3, textvariable=self.nsopw_custom_firsts, placeholder_text="M,J,R,S  or  John,Maria",
+            fg_color=C["bg"], border_color=C["border"], text_color=C["text"],
+        ).pack(side="left", fill="x", expand=True, padx=6)
 
-        row4 = ModernFrame(search_box)
-        row4.pack(fill=tk.X, pady=2)
-        ModernLabel(row4, text="Jurisdictions (blank = all):").pack(side=tk.LEFT)
-        self.nsopw_jurisdictions = tk.StringVar(value="")
-        ModernEntry(row4, textvariable=self.nsopw_jurisdictions, width=40).pack(
-            side=tk.LEFT, padx=6, fill=tk.X, expand=True
+        r4 = ctk.CTkFrame(s, fg_color="transparent")
+        r4.pack(fill="x", padx=14, pady=(4, 12))
+        ctk.CTkLabel(r4, text="Jurisdictions", font=FONT_SM, text_color=C["muted"], width=120, anchor="w").pack(
+            side="left"
         )
-        ModernLabel(row4, text="e.g. CA,TX,FL,NY").pack(side=tk.LEFT)
+        self.nsopw_jurisdictions = ctk.StringVar(value="")
+        ctk.CTkEntry(
+            r4, textvariable=self.nsopw_jurisdictions, placeholder_text="blank = all · e.g. CA,TX,FL,NY",
+            fg_color=C["bg"], border_color=C["border"], text_color=C["text"],
+        ).pack(side="left", fill="x", expand=True, padx=6)
 
-        # --- Caps ---
-        caps_box = ModernFrameWithBorder(inner, text="Run limits")
-        caps_box.pack(fill=tk.X, padx=10, pady=4)
+        # Limits card
+        lim = _card(scroll)
+        lim.pack(fill="x", padx=4, pady=6)
+        _section_label(lim, "Limits & rate control").pack(anchor="w", padx=14, pady=(12, 8))
 
-        crow = ModernFrame(caps_box)
-        crow.pack(fill=tk.X, pady=2)
-        ModernLabel(crow, text="Max searches:").pack(side=tk.LEFT)
-        self.nsopw_max_searches = tk.IntVar(value=40)
-        ttk.Spinbox(crow, from_=1, to=5000, textvariable=self.nsopw_max_searches, width=8).pack(
-            side=tk.LEFT, padx=4
+        self.nsopw_max_searches = ctk.IntVar(value=40)
+        self.nsopw_max_reports = ctk.IntVar(value=80)
+        self.nsopw_search_delay = ctk.DoubleVar(value=2.0)
+        self.nsopw_report_delay = ctk.DoubleVar(value=2.0)
+
+        lr = ctk.CTkFrame(lim, fg_color="transparent")
+        lr.pack(fill="x", padx=14, pady=4)
+        for label, var in (
+            ("Max searches", self.nsopw_max_searches),
+            ("Max reports", self.nsopw_max_reports),
+            ("Search delay (s)", self.nsopw_search_delay),
+            ("Report delay (s)", self.nsopw_report_delay),
+        ):
+            ctk.CTkLabel(lr, text=label, font=FONT_SM, text_color=C["muted"]).pack(
+                side="left", padx=(8, 4)
+            )
+            ctk.CTkEntry(
+                lr, textvariable=var, width=72,
+                fg_color=C["bg"], border_color=C["border"], text_color=C["text"],
+            ).pack(side="left")
+        ctk.CTkLabel(
+            lim, text="Minimum delay 1.5s is enforced in code.",
+            font=FONT_SM, text_color=C["dim"],
+        ).pack(anchor="w", padx=14, pady=(4, 12))
+
+        # Storage
+        st = _card(scroll)
+        st.pack(fill="x", padx=4, pady=6)
+        _section_label(st, "Storage").pack(anchor="w", padx=14, pady=(12, 8))
+
+        dbrow = ctk.CTkFrame(st, fg_color="transparent")
+        dbrow.pack(fill="x", padx=14, pady=4)
+        ctk.CTkLabel(dbrow, text="Database", font=FONT_SM, text_color=C["muted"], width=100, anchor="w").pack(
+            side="left"
         )
-        ModernLabel(crow, text="Max report fetches:").pack(side=tk.LEFT, padx=(12, 0))
-        self.nsopw_max_reports = tk.IntVar(value=80)
-        ttk.Spinbox(crow, from_=0, to=10000, textvariable=self.nsopw_max_reports, width=8).pack(
-            side=tk.LEFT, padx=4
+        self.nsopw_db_path = ctk.StringVar(value=self.db_path)
+        ctk.CTkEntry(
+            dbrow, textvariable=self.nsopw_db_path,
+            fg_color=C["bg"], border_color=C["border"], text_color=C["text"],
+        ).pack(side="left", fill="x", expand=True, padx=6)
+        ctk.CTkButton(
+            dbrow, text="…", width=36, command=self._nsopw_browse_db,
+            fg_color=C["elevated"], hover_color=C["border"],
+        ).pack(side="left")
+
+        hrow = ctk.CTkFrame(st, fg_color="transparent")
+        hrow.pack(fill="x", padx=14, pady=4)
+        ctk.CTkLabel(hrow, text="HTML archive", font=FONT_SM, text_color=C["muted"], width=100, anchor="w").pack(
+            side="left"
         )
+        self.nsopw_html_dir = ctk.StringVar(value="data/report_pages")
+        ctk.CTkEntry(
+            hrow, textvariable=self.nsopw_html_dir,
+            fg_color=C["bg"], border_color=C["border"], text_color=C["text"],
+        ).pack(side="left", fill="x", expand=True, padx=6)
+        ctk.CTkButton(
+            hrow, text="…", width=36, command=self._nsopw_browse_html,
+            fg_color=C["elevated"], hover_color=C["border"],
+        ).pack(side="left", padx=(0, 4))
+        ctk.CTkButton(
+            hrow, text="Open", width=60, command=self._nsopw_open_html_folder,
+            fg_color=C["elevated"], hover_color=C["border"], text_color=C["text"],
+            border_width=1, border_color=C["border"],
+        ).pack(side="left")
 
-        # --- Rate limits ---
-        rate_box = ModernFrameWithBorder(inner, text="Rate limits (protect NSOPW / state sites)")
-        rate_box.pack(fill=tk.X, padx=10, pady=4)
+        sw = ctk.CTkFrame(st, fg_color="transparent")
+        sw.pack(fill="x", padx=14, pady=(8, 14))
+        self.nsopw_save_html = ctk.BooleanVar(value=True)
+        self.nsopw_enrich = ctk.BooleanVar(value=True)
+        self.nsopw_skip_existing = ctk.BooleanVar(value=True)
+        for text, var in (
+            ("Save report HTML on each entry", self.nsopw_save_html),
+            ("Fetch report pages", self.nsopw_enrich),
+            ("Skip existing URLs", self.nsopw_skip_existing),
+        ):
+            ctk.CTkCheckBox(
+                sw, text=text, variable=var, font=FONT_SM, text_color=C["text"],
+                fg_color=C["accent"], hover_color=C["accent_hover"],
+                checkmark_color=C["bg"], border_color=C["border"],
+            ).pack(side="left", padx=(0, 16))
 
-        rrow = ModernFrame(rate_box)
-        rrow.pack(fill=tk.X, pady=2)
-        ModernLabel(rrow, text="Search delay (sec):").pack(side=tk.LEFT)
-        self.nsopw_search_delay = tk.DoubleVar(value=2.0)
-        ttk.Spinbox(
-            rrow, from_=1.5, to=30.0, increment=0.5,
-            textvariable=self.nsopw_search_delay, width=8,
-        ).pack(side=tk.LEFT, padx=4)
-        ModernLabel(rrow, text="Report delay (sec):").pack(side=tk.LEFT, padx=(12, 0))
-        self.nsopw_report_delay = tk.DoubleVar(value=2.0)
-        ttk.Spinbox(
-            rrow, from_=1.5, to=30.0, increment=0.5,
-            textvariable=self.nsopw_report_delay, width=8,
-        ).pack(side=tk.LEFT, padx=4)
-        ModernLabel(rrow, text="(minimum 1.5s enforced)").pack(side=tk.LEFT, padx=6)
-
-        # --- Storage ---
-        store_box = ModernFrameWithBorder(inner, text="Storage & enrichment")
-        store_box.pack(fill=tk.X, padx=10, pady=4)
-
-        srow = ModernFrame(store_box)
-        srow.pack(fill=tk.X, pady=2)
-        ModernLabel(srow, text="Database:").pack(side=tk.LEFT)
-        self.nsopw_db_path = tk.StringVar(value=self.db_path)
-        ModernEntry(srow, textvariable=self.nsopw_db_path, width=40).pack(
-            side=tk.LEFT, padx=4, fill=tk.X, expand=True
-        )
-        ttk.Button(srow, text="Browse…", command=self._nsopw_browse_db).pack(side=tk.LEFT, padx=2)
-
-        srow2 = ModernFrame(store_box)
-        srow2.pack(fill=tk.X, pady=2)
-        ModernLabel(srow2, text="HTML archive folder:").pack(side=tk.LEFT)
-        self.nsopw_html_dir = tk.StringVar(value="data/report_pages")
-        ModernEntry(srow2, textvariable=self.nsopw_html_dir, width=40).pack(
-            side=tk.LEFT, padx=4, fill=tk.X, expand=True
-        )
-        ttk.Button(srow2, text="Browse…", command=self._nsopw_browse_html).pack(side=tk.LEFT, padx=2)
-        ttk.Button(srow2, text="Open folder", command=self._nsopw_open_html_folder).pack(
-            side=tk.LEFT, padx=2
-        )
-
-        srow3 = ModernFrame(store_box)
-        srow3.pack(fill=tk.X, pady=4)
-        self.nsopw_save_html = tk.BooleanVar(value=True)
-        ttk.Checkbutton(
-            srow3, text="Save report HTML and link to each DB entry",
-            variable=self.nsopw_save_html,
-        ).pack(side=tk.LEFT, padx=2)
-        self.nsopw_enrich = tk.BooleanVar(value=True)
-        ttk.Checkbutton(
-            srow3, text="Fetch report pages for demographics",
-            variable=self.nsopw_enrich,
-        ).pack(side=tk.LEFT, padx=8)
-        self.nsopw_skip_existing = tk.BooleanVar(value=True)
-        ttk.Checkbutton(
-            srow3, text="Skip existing report URLs",
-            variable=self.nsopw_skip_existing,
-        ).pack(side=tk.LEFT, padx=8)
-
-        # --- Actions ---
-        act = ModernFrame(inner)
-        act.pack(fill=tk.X, padx=10, pady=8)
-        self.nsopw_start_btn = ModernButton(
-            act, text="▶ Start NSOPW Search", style="Accent.TButton",
+        # Actions
+        act = ctk.CTkFrame(scroll, fg_color="transparent")
+        act.pack(fill="x", padx=4, pady=10)
+        self.nsopw_start_btn = ctk.CTkButton(
+            act, text="Start NSOPW search", height=42, font=FONT_BOLD,
+            fg_color=C["accent"], hover_color=C["accent_hover"], text_color=C["bg"],
             command=self._start_nsopw,
         )
-        self.nsopw_start_btn.pack(side=tk.LEFT, ipady=4, padx=(0, 8))
-        self.nsopw_cancel_btn = ttk.Button(
-            act, text="Cancel", command=self._cancel_nsopw, state=tk.DISABLED
+        self.nsopw_start_btn.pack(side="left", padx=(4, 8))
+        self.nsopw_cancel_btn = ctk.CTkButton(
+            act, text="Cancel", height=42, width=100, state="disabled",
+            fg_color=C["elevated"], hover_color=C["danger"], text_color=C["text"],
+            border_width=1, border_color=C["border"],
+            command=self._cancel_nsopw,
         )
-        self.nsopw_cancel_btn.pack(side=tk.LEFT, padx=4)
-        ttk.Button(act, text="Open Database Folder", command=self._nsopw_open_db_folder).pack(
-            side=tk.LEFT, padx=4
+        self.nsopw_cancel_btn.pack(side="left", padx=4)
+        ctk.CTkButton(
+            act, text="Open DB folder", height=42,
+            fg_color=C["elevated"], hover_color=C["border"], text_color=C["text"],
+            border_width=1, border_color=C["border"],
+            command=self._nsopw_open_db_folder,
+        ).pack(side="left", padx=4)
+
+        self.nsopw_progress = ctk.CTkProgressBar(
+            scroll, mode="indeterminate", progress_color=C["accent"], fg_color=C["elevated"], height=6
         )
+        self.nsopw_progress.pack(fill="x", padx=8, pady=6)
+        self.nsopw_progress.set(0)
 
-        self.nsopw_progress = ttk.Progressbar(inner, mode="indeterminate")
-        self.nsopw_progress.pack(fill=tk.X, padx=10, pady=(0, 4))
-
-        self.nsopw_status = ModernLabel(
-            inner,
-            text="Ready. Prefer 'initials' mode + polite delays.",
-            style="Status.TLabel",
+        self.nsopw_status = ctk.CTkLabel(
+            scroll, text="Ready — initials mode recommended",
+            font=FONT_SM, text_color=C["muted"], anchor="w",
         )
-        self.nsopw_status.pack(fill=tk.X, padx=10, pady=(0, 10))
+        self.nsopw_status.pack(fill="x", padx=10, pady=(0, 8))
 
-        # Recent results preview
-        prev = ModernFrameWithBorder(inner, text="Recent inserts (this session)")
-        prev.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
-        cols = ("name", "state", "url", "html")
-        self.nsopw_tree = ttk.Treeview(prev, columns=cols, show="headings", height=8)
-        for c, w in zip(cols, (160, 50, 320, 200)):
+        prev = _card(scroll)
+        prev.pack(fill="both", expand=True, padx=4, pady=(4, 12))
+        _section_label(prev, "Recent inserts · double-click to open HTML / URL").pack(
+            anchor="w", padx=14, pady=(12, 6)
+        )
+        wrap, self.nsopw_tree = _tree_frame(prev)
+        wrap.pack(fill="both", expand=True, padx=10, pady=(0, 12))
+        self.nsopw_tree.configure(columns=("name", "state", "url", "html"), show="headings")
+        for c, w in zip(("name", "state", "url", "html"), (160, 60, 320, 220)):
             self.nsopw_tree.heading(c, text=c.upper())
             self.nsopw_tree.column(c, width=w)
-        self.nsopw_tree.pack(fill=tk.BOTH, expand=True)
         self.nsopw_tree.bind("<Double-1>", self._nsopw_open_selected)
 
     def _nsopw_browse_db(self):
@@ -880,11 +951,9 @@ class SexOffenderGUI:
 
     def _open_path(self, path: Path):
         try:
-            import os
             if os.name == "nt":
-                os.startfile(str(path))
+                os.startfile(str(path))  # type: ignore[attr-defined]
             else:
-                import subprocess
                 subprocess.Popen(["xdg-open", str(path)])
         except Exception as e:
             messagebox.showerror("Cannot open", str(e))
@@ -892,7 +961,7 @@ class SexOffenderGUI:
     def _cancel_nsopw(self):
         self._nsopw_cancel = True
         self.log_queue.put("NSOPW cancel requested…")
-        self.nsopw_status.config(text="Cancelling…")
+        self.nsopw_status.configure(text="Cancelling…")
 
     def _start_nsopw(self):
         if self.is_running:
@@ -905,20 +974,15 @@ class SexOffenderGUI:
         if first_mode == "custom" or custom:
             first_names = [x.strip() for x in custom.split(",") if x.strip()]
             if not first_names and first_mode == "custom":
-                messagebox.showwarning(
-                    "Custom first names",
-                    "Enter comma-separated first names or prefixes, or switch mode to 'initials'.",
-                )
+                messagebox.showwarning("Custom first names", "Enter prefixes or switch to initials.")
                 return
             if first_names:
                 first_mode = "custom"
 
         jurs_raw = self.nsopw_jurisdictions.get().strip()
         jurisdictions = (
-            [x.strip().upper() for x in jurs_raw.split(",") if x.strip()]
-            if jurs_raw else None
+            [x.strip().upper() for x in jurs_raw.split(",") if x.strip()] if jurs_raw else None
         )
-
         db_path = self.nsopw_db_path.get().strip() or self.db_path
         html_dir = self.nsopw_html_dir.get().strip() or "data/report_pages"
         search_delay = max(1.5, float(self.nsopw_search_delay.get()))
@@ -926,10 +990,10 @@ class SexOffenderGUI:
 
         self._nsopw_cancel = False
         self._set_running(True)
-        self.nsopw_start_btn.config(state=tk.DISABLED)
-        self.nsopw_cancel_btn.config(state=tk.NORMAL)
-        self.nsopw_progress.start(12)
-        self.nsopw_status.config(text="Running NSOPW search…")
+        self.nsopw_start_btn.configure(state="disabled")
+        self.nsopw_cancel_btn.configure(state="normal")
+        self.nsopw_progress.start()
+        self.nsopw_status.configure(text="Running NSOPW search…")
 
         def log(msg):
             self.log_queue.put(msg)
@@ -958,7 +1022,6 @@ class SexOffenderGUI:
                     save_html=bool(self.nsopw_save_html.get()),
                     log=log,
                 )
-                # Preview last few rows
                 try:
                     rows = builder.db._conn.execute(
                         "SELECT first_name, last_name, state, source_url, report_html_path "
@@ -970,20 +1033,18 @@ class SexOffenderGUI:
 
                 def done():
                     self._set_running(False)
-                    self.nsopw_start_btn.config(state=tk.NORMAL)
-                    self.nsopw_cancel_btn.config(state=tk.DISABLED)
+                    self.nsopw_start_btn.configure(state="normal")
+                    self.nsopw_cancel_btn.configure(state="disabled")
                     self.nsopw_progress.stop()
-                    self.nsopw_status.config(
+                    self.nsopw_progress.set(0)
+                    self.nsopw_status.configure(
                         text=(
-                            f"Done: {stats.inserted} inserted, "
-                            f"{stats.reports_fetched} reports, "
-                            f"{stats.html_saved} HTML saved, "
-                            f"{stats.searches} searches"
+                            f"Done · {stats.inserted} inserted · "
+                            f"{stats.html_saved} HTML · {stats.searches} searches"
                         )
                     )
                     self.db_path = db_path
-                    for item in self.nsopw_tree.get_children():
-                        self.nsopw_tree.delete(item)
+                    self.nsopw_tree.delete(*self.nsopw_tree.get_children())
                     for r in preview:
                         name = f"{r.get('first_name') or ''} {r.get('last_name') or ''}".strip()
                         self.nsopw_tree.insert(
@@ -998,30 +1059,28 @@ class SexOffenderGUI:
                         )
                     messagebox.showinfo(
                         "NSOPW complete",
-                        f"Inserted {stats.inserted} records.\n"
-                        f"HTML pages saved: {stats.html_saved}\n"
-                        f"Database: {db_path}",
+                        f"Inserted {stats.inserted}\nHTML saved {stats.html_saved}\n{db_path}",
                     )
 
-                self.root.after(0, done)
+                self.after(0, done)
             except Exception as e:
                 log(f"NSOPW ERROR: {e}")
 
                 def fail():
                     self._set_running(False)
-                    self.nsopw_start_btn.config(state=tk.NORMAL)
-                    self.nsopw_cancel_btn.config(state=tk.DISABLED)
+                    self.nsopw_start_btn.configure(state="normal")
+                    self.nsopw_cancel_btn.configure(state="disabled")
                     self.nsopw_progress.stop()
-                    self.nsopw_status.config(text=f"Error: {e}")
+                    self.nsopw_status.configure(text=f"Error: {e}")
                     messagebox.showerror("NSOPW error", str(e))
 
-                self.root.after(0, fail)
+                self.after(0, fail)
             finally:
                 builder.close()
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _nsopw_open_selected(self, event=None):
+    def _nsopw_open_selected(self, _event=None):
         sel = self.nsopw_tree.selection()
         if not sel:
             return
@@ -1029,7 +1088,6 @@ class SexOffenderGUI:
         if len(vals) < 4:
             return
         url, html_path = vals[2], vals[3]
-        # Prefer local HTML for validation
         if html_path:
             p = Path(html_path)
             if p.exists():
@@ -1037,173 +1095,139 @@ class SexOffenderGUI:
                 return
         if url:
             try:
-                import webbrowser
                 webbrowser.open(url)
             except Exception as e:
                 messagebox.showerror("Open link", str(e))
 
     # -----------------------------------------------------------------------
-    # Data Viewer tab
+    # Viewer
     # -----------------------------------------------------------------------
-    def _build_data_viewer_tab(self):
-        frame = self.tab_viewer
+    def _build_viewer(self, tab):
+        tab.configure(fg_color=C["surface"])
+        bar = ctk.CTkFrame(tab, fg_color="transparent")
+        bar.pack(fill="x", padx=12, pady=12)
+        ctk.CTkButton(
+            bar, text="Load CSV…", width=110, command=self._load_csv_to_viewer,
+            fg_color=C["accent"], hover_color=C["accent_hover"], text_color=C["bg"],
+        ).pack(side="left", padx=(0, 8))
+        self.viewer_search_var = ctk.StringVar()
+        ctk.CTkEntry(
+            bar, textvariable=self.viewer_search_var, placeholder_text="Filter…", width=220,
+            fg_color=C["bg"], border_color=C["border"], text_color=C["text"],
+        ).pack(side="left", padx=4)
+        ctk.CTkButton(
+            bar, text="Apply", width=80, command=self._apply_viewer_filter,
+            fg_color=C["elevated"], hover_color=C["border"], text_color=C["text"],
+            border_width=1, border_color=C["border"],
+        ).pack(side="left", padx=4)
 
-        ctrl = ModernFrame(frame)
-        ctrl.pack(fill=tk.X, padx=10, pady=(8, 4))
+        wrap, self.viewer_tree = _tree_frame(tab)
+        wrap.pack(fill="both", expand=True, padx=12, pady=(0, 8))
+        self.viewer_tree.configure(show="headings")
 
-        ttk.Button(ctrl, text="Load CSV File...", command=self._load_csv_to_viewer).pack(side=tk.LEFT, padx=2)
-        ttk.Label(ctrl, text="Search:").pack(side=tk.LEFT, padx=(8, 2))
-        self.viewer_search_var = tk.StringVar()
-        ModernEntry(ctrl, textvariable=self.viewer_search_var, width=20).pack(side=tk.LEFT, padx=2)
-        ttk.Button(ctrl, text="Filter", command=lambda: self._apply_viewer_filter()).pack(side=tk.LEFT, padx=2)
-
-        # Treeview
-        tree_frame = ModernFrame(frame)
-        tree_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(6, 4))
-
-        self.viewer_tree = ttk.Treeview(tree_frame, show="headings")
-        vsb = ttk.Scrollbar(tree_frame, orient="vertical", command=self.viewer_tree.yview)
-        hsb = ttk.Scrollbar(tree_frame, orient="horizontal", command=self.viewer_tree.xview)
-        self.viewer_tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
-        vsb.pack(side=tk.RIGHT, fill=tk.Y)
-        hsb.pack(side=tk.BOTTOM, fill=tk.X)
-        self.viewer_tree.pack(fill=tk.BOTH, expand=True)
-
-        self.viewer_status = ModernLabel(frame, text="Load a CSV file to view data", style="Status.TLabel")
-        self.viewer_status.pack(fill=tk.X, padx=10, pady=(4, 0))
+        self.viewer_status = ctk.CTkLabel(
+            tab, text="Load a CSV to browse", font=FONT_SM, text_color=C["muted"]
+        )
+        self.viewer_status.pack(anchor="w", padx=14, pady=(0, 10))
 
     def _load_csv_to_viewer(self):
-        filepath = filedialog.askopenfilename(filetypes=[("CSV files", "*.csv"), ("All files", "*.*")])
+        filepath = filedialog.askopenfilename(filetypes=[("CSV", "*.csv"), ("All", "*.*")])
         if not filepath:
             return
-
         try:
-            import csv
             with open(filepath, "r", encoding="utf-8", errors="replace") as f:
                 reader = csv.DictReader(f)
                 headers = list(reader.fieldnames or [])
                 rows = list(reader)
-
             self.viewer_tree.delete(*self.viewer_tree.get_children())
             self.viewer_tree["columns"] = headers
             for col in headers:
-                self.viewer_tree.heading(col, text=col, anchor=tk.W)
-                self.viewer_tree.column(col, width=120, minwidth=50)
-
-            max_show = 300
-            for i, row in enumerate(rows[:max_show]):
-                values = [str(row.get(h, ""))[:80] for h in headers]
-                self.viewer_tree.insert("", "end", iid=str(i), values=values)
-
+                self.viewer_tree.heading(col, text=col)
+                self.viewer_tree.column(col, width=110, minwidth=50)
+            for i, row in enumerate(rows[:400]):
+                self.viewer_tree.insert(
+                    "", "end", iid=str(i),
+                    values=[str(row.get(h, ""))[:80] for h in headers],
+                )
             self._viewer_data = rows
             self._viewer_headers = headers
-            self._viewer_filtered = list(rows)
-            self.viewer_status.config(text=f"Loaded {len(rows)} records from {Path(filepath).name}")
+            self.viewer_status.configure(
+                text=f"{len(rows)} rows · {Path(filepath).name}"
+            )
         except Exception as e:
-            messagebox.showerror("Error", f"Could not load CSV: {e}")
+            messagebox.showerror("Error", str(e))
 
     def _apply_viewer_filter(self):
-        term = self.viewer_search_var.get().lower().strip()
-        if not hasattr(self, '_viewer_data'):
+        if not self._viewer_data:
             return
-
-        if not term:
-            filtered = list(self._viewer_data)
-        else:
-            filtered = [r for r in self._viewer_data if any(term in str(v).lower() for v in r.values())]
-
+        term = self.viewer_search_var.get().lower().strip()
+        filtered = (
+            self._viewer_data
+            if not term
+            else [r for r in self._viewer_data if any(term in str(v).lower() for v in r.values())]
+        )
         self.viewer_tree.delete(*self.viewer_tree.get_children())
-        max_show = 300
-        for i, row in enumerate(filtered[:max_show]):
-            values = [str(row.get(h, ""))[:80] for h in self._viewer_headers]
-            self.viewer_tree.insert("", "end", iid=str(i), values=values)
-
-        self.viewer_status.config(text=f"Filtered to {len(filtered)} records")
+        for i, row in enumerate(filtered[:400]):
+            self.viewer_tree.insert(
+                "", "end", iid=str(i),
+                values=[str(row.get(h, ""))[:80] for h in self._viewer_headers],
+            )
+        self.viewer_status.configure(text=f"{len(filtered)} rows after filter")
 
     # -----------------------------------------------------------------------
-    # Shared helpers
+    # Shared
     # -----------------------------------------------------------------------
-    def _log(self, message: str):
-        self.log_queue.put(message)
-
-    def _poll_log_queue(self):
+    def _poll_log(self):
         try:
             while True:
                 msg = self.log_queue.get_nowait()
                 self._append_log(msg)
         except queue.Empty:
             pass
-        self.root.after(100, self._poll_log_queue)
+        self.after(100, self._poll_log)
 
     def _append_log(self, message: str):
-        self.log_text.config(state=tk.NORMAL)
-        self.log_text.insert(tk.END, f"[{datetime.now().strftime('%H:%M:%S')}] {message}\n")
-        self.log_text.see(tk.END)
-        self.log_text.config(state=tk.DISABLED)
+        self.log_text.configure(state="normal")
+        ts = datetime.now().strftime("%H:%M:%S")
+        self.log_text.insert("end", f"[{ts}] {message}\n")
+        self.log_text.see("end")
+        self.log_text.configure(state="disabled")
 
     def _set_running(self, running: bool):
         self.is_running = running
-        self.scrape_btn.config(state=tk.DISABLED if running else tk.NORMAL)
-        if hasattr(self, "nsopw_start_btn"):
-            # Keep NSOPW start disabled while any job runs
-            if running and not getattr(self, "_nsopw_cancel", False):
-                pass  # NSOPW worker manages its own buttons when it is the runner
+        state = "disabled" if running else "normal"
+        self.scrape_btn.configure(state=state)
 
     def _load_sources(self):
         from scraper.config import REGISTRIES
+
         try:
             self.sources = REGISTRIES
-            self._refresh_scrape_list()
-            self.log_queue.put("Loaded registry configurations for all 50 states + DC.")
+            self.scrape_tree.delete(*self.scrape_tree.get_children())
+            for reg in self.sources:
+                if reg.abbr == "US":
+                    continue
+                tags = ("direct",) if reg.direct_downloads else ()
+                self.scrape_tree.insert(
+                    "",
+                    "end",
+                    text=reg.name,
+                    values=(reg.abbr, reg.scrape_method.upper(), (reg.notes or "")[:70]),
+                    tags=tags,
+                )
+            self.log_queue.put("Loaded registry configs (50 states + DC).")
         except Exception as e:
             messagebox.showerror("Error", str(e))
-
-    def _refresh_scrape_list(self):
-        self.scrape_tree.delete(*self.scrape_tree.get_children())
-        # Configure tag styles once (tag_configure takes a tag name, not an item id)
-        self.scrape_tree.tag_configure("direct", background="#1a3a2a")
-        for reg in self.sources:
-            if reg.abbr == "US":
-                continue  # Skip national
-            method = reg.scrape_method.upper()
-            notes = (reg.notes or "")[:60]
-            tags = ("direct",) if reg.direct_downloads else ()
-            self.scrape_tree.insert(
-                "", "end", text=reg.name, values=(reg.abbr, method, notes), tags=tags
-            )
 
     def _open_output_folder(self):
         path = Path(self.scrape_output_var.get())
         path.mkdir(parents=True, exist_ok=True)
-        try:
-            import os
-            if os.name == "nt":
-                os.startfile(str(path))
-            else:
-                import subprocess
-                subprocess.Popen(["xdg-open", str(path)])
-        except Exception as e:
-            messagebox.showerror("Cannot open folder", str(e))
+        self._open_path(path)
 
 
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
 def main():
-    root = tk.Tk()
-
-    # Try to use a nicer theme if available
-    try:
-        style = ttk.Style(root)
-        if "vista" in style.theme_names():
-            style.theme_use("vista")
-        elif "clam" in style.theme_names():
-            style.theme_use("clam")
-    except Exception:
-        pass
-
-    app = SexOffenderGUI(root)
-    root.mainloop()
+    app = ArchiverApp()
+    app.mainloop()
 
 
 if __name__ == "__main__":
