@@ -84,7 +84,7 @@ class BuilderSurnameTests(unittest.TestCase):
             self.assertTrue(len(pairs) >= 1)
             self.assertTrue(all(label == "Hispanic" for _, label in pairs))
             # Floor enforced on delays
-            self.assertGreaterEqual(b.search_limiter.min_interval, 1.5)
+            self.assertGreaterEqual(b.search_limiter.min_interval, 2.0)
         finally:
             b.close()
 

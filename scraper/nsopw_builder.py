@@ -34,9 +34,10 @@ DEFAULT_FIRST_NAMES = [
 FIRST_INITIALS = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
 # Default rate limits (seconds / caps)
-DEFAULT_SEARCH_DELAY = 2.0
+# Cloudflare in front of nsopw-api rate-limits bursty clients (403/429).
+DEFAULT_SEARCH_DELAY = 3.0
 DEFAULT_REPORT_DELAY = 2.0
-DEFAULT_MIN_SEARCH_INTERVAL = 1.5  # hard floor even if UI sets lower
+DEFAULT_MIN_SEARCH_INTERVAL = 2.0  # hard floor even if UI sets lower
 DEFAULT_MIN_REPORT_INTERVAL = 1.5
 
 

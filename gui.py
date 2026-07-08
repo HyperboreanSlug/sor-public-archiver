@@ -56,6 +56,7 @@ def _ensure_dependencies() -> None:
         ("customtkinter", "customtkinter"),
         ("bs4", "beautifulsoup4"),
         ("requests", "requests"),
+        ("curl_cffi", "curl_cffi"),
     ):
         try:
             __import__(mod)
@@ -849,7 +850,7 @@ class ArchiverApp(ctk.CTk):
 
         self.nsopw_max_searches = ctk.IntVar(value=40)
         self.nsopw_max_reports = ctk.IntVar(value=80)
-        self.nsopw_search_delay = ctk.DoubleVar(value=2.0)
+        self.nsopw_search_delay = ctk.DoubleVar(value=3.0)
         self.nsopw_report_delay = ctk.DoubleVar(value=2.0)
 
         lr = ctk.CTkFrame(lim, fg_color="transparent")
@@ -869,7 +870,7 @@ class ArchiverApp(ctk.CTk):
             ).pack(side="left")
         ctk.CTkLabel(
             lim,
-            text="Minimum delay 1.5s is enforced. Data: data/offenders.db · HTML: data/report_pages/",
+            text="Min search delay 2s (Cloudflare). Data: data/offenders.db · HTML: data/report_pages/",
             font=FONT_SM, text_color=C["dim"],
         ).pack(anchor="w", padx=14, pady=(4, 12))
 
@@ -946,7 +947,7 @@ class ArchiverApp(ctk.CTk):
 
         db_path = self.nsopw_db_path
         html_dir = self.nsopw_html_dir
-        search_delay = max(1.5, float(self.nsopw_search_delay.get()))
+        search_delay = max(2.0, float(self.nsopw_search_delay.get()))
         report_delay = max(1.5, float(self.nsopw_report_delay.get()))
 
         self._nsopw_cancel = False

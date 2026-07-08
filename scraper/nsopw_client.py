@@ -2,8 +2,15 @@
 NSOPW (Dru Sjodin National Sex Offender Public Website) search client.
 
 Uses the same HTTPS JSON endpoint the official nsopw.gov SPA calls after
-the user accepts Conditions of Use. The site requires a same-day validation
-token header (MM/DD/YYYY), first + last name, and jurisdiction list.
+the user accepts Conditions of Use. The API accepts a same-day token header
+(MM/DD/YYYY), first + last name, and a jurisdiction list.
+
+The API sits behind Cloudflare. Plain Python TLS fingerprints and bursty
+traffic often get 403/429 challenge pages ("Just a moment..."). This client:
+  - prefers curl_cffi Chrome impersonation when installed
+  - sends browser-like Origin/Referer headers
+  - warms the session against nsopw.gov
+  - retries Cloudflare blocks with backoff
 
 Polite rate limiting is enforced. Respect NSOPW Conditions of Use.
 """
@@ -14,15 +21,26 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from html import unescape
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import requests
 
-from .config import USER_AGENT, DEFAULT_DELAY, REQUEST_TIMEOUT
+from .config import DEFAULT_DELAY, REQUEST_TIMEOUT
 
 NSOPW_SEARCH_URL = "https://nsopw-api.ojp.gov/nsopw/v1/v1.0/search"
 NSOPW_OFFLINE_URL = "https://nsopw-api.ojp.gov/nsopw/v1/v1.0/jurisdictions/offline"
 NSOPW_SEARCH_PAGE = "https://www.nsopw.gov/search-public-sex-offender-registries"
+NSOPW_ORIGIN = "https://www.nsopw.gov"
+
+# Match a current desktop Chrome — bot scoring is less harsh than custom UAs.
+BROWSER_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/131.0.0.0 Safari/537.36"
+)
+
+# Cloudflare cool-down after a challenge (seconds), per attempt after the first.
+_CF_BACKOFF_SECONDS = (0, 12, 28, 50)
 
 # Core state/territory codes accepted by NSOPW (excludes "All")
 DEFAULT_JURISDICTIONS = [
@@ -83,29 +101,90 @@ class NSOPWOffender:
         }
 
 
+def _make_http_session() -> Tuple[Any, str]:
+    """
+    Prefer curl_cffi Chrome impersonation (Cloudflare-friendly TLS).
+    Fall back to requests with a browser User-Agent.
+    """
+    try:
+        from curl_cffi import requests as creq  # type: ignore
+
+        session = creq.Session(impersonate="chrome")
+        backend = "curl_cffi"
+    except Exception:
+        session = requests.Session()
+        session.headers["User-Agent"] = BROWSER_UA
+        backend = "requests"
+
+    session.headers.update(
+        {
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Origin": NSOPW_ORIGIN,
+            "Referer": NSOPW_SEARCH_PAGE,
+            "Content-Type": "application/json;charset=UTF-8",
+        }
+    )
+    return session, backend
+
+
+def _is_cloudflare_block(resp: Any) -> bool:
+    """True when the response is a CF challenge / rate-limit page, not API JSON."""
+    code = getattr(resp, "status_code", 0) or 0
+    if code not in (403, 429, 503):
+        return False
+    ct = (getattr(resp, "headers", {}) or {}).get("Content-Type") or ""
+    if "application/json" in ct.lower():
+        return False
+    body = (getattr(resp, "text", None) or "")[:1200].lower()
+    markers = (
+        "just a moment",
+        "cloudflare",
+        "attention required",
+        "cf-ray",
+        "enable javascript",
+        "checking your browser",
+    )
+    if any(m in body for m in markers):
+        return True
+    # 429 from this host is almost always edge rate limiting
+    return code == 429
+
+
 class NSOPWClient:
     """Thin client for NSOPW name search."""
 
     def __init__(self, delay: float = DEFAULT_DELAY, timeout: float = REQUEST_TIMEOUT):
-        self.delay = delay
+        self.delay = max(0.0, float(delay))
         self.timeout = timeout
-        self.session = requests.Session()
-        self.session.headers.update(
-            {
-                "User-Agent": USER_AGENT,
-                "Accept": "application/json, text/plain, */*",
-                "Origin": "https://www.nsopw.gov",
-                "Referer": NSOPW_SEARCH_PAGE,
-                "Content-Type": "application/json;charset=UTF-8",
-            }
-        )
+        self.session, self.http_backend = _make_http_session()
+        self._warmed = False
 
     def _token(self) -> str:
-        """Same-day validation token expected by the API (Conditions of Use)."""
+        """Same-day validation token (MM/DD/YYYY), as used by NSOPW clients."""
         return datetime.now().strftime("%m/%d/%Y")
 
     def close(self) -> None:
-        self.session.close()
+        try:
+            self.session.close()
+        except Exception:
+            pass
+
+    def _ensure_warm(self) -> None:
+        """Hit the public search page once so Origin/Referer look organic."""
+        if self._warmed:
+            return
+        try:
+            self.session.get(
+                NSOPW_SEARCH_PAGE,
+                timeout=min(30.0, float(self.timeout)),
+                headers={
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                },
+            )
+        except Exception:
+            pass
+        self._warmed = True
 
     def search_by_name(
         self,
@@ -143,27 +222,86 @@ class NSOPWClient:
         }
 
         headers = {"token": self._token()}
+        max_attempts = len(_CF_BACKOFF_SECONDS)
+        resp: Any = None
+        last_cf = False
+
         try:
-            resp = self.session.post(
-                NSOPW_SEARCH_URL,
-                json=body,
-                headers=headers,
-                timeout=self.timeout,
-            )
+            for attempt in range(max_attempts):
+                self._ensure_warm()
+                try:
+                    resp = self.session.post(
+                        NSOPW_SEARCH_URL,
+                        json=body,
+                        headers=headers,
+                        timeout=self.timeout,
+                    )
+                except Exception as e:
+                    if attempt + 1 >= max_attempts:
+                        raise RuntimeError(f"NSOPW network error: {e}") from e
+                    time.sleep(_CF_BACKOFF_SECONDS[min(attempt + 1, max_attempts - 1)])
+                    continue
+
+                if _is_cloudflare_block(resp):
+                    last_cf = True
+                    wait = _CF_BACKOFF_SECONDS[min(attempt + 1, max_attempts - 1)]
+                    if attempt + 1 >= max_attempts:
+                        break
+                    # New TLS session sometimes clears a sticky challenge
+                    if attempt >= 1:
+                        try:
+                            self.session.close()
+                        except Exception:
+                            pass
+                        self.session, self.http_backend = _make_http_session()
+                        self._warmed = False
+                    time.sleep(wait)
+                    continue
+
+                last_cf = False
+                break
         finally:
-            time.sleep(self.delay)
+            # Polite spacing between completed search attempts (success or hard fail)
+            if self.delay > 0:
+                time.sleep(self.delay)
+
+        if resp is None:
+            raise RuntimeError("NSOPW search failed: no response")
+
+        if last_cf or _is_cloudflare_block(resp):
+            raise RuntimeError(
+                f"NSOPW blocked by Cloudflare (HTTP {resp.status_code}). "
+                "Wait a minute, increase Search delay to 3–5s, and retry. "
+                f"HTTP backend={self.http_backend}. "
+                "If this persists, install curl_cffi: pip install curl_cffi"
+            )
 
         if resp.status_code == 422:
             # Structured validation errors
             try:
                 err = resp.json()
                 code = err.get("statusCode")
-                raise RuntimeError(f"NSOPW rejected query (statusCode={code}): {resp.text[:300]}")
+                raise RuntimeError(
+                    f"NSOPW rejected query (statusCode={code}): {resp.text[:300]}"
+                )
             except ValueError:
                 resp.raise_for_status()
 
-        resp.raise_for_status()
-        data = resp.json()
+        if resp.status_code >= 400:
+            preview = (resp.text or "")[:200].replace("\n", " ")
+            raise RuntimeError(
+                f"NSOPW search failed: HTTP {resp.status_code} for url: "
+                f"{NSOPW_SEARCH_URL} — {preview}"
+            )
+
+        try:
+            data = resp.json()
+        except ValueError as e:
+            raise RuntimeError(
+                f"NSOPW returned non-JSON (HTTP {resp.status_code}): "
+                f"{(resp.text or '')[:200]!r}"
+            ) from e
+
         raw_offenders = data.get("offenders") or []
         return [self._parse_offender(o) for o in raw_offenders if isinstance(o, dict)]
 
