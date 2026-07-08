@@ -84,6 +84,31 @@ def _normalize_label(raw: str) -> str:
     return s.rstrip(":").strip()
 
 
+def _clean_value(raw: str) -> str:
+    """Collapse whitespace / newlines and decode HTML entities."""
+    s = html_lib.unescape(raw or "")
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def _normalize_url(url: str) -> str:
+    """Fix scheme case, drop :80, and rewrite known gateway hosts."""
+    url = html_lib.unescape((url or "").strip())
+    m = re.match(r"^(https?)://(.*)$", url, flags=re.I)
+    if m:
+        url = m.group(1).lower() + "://" + m.group(2)
+    # Drop default port 80 on http(s) hosts
+    url = re.sub(r"^(https?://[^/:]+):80(?=/|$)", r"\1", url)
+    # Colorado: public link → live apps host after agreement cookie
+    url = url.replace(
+        "www.colorado.gov/apps/cdps/sor",
+        "apps.colorado.gov/apps/dps/sor",
+    )
+    url = url.replace(
+        "colorado.gov/apps/cdps/sor",
+        "apps.colorado.gov/apps/dps/sor",
+    )
+    return url
+
 class ReportFetcher:
     """HTTP client that scrapes demographic fields from report URLs."""
 
@@ -134,12 +159,14 @@ class ReportFetcher:
             "report_fetch_ok": False,
             "report_fetch_status": None,
         }
-        if not report_url or not str(report_url).startswith("http"):
+        report_url = _normalize_url(str(report_url or ""))
+        if not report_url.lower().startswith("http://") and not report_url.lower().startswith(
+            "https://"
+        ):
             result["report_fetch_status"] = "invalid_url"
             return result
-
-        report_url = html_lib.unescape(str(report_url)).strip()
         result["report_url"] = report_url
+        original_url = report_url
 
         try:
             # Texas SOR: try JSON detail endpoint when rapsheet HTML is a JS shell
@@ -164,8 +191,7 @@ class ReportFetcher:
                 self._pace()
                 return result
 
-            # Do NOT strip disclaimer gateways early — we must land on the agree page,
-            # POST agree/continue, then follow the redirect to the real offender sheet.
+            # Do NOT strip disclaimer gateways early — land on agree page, POST, then detail.
             resp, used_url = self._get_with_https_fallback(report_url)
             result["report_fetch_status"] = resp.status_code
             result["report_final_url"] = getattr(resp, "url", used_url) or used_url
@@ -175,8 +201,8 @@ class ReportFetcher:
                 self._pace()
                 return result
 
-            # Click through Conditions / disclaimer forms (iCrimeWatch, sheriffalerts, etc.)
-            passed = self._click_through_disclaimers(resp, max_hops=3)
+            # Click through Conditions / disclaimer forms
+            passed = self._click_through_disclaimers(resp, max_hops=4)
             if passed is not None:
                 resp = passed
                 result["report_final_url"] = getattr(resp, "url", result["report_final_url"])
@@ -186,6 +212,16 @@ class ReportFetcher:
                     result["report_block_reason"] = self._classify_block(resp)
                     self._pace()
                     return result
+                # After agreement, re-fetch original detail URL (CO JSF, WI terms, etc.)
+                resp = self._refetch_detail_if_needed(resp, original_url)
+                result["report_final_url"] = getattr(resp, "url", result["report_final_url"])
+                result["report_fetch_status"] = getattr(resp, "status_code", 200)
+
+            # Maine SOR: national step3 → step4 more-info
+            me_resp = self._try_maine_step4(resp, original_url)
+            if me_resp is not None:
+                resp = me_resp
+                result["report_final_url"] = getattr(resp, "url", result["report_final_url"])
 
             self._pace()
 
@@ -261,32 +297,41 @@ class ReportFetcher:
         )
 
     def _get_with_https_fallback(self, url: str) -> Tuple[Any, str]:
-        """Try URL as-is; on http timeout/SSL issues, retry https."""
-        try:
-            resp = self._get(url)
-            return resp, url
-        except Exception as first_err:
-            if url.startswith("http://"):
-                https_url = "https://" + url[len("http://") :]
+        """Try URL as-is; on http timeout/SSL issues, retry https / www / verify=False."""
+        url = _normalize_url(url)
+        candidates = [url]
+        if url.startswith("http://"):
+            candidates.append("https://" + url[len("http://") :])
+        parsed = urlparse(url)
+        host = (parsed.netloc or "").lower()
+        if host and not host.startswith("www."):
+            candidates.append(
+                urlunparse(parsed._replace(netloc="www." + host, scheme="https"))
+            )
+        if parsed.scheme == "http":
+            candidates.append(urlunparse(parsed._replace(scheme="https")))
+
+        last_err: Optional[Exception] = None
+        for cand in candidates:
+            try:
+                return self._get(cand), cand
+            except Exception as e:
+                last_err = e
+                # TLS / cert failures common on some SOR hosts
                 try:
-                    resp = self._get(https_url)
-                    return resp, https_url
-                except Exception:
-                    pass
-            parsed = urlparse(url)
-            host = parsed.netloc.lower()
-            alts = []
-            if host and not host.startswith("www."):
-                alts.append(urlunparse(parsed._replace(netloc="www." + host, scheme="https")))
-            if parsed.scheme == "http":
-                alts.append(urlunparse(parsed._replace(scheme="https")))
-            for alt in alts:
-                try:
-                    resp = self._get(alt)
-                    return resp, alt
-                except Exception:
+                    resp = self.session.get(
+                        cand,
+                        timeout=self.timeout,
+                        allow_redirects=True,
+                        verify=False,
+                    )
+                    return resp, cand
+                except Exception as e2:
+                    last_err = e2
                     continue
-            raise first_err
+        if last_err:
+            raise last_err
+        raise RuntimeError(f"Failed to fetch {url}")
 
     def _click_through_disclaimers(self, resp: Any, max_hops: int = 3) -> Optional[Any]:
         """
@@ -328,7 +373,9 @@ class ReportFetcher:
         url_l = (url or "").lower()
         if "cap_office_disclaimer" in url_l or "disclaimer.php" in url_l:
             return True
-        if "name=\"agree\"" in low or "name='agree'" in low or 'id="agree"' in low:
+        if "search-agreement" in url_l or "/terms" in url_l or "agreement.jsf" in url_l:
+            return True
+        if 'name="agree"' in low or "name='agree'" in low or 'id="agree"' in low:
             if re.search(r"continue|i agree|terms\s*&\s*conditions|disclaimer", low):
                 return True
         if "you must agree to the terms" in low:
@@ -337,10 +384,82 @@ class ReportFetcher:
             return True
         if "before entering the web site" in low and "agree" in low:
             return True
+        if "i agree" in low and "i do not agree" in low:
+            return True
+        if "acceptform" in low and "submit" in low and "agreement" in low:
+            return True
         # Form present with agree checkbox + continue submit
-        if re.search(r"<form[^>]*>[\s\S]{0,4000}agree[\s\S]{0,2000}continue[\s\S]{0,500}</form>", low):
+        if re.search(
+            r"<form[^>]*>[\s\S]{0,4000}agree[\s\S]{0,2000}continue[\s\S]{0,500}</form>",
+            low,
+        ):
             return True
         return False
+
+    def _refetch_detail_if_needed(self, resp: Any, original_url: str) -> Any:
+        """
+        After accepting terms, some sites land on a search home. Re-request the
+        original offender detail URL with the new session cookie.
+        """
+        text = getattr(resp, "text", None) or ""
+        if self._has_demographics(self._from_html(text)):
+            return resp
+        orig = _normalize_url(original_url)
+        if not orig:
+            return resp
+        try:
+            again, _ = self._get_with_https_fallback(orig)
+            if self._has_demographics(self._from_html(getattr(again, "text", "") or "")):
+                return again
+            # Prefer page that at least mentions race and is not still a terms form
+            low = (getattr(again, "text", "") or "").lower()
+            if "race" in low and not self._looks_like_disclaimer(low, getattr(again, "url", "")):
+                return again
+        except Exception:
+            pass
+        return resp
+
+    def _try_maine_step4(self, resp: Any, original_url: str) -> Optional[Any]:
+        """Maine SOR step3 page links to step4 for full detail."""
+        page_url = getattr(resp, "url", "") or original_url or ""
+        if "maine.gov" not in page_url.lower() and "maine.gov" not in (original_url or "").lower():
+            return None
+        html = getattr(resp, "text", None) or ""
+        if "step3" not in page_url.lower() and "step3" not in html.lower():
+            # still try if form posts to step4
+            if "step4" not in html.lower():
+                return None
+        try:
+            soup = BeautifulSoup(html, "html.parser")
+        except Exception:
+            return None
+        for form in soup.find_all("form"):
+            action = (form.get("action") or "").lower()
+            if "step4" not in action and not any(
+                (i.get("value") or "").lower().startswith("request more")
+                for i in form.find_all("input")
+            ):
+                continue
+            post_url = urljoin(page_url, form.get("action") or page_url)
+            data: Dict[str, str] = {}
+            for inp in form.find_all("input"):
+                name = inp.get("name")
+                if not name:
+                    continue
+                typ = (inp.get("type") or "text").lower()
+                val = inp.get("value") or ""
+                if typ == "submit":
+                    if "request" in val.lower() or "more" in val.lower():
+                        data[name] = val
+                elif typ != "checkbox":
+                    data[name] = val
+            if not data:
+                continue
+            try:
+                return self._post(post_url, data=data, referer=page_url)
+            except Exception:
+                continue
+        return None
 
     def _submit_disclaimer_form(self, resp: Any) -> Optional[Any]:
         """Find agree/accept form on page and POST it. Returns new response or None."""
@@ -387,14 +506,21 @@ class ReportFetcher:
                 score += 1
             if "fwd" in blob or "disc" in blob:
                 score += 1
-            if score >= 3:
+            if "i agree" in blob:
+                score += 3
+            if "acceptform" in blob or "submitlogin" in blob.replace(":", ""):
+                score += 2
+            if score >= 2:
                 candidates.append((score, form))
         if not candidates:
             # Fallback: any form containing an agree-named control
             for form in soup.find_all("form"):
                 for inp in form.find_all("input"):
                     name = (inp.get("name") or inp.get("id") or "").lower()
-                    if name in ("agree", "accept", "iagree", "chkagree", "terms"):
+                    val = (inp.get("value") or "").lower()
+                    if name in ("agree", "accept", "iagree", "chkagree", "terms", "tos"):
+                        return form
+                    if "i agree" in val and "not" not in val:
                         return form
             return None
         candidates.sort(key=lambda x: -x[0])
@@ -430,7 +556,13 @@ class ReportFetcher:
 
             if typ == "submit":
                 blob = f"{name} {val}".lower()
-                if re.search(r"continue|accept|agree|submit|enter|yes|proceed|ok", blob):
+                # Prefer affirmative agree; skip "I do not agree" / decline
+                if re.search(r"do\s*not|don't|disagree|decline|cancel|no\b", blob):
+                    continue
+                if re.search(
+                    r"continue|accept|i agree|agree|submit|enter|yes|proceed|ok",
+                    blob,
+                ):
                     if not submit_picked:
                         data[name] = val or "Continue"
                         submit_picked = True
@@ -567,8 +699,36 @@ class ReportFetcher:
         soup = BeautifulSoup(html, "html.parser")
         found: Dict[str, Any] = {}
 
+        # Keep a raw copy for regex patterns before tag stripping
+        raw_html = html
+
         for tag in soup(["script", "style", "noscript"]):
             tag.decompose()
+
+        # --- Header-row tables (OK Apex, many report grids) ---
+        # Require multiple <th> headers (not label|value rows that use th/td pairs).
+        for table in soup.find_all("table"):
+            rows = table.find_all("tr")
+            if len(rows) < 2:
+                continue
+            ths = rows[0].find_all("th")
+            if len(ths) < 2:
+                continue
+            headers = [_normalize_label(c.get_text(" ", strip=True)) for c in ths]
+            mapped_n = sum(1 for h in headers if h in _LABEL_MAP)
+            if mapped_n < 2:
+                continue
+            for data_row in rows[1:]:
+                tds = data_row.find_all("td")
+                if not tds:
+                    continue
+                values = [_clean_value(td.get_text(" ", strip=True)) for td in tds]
+                for h, v in zip(headers, values):
+                    key = _LABEL_MAP.get(h)
+                    if key and v and _normalize_label(v) not in _LABEL_MAP:
+                        found.setdefault(key, v)
+                if any(k in found for k in ("race", "gender", "height")):
+                    break
 
         # PrimeFaces / FL style: alternating label/value cells
         cells = soup.select("div.borderPanelCell, div.ui-g-12.borderPanelCell")
@@ -576,18 +736,62 @@ class ReportFetcher:
             i = 0
             while i < len(cells) - 1:
                 lab = _normalize_label(cells[i].get_text(" ", strip=True))
-                val = cells[i + 1].get_text(" ", strip=True)
+                val = _clean_value(cells[i + 1].get_text(" ", strip=True))
                 if lab in _LABEL_MAP and val and len(val) < 120 and lab != _normalize_label(val):
                     found.setdefault(_LABEL_MAP[lab], val)
                     i += 2
                 else:
                     i += 1
 
+        # Bootstrap / CA Megans Law: Label:</div><div class="col-…">VALUE</div>
+        for m in re.finditer(
+            r"(Race|Ethnicity|Sex|Gender|Height|Weight|Hair Color|Eye Color|Eyes|Hair|"
+            r"Date of Birth|DOB|Age)\s*:?\s*</(?:div|span|label|strong|b|dt|th)>\s*"
+            r"<(?:div|span|dd|td)[^>]*>\s*([^<]{1,80}?)\s*</(?:div|span|dd|td)>",
+            raw_html,
+            flags=re.I,
+        ):
+            key = _LABEL_MAP.get(m.group(1).lower())
+            if key:
+                found.setdefault(key, _clean_value(m.group(2)))
+
+        # DE / label + sibling span (possibly empty if Knockout not rendered)
+        for lab in soup.find_all("label"):
+            label = _normalize_label(lab.get_text(" ", strip=True))
+            if label not in _LABEL_MAP:
+                continue
+            val = ""
+            fid = lab.get("for")
+            if fid:
+                target = soup.find(id=fid)
+                if target is not None:
+                    val = _clean_value(target.get_text(" ", strip=True))
+            if not val:
+                for sib in lab.find_next_siblings(["span", "div", "p", "td"]):
+                    val = _clean_value(sib.get_text(" ", strip=True))
+                    if val and _normalize_label(val) not in _LABEL_MAP:
+                        break
+                    val = ""
+            if not val and lab.parent is not None:
+                # parent row: "Race: | Black"
+                ptext = lab.parent.get_text(" ", strip=True)
+                rest = re.sub(
+                    re.escape(lab.get_text(" ", strip=True)),
+                    "",
+                    ptext,
+                    count=1,
+                    flags=re.I,
+                ).strip(" :-|")
+                if rest and len(rest) < 80:
+                    val = _clean_value(rest)
+            if val and val not in ("(unknown)", "—", "-") and not val.startswith("("):
+                found.setdefault(_LABEL_MAP[label], val)
+
         for dt in soup.find_all("dt"):
             label = _normalize_label(dt.get_text(" ", strip=True))
             dd = dt.find_next_sibling("dd")
             if dd and label in _LABEL_MAP:
-                found.setdefault(_LABEL_MAP[label], dd.get_text(" ", strip=True))
+                found.setdefault(_LABEL_MAP[label], _clean_value(dd.get_text(" ", strip=True)))
 
         for row in soup.find_all("tr"):
             cells = row.find_all(["th", "td"])
@@ -596,7 +800,7 @@ class ReportFetcher:
             i = 0
             while i < len(cells) - 1:
                 label = _normalize_label(cells[i].get_text(" ", strip=True))
-                value = cells[i + 1].get_text(" ", strip=True)
+                value = _clean_value(cells[i + 1].get_text(" ", strip=True))
                 if label in _LABEL_MAP and value and _normalize_label(value) not in _LABEL_MAP:
                     found.setdefault(_LABEL_MAP[label], value)
                     i += 2
@@ -711,6 +915,17 @@ class ReportFetcher:
         g = str(found.get("gender") or "").strip().lower()
         if g in ("minor", "description", "status", "yes", "no"):
             found.pop("gender", None)
+
+        # Clean all string fields
+        for k, v in list(found.items()):
+            if isinstance(v, str):
+                found[k] = _clean_value(v)
+
+        # CA and others often use Ethnicity where Race is expected
+        if not found.get("race") and found.get("ethnicity"):
+            eth = str(found["ethnicity"]).strip()
+            if eth and eth.lower() not in ("unknown", "undetermined", "n/a", "none"):
+                found["race"] = eth
 
         if base_url:
             found["report_final_url"] = base_url

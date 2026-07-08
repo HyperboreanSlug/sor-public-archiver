@@ -133,6 +133,46 @@ class ReportFetcherTests(unittest.TestCase):
         resolved = ReportFetcher._resolve_gateway_url(url)
         self.assertEqual(resolved, target)
 
+    def test_normalize_url_uppercase_scheme(self):
+        from scraper.report_fetcher import _normalize_url
+        u = _normalize_url(
+            "HTTPS://SEXOFFENDER.ND.GOV/OFFENDER/DETAILS/ABC"
+        )
+        self.assertTrue(u.startswith("https://"))
+        self.assertIn("SEXOFFENDER.ND.GOV", u)
+
+    def test_header_row_table_extraction(self):
+        html = """
+        <html><body><table>
+        <tr><th id="Race">Race</th><th>Sex</th><th>Height</th><th>Hair Color</th></tr>
+        <tr><td>Hispanic</td><td>Male</td><td>5 Feet 08 Inches</td><td>Brown</td></tr>
+        </table></body></html>
+        """
+        f = ReportFetcher(delay=0)
+        data = f._from_html(html)
+        self.assertEqual(data.get("race"), "Hispanic")
+        self.assertEqual(data.get("gender"), "Male")
+        self.assertIn("5", data.get("height") or "")
+        self.assertEqual(data.get("hair_color"), "Brown")
+        f.close()
+
+    def test_bootstrap_label_div_extraction(self):
+        html = """
+        <div>Gender:</div>
+        <div class="col-6">MALE</div>
+        <div>Ethnicity:</div>
+        <div class="col-6">BLACK</div>
+        <div>Height:</div>
+        <div class="col-6">6'00"</div>
+        """
+        f = ReportFetcher(delay=0)
+        data = f._from_html(html)
+        self.assertEqual(data.get("gender"), "MALE")
+        self.assertEqual(data.get("ethnicity"), "BLACK")
+        self.assertEqual(data.get("race"), "BLACK")  # ethnicity fallback
+        self.assertEqual(data.get("height"), "6'00\"")
+        f.close()
+
     def test_disclaimer_form_detection_and_post_data(self):
         html = """
         <html><body>
