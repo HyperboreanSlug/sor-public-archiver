@@ -3,7 +3,7 @@
 Public SOR Archiver — desktop GUI (CustomTkinter).
 
 Dark, high-contrast UI for scrape / search / analysis / NSOPW.
-Run:  python gui.py   or double-click run_gui.bat
+Double-click run_gui.bat (recommended) or gui.py.
 """
 
 from __future__ import annotations
@@ -20,7 +20,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-# Ensure project root is on path and is the working directory (double-click safety)
+# ---------------------------------------------------------------------------
+# Bootstrap: path + cwd (double-click often starts in System32 / user home)
+# ---------------------------------------------------------------------------
 _ROOT = Path(__file__).resolve().parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
@@ -29,8 +31,67 @@ try:
 except OSError:
     pass
 
-import customtkinter as ctk
-from tkinter import filedialog, messagebox, ttk
+
+def _fatal(msg: str) -> None:
+    """Show an error even when launched with pythonw (no console)."""
+    text = msg[:1800]
+    try:
+        (_ROOT / "gui_error.log").write_text(msg, encoding="utf-8")
+    except OSError:
+        pass
+    try:
+        import ctypes
+        ctypes.windll.user32.MessageBoxW(0, text, "SOR Public Archiver", 0x10)
+    except Exception:
+        try:
+            print(msg, file=sys.stderr)
+        except Exception:
+            pass
+
+
+def _ensure_dependencies() -> None:
+    """Install missing packages into *this* interpreter (fixes double-click)."""
+    need = []
+    for mod, pip_name in (
+        ("customtkinter", "customtkinter"),
+        ("bs4", "beautifulsoup4"),
+        ("requests", "requests"),
+    ):
+        try:
+            __import__(mod)
+        except ImportError:
+            need.append(pip_name)
+    if not need:
+        return
+    req = _ROOT / "requirements.txt"
+    cmd = [sys.executable, "-m", "pip", "install", "--user"]
+    if req.is_file():
+        cmd += ["-r", str(req)]
+    else:
+        cmd += need
+    try:
+        subprocess.check_call(cmd)
+    except Exception as e:
+        _fatal(
+            "Missing packages and auto-install failed.\n\n"
+            f"Interpreter:\n{sys.executable}\n\n"
+            f"Need: {', '.join(need)}\n\n"
+            f"{e}\n\n"
+            "Open a terminal in this folder and run:\n"
+            "  python -m pip install -r requirements.txt\n\n"
+            "Or double-click run_gui.bat"
+        )
+        raise SystemExit(1) from e
+
+
+_ensure_dependencies()
+
+try:
+    import customtkinter as ctk
+    from tkinter import filedialog, messagebox, ttk
+except Exception as e:
+    _fatal(f"Failed to import GUI libraries:\n\n{e}\n\n{sys.executable}")
+    raise SystemExit(1) from e
 
 # ---------------------------------------------------------------------------
 # Theme — zinc / slate, warm accent (no blue-on-white)
@@ -1123,18 +1184,9 @@ def main():
         app = ArchiverApp()
         app.mainloop()
     except Exception:
-        # Surface errors when launched via double-click (no visible console)
         err = traceback.format_exc()
-        try:
-            messagebox.showerror("SOR Public Archiver failed to start", err)
-        except Exception:
-            pass
-        # Also write a log next to the script for debugging
-        try:
-            (_ROOT / "gui_error.log").write_text(err, encoding="utf-8")
-        except OSError:
-            pass
-        raise
+        _fatal(f"SOR Public Archiver crashed:\n\n{err}")
+        raise SystemExit(1) from None
 
 
 if __name__ == "__main__":
