@@ -70,7 +70,7 @@ def api_request(
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--tag", default="v1.3.12")
+    ap.add_argument("--tag", default="v1.3.13")
     ap.add_argument(
         "--zip",
         type=Path,
@@ -120,11 +120,11 @@ Standalone **Windows** GUI package (no Python install required).
 4. If the app fails to start, install [VC++ Redistributable 2015–2022 x64](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist)
 
 ### Highlights ({tag})
-- **NSOPW enrich misclassified**: re-fetch reports or name-search for people flagged as mismatches (photos/race/URLs)
-- **Cristobal More / false Indian hits**: drop English surnames like More from HC Indian list; Hispanic first names (Cristobal)
-- **State YY fix**: NSOPW junk location.state ignored — use real jurisdiction (e.g. FL); repair existing rows
-- **Statistics pie**: Misclassified-as race is always **Black / White / Other**
-- **Reports**: Analyze & build, Confirm unchecked, first-name confidence scoring
+- **Reports race toggles**: separate **White / Black / Other** filters for the list and export
+- **Reports pagination**: **Page size** + **Prev / Next** (export uses full filtered pool)
+- **Show filter**: **Unconfirmed** · **Confirmed incorrect** · **Confirmed correct**
+- **Confirmed correct drops** off the default Unconfirmed sheet (reopen via Show)
+- **Middle names**: export/backfill + first+middle confidence scoring (prior)
 
 ### Notes
 - Runtime data (`data/`, downloads, backups) is local-only and is **not** shipped in this package

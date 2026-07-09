@@ -3461,55 +3461,96 @@ class ArchiverApp(ctk.CTk):
             font=FONT_SM, text_color=C["text"],
             fg_color=C["accent"], hover_color=C["accent_hover"],
             border_color=C["border"], checkmark_color=C["bg"],
-        ).pack(side="left", padx=(0, 10))
+            command=lambda: self._reports_on_filter_change(),
+        ).pack(side="left", padx=(0, 8))
 
-        self.report_race_bw_other = ctk.BooleanVar(value=True)
-        ctk.CTkCheckBox(
-            bar, text="Black / White / Other only",
-            variable=self.report_race_bw_other,
-            font=FONT_SM, text_color=C["text"],
-            fg_color=C["accent"], hover_color=C["accent_hover"],
-            border_color=C["border"], checkmark_color=C["bg"],
-        ).pack(side="left", padx=(0, 10))
+        # Separate race toggles for list + export (misclassified-as buckets)
+        self.report_race_white = ctk.BooleanVar(value=True)
+        self.report_race_black = ctk.BooleanVar(value=True)
+        self.report_race_other = ctk.BooleanVar(value=True)
+        for label, var in (
+            ("White", self.report_race_white),
+            ("Black", self.report_race_black),
+            ("Other", self.report_race_other),
+        ):
+            ctk.CTkCheckBox(
+                bar, text=label, variable=var,
+                font=FONT_SM, text_color=C["text"],
+                fg_color=C["accent"], hover_color=C["accent_hover"],
+                border_color=C["border"], checkmark_color=C["bg"],
+                command=lambda: self._reports_on_filter_change(),
+            ).pack(side="left", padx=(0, 6))
 
-        ctk.CTkLabel(bar, text="Max", font=FONT_SM, text_color=C["muted"]).pack(
-            side="left", padx=(4, 4)
+        ctk.CTkLabel(bar, text="Page size", font=FONT_SM, text_color=C["muted"]).pack(
+            side="left", padx=(8, 4)
         )
-        self.report_max_var = ctk.IntVar(value=80)
-        ctk.CTkEntry(
-            bar, textvariable=self.report_max_var, width=56,
+        self.report_max_var = ctk.IntVar(value=40)
+        page_size_entry = ctk.CTkEntry(
+            bar, textvariable=self.report_max_var, width=48,
             fg_color=C["bg"], border_color=C["border"], text_color=C["text"],
-        ).pack(side="left", padx=(0, 10))
+        )
+        page_size_entry.pack(side="left", padx=(0, 8))
+        # Enter reapplies page size (Prev/Next also re-read it each click)
+        page_size_entry.bind(
+            "<Return>", lambda _e: self._reports_on_filter_change()
+        )
 
         ctk.CTkLabel(bar, text="Show", font=FONT_SM, text_color=C["muted"]).pack(
             side="left", padx=(4, 4)
         )
-        self.report_verdict_filter = ctk.StringVar(value="all")
+        # Work queue default: unconfirmed only — Correct labels drop off this sheet
+        self.report_verdict_filter = ctk.StringVar(value="Unconfirmed")
         ctk.CTkComboBox(
-            bar, variable=self.report_verdict_filter, width=130,
-            values=["all", "unreviewed", "confirmed", "correct", "skip"],
+            bar, variable=self.report_verdict_filter, width=160,
+            values=[
+                "Unconfirmed",
+                "Confirmed incorrect",
+                "Confirmed correct",
+            ],
             fg_color=C["bg"], border_color=C["border"], button_color=C["elevated"],
             text_color=C["text"], dropdown_fg_color=C["panel"],
-            command=lambda _v: self._reports_rebuild_cards(),
-        ).pack(side="left", padx=(0, 12))
+            command=lambda _v: self._reports_on_filter_change(),
+        ).pack(side="left", padx=(0, 8))
 
         ctk.CTkButton(
-            bar, text="Confirm unchecked", width=140,
+            bar, text="Confirm unchecked", width=130,
             command=self._reports_confirm_unchecked,
             fg_color="#5c3030", hover_color="#7a4040", text_color=C["text"],
         ).pack(side="left", padx=(0, 6))
         ctk.CTkButton(
-            bar, text="Export HTML", width=110,
+            bar, text="Export HTML", width=100,
             command=self._reports_export_html,
             fg_color=C["elevated"], hover_color=C["border"], text_color=C["text"],
             border_width=1, border_color=C["border"],
         ).pack(side="left", padx=(0, 6))
         ctk.CTkButton(
-            bar, text="Export CSV", width=100,
+            bar, text="Export CSV", width=90,
             command=self._reports_export_csv,
             fg_color=C["elevated"], hover_color=C["border"], text_color=C["text"],
             border_width=1, border_color=C["border"],
         ).pack(side="left")
+
+        # Pagination row
+        page_row = ctk.CTkFrame(top, fg_color="transparent")
+        page_row.pack(fill="x", padx=4, pady=(0, 2))
+        self._report_page = 0
+        self._report_pool: list = []  # full filtered list
+        ctk.CTkButton(
+            page_row, text="◀ Prev", width=80,
+            command=self._reports_prev_page,
+            fg_color=C["elevated"], hover_color=C["border"], text_color=C["text"],
+            border_width=1, border_color=C["border"],
+        ).pack(side="left", padx=(0, 6))
+        self.report_page_label = ctk.CTkLabel(
+            page_row, text="Page —", font=FONT_SM, text_color=C["muted"],
+        )
+        self.report_page_label.pack(side="left", padx=6)
+        ctk.CTkButton(
+            page_row, text="Next ▶", width=90,
+            command=self._reports_next_page,
+            fg_color=C["elevated"], hover_color=C["border"], text_color=C["text"],
+            border_width=1, border_color=C["border"],
+        ).pack(side="left", padx=(6, 0))
 
         # ---- Summary metrics ----
         sum_row = ctk.CTkFrame(top, fg_color="transparent")
@@ -3538,7 +3579,7 @@ class ArchiverApp(ctk.CTk):
             top,
             text=(
                 "Click Analyze & build (uses Misclassify ethnicity / min conf). "
-                "Mark Confirmed or Correct · Confirm unchecked only fills unreviewed cards."
+                "Show: Unconfirmed (default) · Confirmed correct drops off this sheet."
             ),
             font=FONT_SM, text_color=C["dim"], anchor="w",
         )
@@ -3560,9 +3601,9 @@ class ArchiverApp(ctk.CTk):
                 "No report list yet.\n\n"
                 "1. Set ethnicity / min conf (shared with Misclassify)\n"
                 "2. Click Analyze & build\n"
-                "3. Review — Confirmed misclass or Correct label\n"
-                "4. Confirm unchecked for remaining unreviewed cards\n"
-                "5. Export HTML for a presentation-ready gallery"
+                "3. Review Unconfirmed — mark Confirmed incorrect or Confirmed correct\n"
+                "4. Confirmed correct drops off this sheet (use Show to reopen)\n"
+                "5. Switch Show → Confirmed incorrect · Export HTML"
             ),
             font=FONT_SM, text_color=C["dim"], justify="left",
         )
@@ -3648,6 +3689,26 @@ class ArchiverApp(ctk.CTk):
         if save:
             self._save_report_verdicts()
 
+    # Display label → internal verdict key for Reports "Show" filter
+    _REPORT_SHOW_TO_VERDICT = {
+        "unconfirmed": "unreviewed",
+        "unreviewed": "unreviewed",
+        "confirmed incorrect": "confirmed",
+        "confirmed": "confirmed",
+        "confirmed misclass": "confirmed",
+        "confirmed correct": "correct",
+        "correct": "correct",
+        "correct label": "correct",
+        "skip": "skip",
+        "skipped": "skip",
+        "all": "all",
+    }
+
+    def _reports_verdict_filter_key(self) -> str:
+        """Normalize Show dropdown → unreviewed|confirmed|correct|all."""
+        raw = (self.report_verdict_filter.get() or "Unconfirmed").strip().lower()
+        return self._REPORT_SHOW_TO_VERDICT.get(raw, "unreviewed")
+
     def _results_excluding_correct(self, results: Optional[list] = None) -> list:
         """Misclass results with Correct-label verdicts removed (for Statistics)."""
         src = list(results if results is not None else (self._misclass_results or []))
@@ -3716,14 +3777,90 @@ class ArchiverApp(ctk.CTk):
             )
             self._misclass_records_by_iid[iid] = rec
 
+    def _reports_race_buckets_allowed(self) -> set:
+        """Which misclassified-as race buckets are enabled (White/Black/Other)."""
+        allow: set = set()
+        if bool(getattr(self, "report_race_white", None) and self.report_race_white.get()):
+            allow.add("White")
+        if bool(getattr(self, "report_race_black", None) and self.report_race_black.get()):
+            allow.add("Black")
+        if bool(getattr(self, "report_race_other", None) and self.report_race_other.get()):
+            allow.add("Other")
+        # If none selected, treat as all (avoid empty list by accident)
+        if not allow:
+            allow = {"White", "Black", "Other"}
+        return allow
+
+    def _reports_page_size(self) -> int:
+        try:
+            n = int(self.report_max_var.get())
+        except (TypeError, ValueError):
+            n = 40
+        return max(1, min(n if n > 0 else 40, 500))
+
+    def _reports_on_filter_change(self) -> None:
+        """Race/verdict/photos filter changed — rebuild pool from page 0."""
+        self._report_page = 0
+        self._reports_rebuild_cards()
+
+    def _reports_apply_page(self) -> list:
+        """Slice _report_pool into current page; update page label."""
+        pool = list(getattr(self, "_report_pool", None) or self._report_items or [])
+        page_size = self._reports_page_size()
+        total = len(pool)
+        n_pages = max(1, (total + page_size - 1) // page_size) if total else 1
+        page = int(getattr(self, "_report_page", 0) or 0)
+        page = max(0, min(page, n_pages - 1))
+        self._report_page = page
+        start = page * page_size
+        end = min(start + page_size, total)
+        slice_ = pool[start:end]
+        self._report_items = slice_
+        if hasattr(self, "report_page_label"):
+            if total == 0:
+                self.report_page_label.configure(text="Page — · 0 people")
+            else:
+                self.report_page_label.configure(
+                    text=(
+                        f"Page {page + 1} / {n_pages}  ·  "
+                        f"showing {start + 1}–{end} of {total:,}"
+                    )
+                )
+        return slice_
+
+    def _reports_next_page(self) -> None:
+        pool = getattr(self, "_report_pool", None) or []
+        if not pool and self._misclass_results:
+            self._report_pool = self._reports_filtered_source()
+            pool = self._report_pool
+        page_size = self._reports_page_size()
+        n_pages = max(1, (len(pool) + page_size - 1) // page_size) if pool else 1
+        cur = int(getattr(self, "_report_page", 0) or 0)
+        if cur + 1 >= n_pages:
+            if hasattr(self, "report_status"):
+                self.report_status.configure(text="Already on last page")
+            return
+        self._report_page = cur + 1
+        self._reports_rebuild_cards(refilter=False)
+
+    def _reports_prev_page(self) -> None:
+        cur = int(getattr(self, "_report_page", 0) or 0)
+        if cur <= 0:
+            if hasattr(self, "report_status"):
+                self.report_status.configure(text="Already on first page")
+            return
+        self._report_page = cur - 1
+        self._reports_rebuild_cards(refilter=False)
+
     def _reports_filtered_source(self) -> list:
-        """Apply report filters to current misclassification results."""
+        """Apply report filters to current misclassification results (full pool)."""
         results = list(self._misclass_results or [])
         if not results:
             return []
 
         photos_only = bool(self.report_photos_only.get())
-        vfilter = (self.report_verdict_filter.get() or "all").strip().lower()
+        vfilter = self._reports_verdict_filter_key()
+        race_allow = self._reports_race_buckets_allowed()
 
         # Prefetch photo paths when missing
         need_ids: List[int] = []
@@ -3773,6 +3910,9 @@ class ArchiverApp(ctk.CTk):
         best_by_person: Dict[str, Any] = {}
         for mc in results:
             rec = mc.record or {}
+            bucket = _misclass_race_bucket(mc.expected_race)
+            if bucket not in race_allow:
+                continue
             photo = (rec.get("photo_path") or "").strip()
             has_photo = bool(photo and Path(photo).is_file())
             if photos_only and not has_photo:
@@ -3800,23 +3940,20 @@ class ArchiverApp(ctk.CTk):
         out = []
         for mc in best_by_person.values():
             verdict = self._verdict_for_mc(mc)
-            if vfilter != "all" and verdict != vfilter:
+            # Default work sheet excludes confirmed-correct; Show picks one bucket
+            if vfilter == "all":
+                if verdict == "correct":
+                    continue  # never mix correct into the active sheet
+            elif verdict != vfilter:
                 continue
             out.append(mc)
 
-        # Stable order: confidence desc
+        # Stable order: confidence desc within the selected verdict bucket
         out.sort(key=lambda m: float(m.confidence or 0), reverse=True)
-
-        try:
-            max_n = int(self.report_max_var.get())
-        except (TypeError, ValueError):
-            max_n = 80
-        if max_n > 0:
-            out = out[:max_n]
         return out
 
     def _reports_confirm_unchecked(self) -> None:
-        """Mark only unreviewed (unchecked) visible cards as Confirmed misclass."""
+        """Mark only unconfirmed visible cards as Confirmed incorrect."""
         items = list(self._report_items or [])
         if not items:
             messagebox.showinfo("Reports", "Run Analyze & build first.")
@@ -3827,16 +3964,17 @@ class ArchiverApp(ctk.CTk):
         if not unchecked:
             messagebox.showinfo(
                 "Confirm unchecked",
-                "No unchecked (unreviewed) cards in the current list.\n"
-                "Already confirmed / correct / skip marks are left alone.",
+                "No unconfirmed cards on this page.\n"
+                "Already Confirmed incorrect / correct / skip are left alone.",
             )
             return
         ok = messagebox.askyesno(
             "Confirm unchecked?",
             (
-                f"Mark {len(unchecked):,} unchecked (unreviewed) visible card(s) "
-                f"as Confirmed misclass?\n\n"
-                "Already Confirmed, Correct label, and Skip marks are not changed."
+                f"Mark {len(unchecked):,} unconfirmed card(s) on this page "
+                f"as Confirmed incorrect?\n\n"
+                "They leave the Unconfirmed sheet (switch Show to see them).\n"
+                "Already marked cards are not changed."
             ),
         )
         if not ok:
@@ -3848,7 +3986,10 @@ class ArchiverApp(ctk.CTk):
         self._refresh_stats_from_verdicts()
         if hasattr(self, "report_status"):
             self.report_status.configure(
-                text=f"Confirmed {len(unchecked):,} previously unchecked cards"
+                text=(
+                    f"Marked {len(unchecked):,} as Confirmed incorrect "
+                    f"(left Unconfirmed sheet)"
+                )
             )
 
     def _reports_confirm_others(self, keep_mc) -> None:
@@ -3887,19 +4028,28 @@ class ArchiverApp(ctk.CTk):
             self._reports_rebuild_cards()
             self._reports_update_metrics()
             return
-        self._report_items = self._reports_filtered_source()
-        self._reports_rebuild_cards()
+        self._report_page = 0
+        self._report_pool = self._reports_filtered_source()
+        self._reports_rebuild_cards(refilter=False)
         self._reports_update_metrics()
 
-    def _reports_rebuild_cards(self):
-        """Destroy and recreate card widgets for current _report_items."""
+    def _reports_rebuild_cards(self, *, refilter: bool = True):
+        """Destroy and recreate card widgets for the current page of results."""
         scroll = getattr(self, "_report_scroll", None)
         if scroll is None:
             return
 
-        # If filter changed, re-filter from full results
-        if self._misclass_results:
-            self._report_items = self._reports_filtered_source()
+        if refilter and self._misclass_results:
+            self._report_pool = self._reports_filtered_source()
+            # Keep page in range after refilter
+            page_size = self._reports_page_size()
+            n_pages = max(
+                1,
+                (len(self._report_pool) + page_size - 1) // page_size,
+            ) if self._report_pool else 1
+            self._report_page = min(int(getattr(self, "_report_page", 0) or 0), n_pages - 1)
+
+        items = self._reports_apply_page()
 
         for child in list(scroll.winfo_children()):
             try:
@@ -3908,13 +4058,13 @@ class ArchiverApp(ctk.CTk):
                 pass
         self._report_image_refs = []
 
-        items = self._report_items or []
         if not items:
             empty = ctk.CTkLabel(
                 scroll,
                 text=(
-                    "No people match the current filters.\n"
-                    "Try unchecking Photos only, raising Max, or re-running Analyze."
+                    "No people match the current Show / race filters.\n"
+                    "Try Show → Unconfirmed, Confirmed incorrect, or Confirmed correct · "
+                    "or enable White/Black/Other · re-run Analyze."
                 ),
                 font=FONT_SM, text_color=C["dim"], justify="left",
             )
@@ -3922,20 +4072,27 @@ class ArchiverApp(ctk.CTk):
             self._reports_update_metrics()
             return
 
-        total = len(items)
+        pool_n = len(getattr(self, "_report_pool", None) or items)
+        page_size = self._reports_page_size()
+        page = int(getattr(self, "_report_page", 0) or 0)
+        offset = page * page_size
         for i, mc in enumerate(items):
-            self._reports_add_card(scroll, mc, index=i + 1, total=total)
+            self._reports_add_card(
+                scroll, mc, index=offset + i + 1, total=pool_n
+            )
 
         self._reports_update_metrics()
         if hasattr(self, "report_status"):
             conf = sum(
-                1 for mc in items
+                1 for mc in (getattr(self, "_report_pool", None) or items)
                 if self._report_verdicts.get(self._report_item_key(mc)) == "confirmed"
             )
+            show = (self.report_verdict_filter.get() or "Unconfirmed").strip()
             self.report_status.configure(
                 text=(
-                    f"Showing {total:,} people · mark Confirmed or Correct · "
-                    f"{conf:,} confirmed so far · Export HTML for presentation"
+                    f"Show: {show} · pool {pool_n:,} · page {page + 1} · "
+                    f"{conf:,} confirmed incorrect in pool · "
+                    "Confirmed correct leaves Unconfirmed"
                 )
             )
 
@@ -4066,43 +4223,34 @@ class ArchiverApp(ctk.CTk):
         )
         status_lbl.pack(side="left", padx=(0, 12))
 
-        def _set(v: str, m=mc, c=card, s=status_lbl):
+        def _set(v: str, m=mc):
             self._set_verdict_for_mc(m, v, save=True)
-            s.configure(
-                text=self._reports_verdict_label(v),
-                text_color=self._reports_verdict_color(v),
-            )
-            try:
-                c.configure(
-                    border_color={
-                        "confirmed": C["danger"],
-                        "correct": C["success"],
-                        "skip": C["dim"],
-                    }.get(v, C["border"]),
-                    border_width=2 if v != "unreviewed" else 1,
-                )
-            except Exception:
-                pass
-            self._reports_update_metrics()
-            # Correct labels drop out of Misclassify Statistics immediately
-            if v == "correct":
-                self._refresh_stats_from_verdicts()
-                # Optionally hide from current list when filter is unreviewed/all
-                vf = (self.report_verdict_filter.get() or "all").strip().lower()
-                if vf in ("all", "unreviewed"):
-                    # Keep visible under "all" but rebuild if filtering unreviewed
-                    if vf == "unreviewed":
-                        self._reports_rebuild_cards()
+            # Stats: Correct drops from pie immediately
+            self._refresh_stats_from_verdicts()
+            # Leave the current sheet when verdict no longer matches Show filter
+            # (e.g. Correct label drops from Unconfirmed; Confirmed leaves Unconfirmed)
+            want = self._reports_verdict_filter_key()
+            if want != "all" and v != want:
+                self._reports_rebuild_cards()
+                if hasattr(self, "report_status"):
+                    label = {
+                        "confirmed": "Confirmed incorrect — moved off this sheet",
+                        "correct": "Confirmed correct — dropped from this sheet",
+                        "skip": "Skipped — dropped from this sheet",
+                        "unreviewed": "Cleared verdict",
+                    }.get(v, f"Marked {v}")
+                    self.report_status.configure(text=label)
             else:
-                self._refresh_stats_from_verdicts()
+                self._reports_rebuild_cards(refilter=False)
+                self._reports_update_metrics()
 
         ctk.CTkButton(
-            actions, text="Confirmed misclass", width=150,
+            actions, text="Confirmed incorrect", width=150,
             command=lambda: _set("confirmed"),
             fg_color="#5c3030", hover_color="#7a4040", text_color=C["text"],
         ).pack(side="left", padx=(0, 6))
         ctk.CTkButton(
-            actions, text="Correct label", width=120,
+            actions, text="Confirmed correct", width=140,
             command=lambda: _set("correct"),
             fg_color="#2a4a38", hover_color="#356348", text_color=C["text"],
         ).pack(side="left", padx=(0, 6))
@@ -4175,11 +4323,11 @@ class ArchiverApp(ctk.CTk):
     @staticmethod
     def _reports_verdict_label(verdict: str) -> str:
         return {
-            "confirmed": "● Confirmed misclass",
-            "correct": "● Correct label",
+            "confirmed": "● Confirmed incorrect",
+            "correct": "● Confirmed correct",
             "skip": "● Skipped",
-            "unreviewed": "○ Unreviewed",
-        }.get(verdict, "○ Unreviewed")
+            "unreviewed": "○ Unconfirmed",
+        }.get(verdict, "○ Unconfirmed")
 
     @staticmethod
     def _reports_verdict_color(verdict: str) -> str:
@@ -4191,7 +4339,9 @@ class ArchiverApp(ctk.CTk):
         }.get(verdict, C["muted"])
 
     def _reports_update_metrics(self) -> None:
-        items = self._report_items or []
+        page_items = self._report_items or []
+        pool = list(getattr(self, "_report_pool", None) or [])
+        # Verdict chips count full analyze set (not just current Show slice)
         source = list(self._misclass_results or [])
 
         n_photo = 0
@@ -4210,16 +4360,27 @@ class ArchiverApp(ctk.CTk):
                 n_un += 1
 
         if hasattr(self, "report_m_total"):
-            self.report_m_total.configure(text=f"In list: {len(items):,}")
-            self.report_m_photo.configure(text=f"With photo (pool): {n_photo:,}")
-            self.report_m_confirmed.configure(text=f"Confirmed: {n_conf:,}")
+            pool_n = len(pool)
+            self.report_m_total.configure(
+                text=f"This sheet: {pool_n:,} · page: {len(page_items):,}"
+            )
+            self.report_m_photo.configure(text=f"With photo: {n_photo:,}")
+            self.report_m_confirmed.configure(text=f"Incorrect: {n_conf:,}")
             self.report_m_correct.configure(text=f"Correct: {n_ok:,}")
-            self.report_m_unreviewed.configure(text=f"Unreviewed: {n_un:,}")
+            self.report_m_unreviewed.configure(text=f"Unconfirmed: {n_un:,}")
+
+    def _reports_export_source(self) -> list:
+        """Full filtered pool for export (race toggles apply; not just current page)."""
+        pool = list(getattr(self, "_report_pool", None) or [])
+        if pool:
+            return pool
+        if self._misclass_results:
+            return self._reports_filtered_source()
+        return list(self._report_items or [])
 
     def _reports_iter_export_rows(self, *, verdicts: Optional[set] = None):
-        """Yield (mc, verdict, rec) for export. Default: current list items."""
-        items = self._report_items or []
-        for mc in items:
+        """Yield (mc, verdict, rec) for export from full race-filtered pool."""
+        for mc in self._reports_export_source():
             key = self._report_item_key(mc)
             verdict = self._report_verdicts.get(key, "unreviewed")
             if verdicts is not None and verdict not in verdicts:
@@ -4227,9 +4388,11 @@ class ArchiverApp(ctk.CTk):
             yield mc, verdict, dict(mc.record or {})
 
     def _reports_export_csv(self):
-        if not self._report_items:
+        source = self._reports_export_source()
+        if not source:
             messagebox.showinfo("Export", "Build a report list first.")
             return
+        races = ", ".join(sorted(self._reports_race_buckets_allowed())) or "all"
         path = filedialog.asksaveasfilename(
             defaultextension=".csv",
             filetypes=[("CSV", "*.csv")],
@@ -4269,20 +4432,28 @@ class ArchiverApp(ctk.CTk):
                     rec.get("id") or "",
                 ])
                 n += 1
-        messagebox.showinfo("Exported", f"{n} rows → {path}")
-        self.log_queue.put(f"Reports CSV: {n} rows → {path}")
+        messagebox.showinfo(
+            "Exported",
+            f"{n} rows (race: {races}) → {path}",
+        )
+        self.log_queue.put(f"Reports CSV: {n} rows (race: {races}) → {path}")
 
     def _reports_export_html(self):
         """Write a scrollable dark HTML gallery (list or compact grid)."""
-        if not self._report_items:
+        source = self._reports_export_source()
+        if not source:
             messagebox.showinfo("Export", "Build a report list first.")
             return
 
+        races = ", ".join(sorted(self._reports_race_buckets_allowed())) or "all"
         only = messagebox.askyesnocancel(
             "Export HTML",
-            "Export only Confirmed misclass rows?\n\n"
-            "Yes = confirmed only\n"
-            "No = everyone currently in the list\n"
+            "Export only Confirmed incorrect rows?\n\n"
+            f"Race filter: {races} · Show filter: "
+            f"{(self.report_verdict_filter.get() or 'Unconfirmed').strip()}\n"
+            "(full pool for that Show/race filter, not just this page)\n\n"
+            "Yes = confirmed incorrect only\n"
+            "No = everyone in the current Show pool\n"
             "Cancel = abort",
         )
         if only is None:
@@ -4534,7 +4705,7 @@ class ArchiverApp(ctk.CTk):
   <h1>Misclassification review</h1>
   <p>
     Generated {_esc(generated)} · filter {_esc(eth_f)} · min conf {_esc(min_c)}
-    · {len(rows)} people · {n_conf} confirmed
+    · race {_esc(races)} · {len(rows)} people · {n_conf} confirmed
     · layout: {_esc(layout)}
   </p>
 </header>
@@ -4547,9 +4718,11 @@ class ArchiverApp(ctk.CTk):
         Path(path).write_text(html, encoding="utf-8")
         messagebox.showinfo(
             "Exported",
-            f"{len(rows)} cards ({layout}) → {path}",
+            f"{len(rows)} cards ({layout}, race: {races}) → {path}",
         )
-        self.log_queue.put(f"Reports HTML ({layout}): {len(rows)} cards → {path}")
+        self.log_queue.put(
+            f"Reports HTML ({layout}): {len(rows)} cards (race: {races}) → {path}"
+        )
         try:
             self._open_path(Path(path))
         except Exception:
