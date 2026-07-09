@@ -9,9 +9,11 @@ import json
 import re
 import shutil
 import sqlite3
+from collections import defaultdict
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime, timezone
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 
 # Schema version - increment when schema changes
@@ -23,16 +25,25 @@ DUPLICATE_STRATEGIES = (
     "external_id",      # same external_id within state
     "name_state_dob",   # same first+last+state+DOB
     "name_dob",         # same first+last+DOB across states (multi-state registration)
+    "name_state_soft",  # same first+last+state when photo_url or address also matches
     "name_state",       # same first+last+state (weaker — different people can share names)
 )
 
-# Default Integrity / CLI "all" order (strongest → multi-state name+DOB)
+# Default Integrity / CLI "all" order (strongest → multi-state name+DOB → soft name+state)
 DEFAULT_DEDUPE_STRATEGIES = (
     "source_url",
     "external_id",
     "name_state_dob",
     "name_dob",
+    "name_state_soft",
 )
+
+# Query params that are session/cache noise (same person → different URL)
+_VOLATILE_URL_PARAMS = frozenset({
+    "uid", "session", "sessionid", "sid", "token", "auth", "access_token",
+    "t", "ts", "timestamp", "_", "cache", "cb", "nonce", "requestid",
+    "request_id", "correlationid", "correlation_id",
+})
 
 # When merging duplicates, union distinct values with this separator
 _MERGE_SEP = " | "
@@ -333,12 +344,27 @@ class Database:
         return dest
 
     def existing_source_urls(self) -> set:
-        """Load all non-empty source_url values (for bulk dedupe)."""
+        """Load all non-empty source_url values (for bulk dedupe).
+
+        Includes both raw URLs and normalized forms so session ``uid`` variants
+        of the same page are treated as already present.
+        """
         rows = self._conn.execute(
             "SELECT source_url FROM offenders "
             "WHERE source_url IS NOT NULL AND TRIM(source_url) != ''"
         ).fetchall()
-        return {str(r[0]).strip() for r in rows if r and r[0]}
+        out: set = set()
+        for r in rows:
+            if not r or not r[0]:
+                continue
+            raw = str(r[0]).strip()
+            if not raw:
+                continue
+            out.add(raw)
+            norm = self.normalize_identity_url(raw)
+            if norm:
+                out.add(norm)
+        return out
 
     def iter_offenders(
         self,
@@ -374,8 +400,36 @@ class Database:
 
     # ---- Insert operations ----
 
+    def normalize_record_identity(self, record: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Write-time identity cleanup: strip session tokens from URLs and prefer
+        stable registry Ids in external_id (prevents NSOPW uid= duplicates).
+        """
+        out = dict(record or {})
+        url = str(out.get("source_url") or "").strip()
+        ext = str(out.get("external_id") or "").strip()
+        if url:
+            norm = self.normalize_identity_url(url)
+            if norm:
+                # Prefer original scheme/host casing from norm (already lowercased)
+                out["source_url"] = norm
+        # Stable external id from URL Id= when possible
+        key = self.stable_external_key(out)
+        if key and "|reg:" in key:
+            out["external_id"] = key.split("|reg:", 1)[1]
+        elif ext:
+            norm_ext = self.normalize_identity_url(ext)
+            if norm_ext:
+                out["external_id"] = norm_ext
+        elif url:
+            norm = self.normalize_identity_url(url)
+            if norm:
+                out["external_id"] = norm
+        return out
+
     def insert_offender(self, record: Dict[str, Any]) -> int:
         """Insert a single offender record. Returns the row id."""
+        record = self.normalize_record_identity(record)
         cursor = self._conn.cursor()
         cursor.execute(_OFFENDER_INSERT_SQL, _record_to_insert_tuple(record))
         self._conn.commit()
@@ -385,13 +439,14 @@ class Database:
         """Insert multiple offender records. Returns count inserted."""
         if not records:
             return 0
+        cleaned = [self.normalize_record_identity(r) for r in records]
         cursor = self._conn.cursor()
         cursor.executemany(
             _OFFENDER_INSERT_SQL,
-            [_record_to_insert_tuple(r) for r in records],
+            [_record_to_insert_tuple(r) for r in cleaned],
         )
         self._conn.commit()
-        return cursor.rowcount if cursor.rowcount is not None and cursor.rowcount >= 0 else len(records)
+        return cursor.rowcount if cursor.rowcount is not None and cursor.rowcount >= 0 else len(cleaned)
 
     # ---- Query operations ----
 
@@ -721,6 +776,91 @@ class Database:
 
     # ---- Duplicate detection / removal ----
 
+    @staticmethod
+    def normalize_identity_url(url: Optional[str]) -> str:
+        """
+        Canonical URL for dedupe.
+
+        Strips session/uid/token query params so the same offender page with
+        different NSOPW ``uid`` values groups together. Keeps stable ids
+        (``Id``, ``ImageId``, path segments).
+        """
+        raw = (url or "").strip()
+        if not raw:
+            return ""
+        try:
+            p = urlparse(raw)
+        except Exception:
+            return raw.rstrip("/").lower()
+        # Relative paths / non-http: still normalize query if present
+        kept = [
+            (k, v)
+            for k, v in parse_qsl(p.query, keep_blank_values=True)
+            if k and k.lower() not in _VOLATILE_URL_PARAMS
+        ]
+        kept.sort(key=lambda kv: (kv[0].lower(), kv[1]))
+        host = (p.netloc or "").lower()
+        path = (p.path or "").rstrip("/") or "/"
+        scheme = (p.scheme or "https").lower()
+        if not host and not p.query and not p.path:
+            return raw.rstrip("/").lower()
+        return urlunparse((scheme, host, path, "", urlencode(kept), "")).lower()
+
+    @classmethod
+    def stable_external_key(
+        cls,
+        record: Dict[str, Any],
+        *,
+        state_hint: Optional[str] = None,
+    ) -> str:
+        """
+        Stable person/listing key for external_id strategy.
+
+        Prefers explicit registry Id query params (e.g. GA ``Id=50604``), then
+        normalized URL, then raw external_id text.
+        """
+        ext = str(record.get("external_id") or "").strip()
+        url = str(record.get("source_url") or "").strip()
+        state = (
+            state_hint
+            or record.get("state")
+            or record.get("source_state")
+            or ""
+        )
+        state_u = str(state).strip().upper()
+
+        def _id_from(s: str) -> str:
+            if not s:
+                return ""
+            try:
+                qs = dict(parse_qsl(urlparse(s).query, keep_blank_values=True))
+            except Exception:
+                return ""
+            for key in ("Id", "ID", "id", "OffenderId", "offenderId", "offender_id"):
+                if key in qs and str(qs[key]).strip():
+                    return str(qs[key]).strip()
+            # path tail numeric id: /offenders/12345
+            try:
+                path = urlparse(s).path or ""
+            except Exception:
+                path = ""
+            m = re.search(r"/(\d{3,})/?$", path)
+            if m:
+                return m.group(1)
+            return ""
+
+        for candidate in (ext, url):
+            oid = _id_from(candidate)
+            if oid:
+                return f"{state_u}|reg:{oid}".lower()
+
+        norm = cls.normalize_identity_url(ext or url)
+        if norm:
+            return f"{state_u}|url:{norm}".lower()
+        if ext:
+            return f"{state_u}|raw:{ext.casefold()}"
+        return ""
+
     # Shared CAPTCHA / search / portal URLs must not collapse many people into one.
     _GENERIC_URL_MARKERS = (
         "captcha",
@@ -742,14 +882,48 @@ class Database:
     )
 
     @classmethod
+    def _url_has_stable_offender_id(cls, url: str) -> bool:
+        """True if URL carries a person-specific Id (not a bare portal landing)."""
+        raw = (url or "").strip()
+        if not raw:
+            return False
+        try:
+            p = urlparse(raw)
+            qs = {k.lower(): v for k, v in parse_qsl(p.query, keep_blank_values=True)}
+        except Exception:
+            return False
+        for key in (
+            "id", "offenderid", "offender_id", "offenderid", "personid",
+            "registrantid", "subjectid",
+        ):
+            val = (qs.get(key) or "").strip()
+            if val and val.lower() not in ("0", "null", "none", "undefined"):
+                return True
+        # path …/offenders/12345
+        path = (p.path or "").strip("/")
+        if re.search(r"(?:^|/)(\d{3,})(?:/|$)", path):
+            return True
+        return False
+
+    @classmethod
     def is_generic_source_url(cls, url: str, *, group_count: int = 1) -> bool:
         """
         True when *url* is likely a shared portal/CAPTCHA page, not a unique
         offender report. High fan-out groups are treated as generic too.
+
+        Portal path markers (e.g. ``sort_public``) alone do **not** mark a URL
+        generic when it includes a stable offender ``Id=`` query — those are
+        real person pages that may only differ by session ``uid``.
         """
         u = (url or "").strip().lower()
         if not u:
             return True
+        # Person-specific Id wins over portal path markers
+        if cls._url_has_stable_offender_id(url):
+            # Still unsafe if absurd fan-out (shared Id mis-scrape)
+            if group_count >= 25:
+                return True
+            return False
         compact = re.sub(r"[\s_\-]+", "", u)
         for m in cls._GENERIC_URL_MARKERS:
             if m.replace("-", "").replace("_", "").replace(" ", "") in compact:
@@ -761,8 +935,6 @@ class Database:
             return True
         # Extremely short path after host → landing page
         try:
-            from urllib.parse import urlparse
-
             path = (urlparse(u).path or "").strip("/")
             if path.count("/") == 0 and len(path) < 12 and group_count > 2:
                 return True
@@ -1102,7 +1274,7 @@ class Database:
                 ORDER BY cnt DESC
             """
             return sql, "name+dob (multi-state)"
-        if s == "name_state":
+        if s in ("name_state", "name_state_soft"):
             sql = """
                 SELECT LOWER(TRIM(COALESCE(first_name, ''))) || '|' ||
                        LOWER(TRIM(COALESCE(last_name, ''))) || '|' ||
@@ -1123,11 +1295,123 @@ class Database:
                 HAVING COUNT(*) > 1
                 ORDER BY cnt DESC
             """
-            return sql, "name+state"
+            label = (
+                "name+state (photo/address corroborated)"
+                if s == "name_state_soft"
+                else "name+state"
+            )
+            return sql, label
         raise ValueError(
             f"Unknown duplicate strategy {strategy!r}; "
             f"choose one of {', '.join(DUPLICATE_STRATEGIES)}"
         )
+
+    def _groups_from_member_map(
+        self,
+        strategy: str,
+        key_label: str,
+        buckets: Dict[str, List[Dict[str, Any]]],
+        *,
+        limit_groups: Optional[int] = None,
+        include_unsafe: bool = True,
+    ) -> List[Dict[str, Any]]:
+        """Build sorted duplicate group dicts from pre-bucketed member rows."""
+        groups: List[Dict[str, Any]] = []
+        # Largest groups first (same as SQL ORDER BY cnt DESC)
+        items = sorted(buckets.items(), key=lambda kv: (-len(kv[1]), kv[0]))
+        for key, members in items:
+            if len(members) < 2 or not key:
+                continue
+            members = list(members)
+            members.sort(
+                key=lambda r: (-self._row_richness(r), int(r.get("id") or 0))
+            )
+            keep = members[0]
+            remove_ids = [int(m["id"]) for m in members[1:] if m.get("id") is not None]
+            if not remove_ids:
+                continue
+            keep_name = (
+                f"{keep.get('first_name') or ''} {keep.get('last_name') or ''}"
+            ).strip() or (keep.get("full_name") or "—")
+            safe = True
+            if (strategy or "").lower() == "source_url":
+                # Use a sample raw URL for portal/CAPTCHA detection
+                sample_url = str(
+                    keep.get("source_url") or members[0].get("source_url") or key
+                )
+                safe = not self.is_generic_source_url(
+                    sample_url, group_count=len(members)
+                )
+            if not include_unsafe and not safe:
+                continue
+            groups.append({
+                "strategy": strategy,
+                "key_label": key_label,
+                "key": key,
+                "count": len(members),
+                "ids": [int(m["id"]) for m in members if m.get("id") is not None],
+                "keep_id": int(keep["id"]),
+                "remove_ids": remove_ids,
+                "keep_preview": keep_name,
+                "richness": self._row_richness(keep),
+                "safe": safe,
+                "members": members,
+            })
+            if limit_groups is not None and len(groups) >= int(limit_groups):
+                break
+        return groups
+
+    def _find_duplicate_groups_normalized_url(
+        self,
+        strategy: str,
+        *,
+        limit_groups: Optional[int] = None,
+        include_unsafe: bool = True,
+    ) -> List[Dict[str, Any]]:
+        """
+        Group by normalized source_url / stable external key in Python.
+
+        Required because NSOPW and some state portals append session ``uid``
+        tokens that make raw URL strings unique for the same person.
+        """
+        s = (strategy or "").strip().lower()
+        buckets: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+        if s == "source_url":
+            rows = self._conn.execute(
+                "SELECT * FROM offenders "
+                "WHERE source_url IS NOT NULL AND TRIM(source_url) != ''"
+            ).fetchall()
+            for row in rows:
+                rec = dict(row)
+                key = self.normalize_identity_url(rec.get("source_url"))
+                if key:
+                    buckets[key].append(rec)
+            return self._groups_from_member_map(
+                "source_url",
+                "source_url (normalized)",
+                buckets,
+                limit_groups=limit_groups,
+                include_unsafe=include_unsafe,
+            )
+        if s == "external_id":
+            rows = self._conn.execute(
+                "SELECT * FROM offenders WHERE "
+                "(external_id IS NOT NULL AND TRIM(external_id) != '') "
+                "OR (source_url IS NOT NULL AND TRIM(source_url) != '')"
+            ).fetchall()
+            for row in rows:
+                rec = dict(row)
+                key = self.stable_external_key(rec)
+                if key:
+                    buckets[key].append(rec)
+            return self._groups_from_member_map(
+                "external_id",
+                "external_id (stable)",
+                buckets,
+                limit_groups=limit_groups,
+                include_unsafe=include_unsafe,
+            )
+        raise ValueError(f"Normalized grouping not defined for {strategy!r}")
 
     def find_duplicate_groups(
         self,
@@ -1143,7 +1427,16 @@ class Database:
           strategy, key, count, ids, keep_id, remove_ids, keep_preview,
           richness, safe (False for shared CAPTCHA/portal URL clusters)
         }
+
+        ``source_url`` / ``external_id`` use normalized identity keys so
+        session tokens (e.g. ``uid=``) do not split the same person.
         """
+        s = (strategy or "source_url").strip().lower()
+        if s in ("source_url", "external_id"):
+            return self._find_duplicate_groups_normalized_url(
+                s, limit_groups=limit_groups, include_unsafe=include_unsafe
+            )
+
         sql, key_label = self._duplicate_group_sql(strategy)
         rows = self._conn.execute(sql).fetchall()
         groups: List[Dict[str, Any]] = []
@@ -1160,6 +1453,11 @@ class Database:
                     members.append(rec)
             if len(members) < 2:
                 continue
+            # Soft name+state: only merge when photo_url or address corroborates
+            if s == "name_state_soft":
+                members = self._filter_name_state_soft_members(members)
+                if len(members) < 2:
+                    continue
             # Prefer richest row; break ties with lowest id (stable survivor)
             members.sort(
                 key=lambda r: (-self._row_richness(r), int(r.get("id") or 0))
@@ -1171,8 +1469,6 @@ class Database:
             ).strip() or (keep.get("full_name") or "—")
             key = d.get("dup_key") or ""
             safe = True
-            if (strategy or "").lower() == "source_url":
-                safe = not self.is_generic_source_url(str(key), group_count=len(members))
             if not include_unsafe and not safe:
                 continue
             groups.append({
@@ -1191,6 +1487,39 @@ class Database:
             if limit_groups is not None and len(groups) >= int(limit_groups):
                 break
         return groups
+
+    @classmethod
+    def _corroboration_token(cls, record: Dict[str, Any]) -> str:
+        """Shared address or photo identity used to soft-confirm name+state dups."""
+        photo = cls.normalize_identity_url(record.get("photo_url") or "")
+        if photo:
+            return f"photo:{photo}"
+        addr = " ".join(
+            str(record.get("address") or "").strip().lower().split()
+        )
+        city = " ".join(str(record.get("city") or "").strip().lower().split())
+        if addr and len(addr) >= 6:
+            return f"addr:{addr}|{city}"
+        return ""
+
+    @classmethod
+    def _filter_name_state_soft_members(
+        cls, members: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """
+        Keep the largest subset that shares a photo_url or address token.
+
+        Prevents collapsing different people who only share a common name+state.
+        """
+        buckets: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+        for m in members:
+            tok = cls._corroboration_token(m)
+            if tok:
+                buckets[tok].append(m)
+        if not buckets:
+            return []
+        best = max(buckets.values(), key=len)
+        return best if len(best) >= 2 else []
 
     def count_duplicates(
         self,
@@ -1454,11 +1783,14 @@ class Database:
             skipped = 0
             for rec in prepared:
                 url = (rec.get("source_url") or rec.get("external_id") or "").strip()
-                if url and url in existing_urls:
+                norm = self.normalize_identity_url(url) if url else ""
+                if url and (url in existing_urls or (norm and norm in existing_urls)):
                     skipped += 1
                     continue
                 if url:
                     existing_urls.add(url)
+                    if norm:
+                        existing_urls.add(norm)
                 kept.append(rec)
             prepared = kept
         else:

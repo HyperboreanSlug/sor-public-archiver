@@ -269,6 +269,75 @@ class DatabaseTests(unittest.TestCase):
         )
         self.assertEqual(live["deleted"], 1)
         self.assertEqual(self.db.get_total_count(), 16)
+
+        # Session uid= variants of the same offender URL must group together
+        self.db.insert_offender({
+            "first_name": "Mont", "last_name": "Bhatti",
+            "state": "GA",
+            "source_url": (
+                "https://state.sor.gbi.ga.gov/sort_public/OffenderDetails.aspx"
+                "?Id=50604&uid=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+            ),
+            "external_id": (
+                "https://state.sor.gbi.ga.gov/sort_public/OffenderDetails.aspx"
+                "?Id=50604&uid=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+            ),
+            "photo_path": "data/a.jpg",
+            "race": "White",
+        })
+        self.db.insert_offender({
+            "first_name": "Mont", "last_name": "Bhatti",
+            "state": "GA",
+            "source_url": (
+                "https://state.sor.gbi.ga.gov/sort_public/OffenderDetails.aspx"
+                "?Id=50604&uid=bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+            ),
+            "external_id": (
+                "https://state.sor.gbi.ga.gov/sort_public/OffenderDetails.aspx"
+                "?Id=50604&uid=bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+            ),
+            "crime": "X",
+        })
+        url_groups = self.db.find_duplicate_groups("source_url")
+        self.assertTrue(
+            any(
+                g["count"] >= 2
+                and any(
+                    "50604" in str(g.get("key") or "")
+                    or "bhatti" in (g.get("keep_preview") or "").lower()
+                    for _ in [0]
+                )
+                for g in url_groups
+            )
+            or any(
+                any("bhatti" in str(m.get("last_name") or "").lower() for m in g.get("members") or [])
+                and g["count"] >= 2
+                for g in url_groups
+            ),
+            "uid-variant URLs should form one source_url group",
+        )
+        ext_groups = self.db.find_duplicate_groups("external_id")
+        self.assertTrue(
+            any(
+                any("bhatti" in str(m.get("last_name") or "").lower() for m in g.get("members") or [])
+                and g["count"] >= 2
+                for g in ext_groups
+            ),
+            "stable Id= external key should merge uid variants",
+        )
+        r_uid = self.db.remove_duplicates(
+            "source_url", dry_run=False, merge_fields=True, safe_only=True
+        )
+        self.assertEqual(r_uid["deleted"], 1)
+        # Keeper has photo + crime merged
+        kept_b = None
+        for row in self.db.iter_offenders():
+            if (row.get("last_name") or "").lower() == "bhatti":
+                kept_b = row
+                break
+        self.assertIsNotNone(kept_b)
+        self.assertEqual(kept_b.get("photo_path"), "data/a.jpg")
+        self.assertEqual(kept_b.get("crime"), "X")
         # CAPTCHA people still present
         captcha_left = sum(
             1
@@ -288,9 +357,10 @@ class DatabaseTests(unittest.TestCase):
         self.assertEqual(kept.get("crime"), "X")
 
         # Second pass: name_state_dob — merge distinct crimes
+        # (count includes kept Bhatti after uid-merge)
         r2 = self.db.remove_duplicates("name_state_dob", dry_run=False, merge_fields=True)
         self.assertEqual(r2["deleted"], 1)
-        self.assertEqual(self.db.get_total_count(), 15)
+        self.assertEqual(self.db.get_total_count(), 16)
         c_row = None
         for row in self.db.iter_offenders():
             if (row.get("last_name") or "") == "Three":
@@ -308,7 +378,7 @@ class DatabaseTests(unittest.TestCase):
         # Third pass: multi-state name_dob
         r3 = self.db.remove_duplicates("name_dob", dry_run=False, merge_fields=True)
         self.assertEqual(r3["deleted"], 1)
-        self.assertEqual(self.db.get_total_count(), 14)
+        self.assertEqual(self.db.get_total_count(), 15)
         d_row = None
         for row in self.db.iter_offenders():
             if (row.get("last_name") or "") == "Multi":
@@ -546,6 +616,22 @@ class BackupIntegrityTests(unittest.TestCase):
 
 
 class EthnicAndSearchTests(unittest.TestCase):
+    def test_non_indian_exclusions(self):
+        """English/Portuguese-looking names must not classify as Indian."""
+        from scraper.ethnic_names import EthnicNameDatabase
+
+        db = EthnicNameDatabase()
+        for name in (
+            "Shaw", "Swain", "Ray", "Fernandes", "Gore",
+            "Merchant", "Deen", "Mann", "Corea", "Ingle",
+        ):
+            self.assertFalse(db.is_indian_surname(name), name)
+            eth, conf, _ = db.classify_by_name(name)
+            self.assertFalse(
+                eth.startswith("Indian"),
+                f"{name} classified as {eth} conf={conf}",
+            )
+
     def test_classify_common_names(self):
         eth = EthnicNameDatabase()
         self.assertEqual(eth.classify_by_name("Garcia")[0], "Hispanic")

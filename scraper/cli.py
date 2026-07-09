@@ -722,12 +722,14 @@ Examples:
     p_dedupe.add_argument(
         "--strategy",
         choices=[
-            "all", "source_url", "external_id", "name_state_dob", "name_dob", "name_state",
+            "all", "source_url", "external_id", "name_state_dob", "name_dob",
+            "name_state_soft", "name_state",
         ],
         default="all",
         help=(
             "Match key: source_url (strongest), external_id, name_state_dob, "
-            "name_dob (multi-state), name_state (weaker), or all safe strategies (default)"
+            "name_dob (multi-state), name_state_soft (name+state+photo/address), "
+            "name_state (weaker), or all safe strategies (default)"
         ),
     )
     p_dedupe.add_argument(

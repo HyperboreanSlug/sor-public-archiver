@@ -78,6 +78,25 @@ class EthnicNameDatabase:
                     "high_confidence", set()
                 ).update(self.indian_high_confidence_surnames)
 
+        # Hard exclusions: English/Portuguese/etc. names wrongly listed as Indian
+        excl_raw = data.get("indian_surname_exclusions", [])
+        self.indian_surname_exclusions = {
+            n.strip() for n in (excl_raw or []) if n and str(n).strip()
+        }
+        if self.indian_surname_exclusions:
+            excl_lc = {n.lower() for n in self.indian_surname_exclusions}
+            self.indian_surnames = {
+                n for n in self.indian_surnames if n.lower() not in excl_lc
+            }
+            self.indian_high_confidence_surnames = {
+                n for n in self.indian_high_confidence_surnames
+                if n.lower() not in excl_lc
+            }
+            for group, names in list(self.indian_surnames_by_group.items()):
+                self.indian_surnames_by_group[group] = {
+                    n for n in names if n.lower() not in excl_lc
+                }
+
         # African-American surnames
         self.african_american_surnames = set(data.get("african_american_surnames", []))
 
@@ -133,12 +152,21 @@ class EthnicNameDatabase:
         self._jewish_lc = {n.lower() for n in self.jewish_surnames}
         self._portuguese_lc = {n.lower() for n in self.portuguese_surnames}
         self._arabic_lc = {n.lower() for n in self.arabic_surnames}
-        self._indian_lc = {n.lower() for n in self.indian_surnames}
+        self._indian_excl_lc = {
+            n.lower() for n in (getattr(self, "indian_surname_exclusions", None) or set())
+        }
+        self._indian_lc = {
+            n.lower() for n in self.indian_surnames
+            if n.lower() not in self._indian_excl_lc
+        }
         self._indian_hc_lc = {
             n.lower() for n in (self.indian_high_confidence_surnames or set())
+            if n.lower() not in self._indian_excl_lc
         }
         self._indian_group_lc = {
-            group: {n.lower() for n in names}
+            group: {
+                n.lower() for n in names if n.lower() not in self._indian_excl_lc
+            }
             for group, names in (self.indian_surnames_by_group or {}).items()
         }
         self._asian_lc = {
@@ -166,22 +194,26 @@ class EthnicNameDatabase:
             return ("Unknown", 0.0, [])
 
         matches: List[Tuple[str, str]] = []
+        indian_blocked = surname_lc in getattr(self, "_indian_excl_lc", set())
 
         if surname_lc in self._hispanic_lc:
             matches.append(("Hispanic", "hispanic_surnames"))
 
         # South Asian / Indian before generic Asian so lists stay distinct
         # High-confidence curated list first (stronger label)
-        if surname_lc in getattr(self, "_indian_hc_lc", set()):
-            matches.append(("Indian (high_confidence)", "indian_high_confidence"))
-        if getattr(self, "indian_surnames_by_group", None):
-            for group, names in getattr(self, "_indian_group_lc", {}).items():
-                if group == "high_confidence":
-                    continue  # already labeled above
-                if surname_lc in names:
-                    matches.append((f"Indian ({group})", f"indian_{group}"))
-        if surname_lc in self._indian_lc and not any(m[0].startswith("Indian") for m in matches):
-            matches.append(("Indian", "indian_surnames"))
+        if not indian_blocked:
+            if surname_lc in getattr(self, "_indian_hc_lc", set()):
+                matches.append(("Indian (high_confidence)", "indian_high_confidence"))
+            if getattr(self, "indian_surnames_by_group", None):
+                for group, names in getattr(self, "_indian_group_lc", {}).items():
+                    if group == "high_confidence":
+                        continue  # already labeled above
+                    if surname_lc in names:
+                        matches.append((f"Indian ({group})", f"indian_{group}"))
+            if surname_lc in self._indian_lc and not any(
+                m[0].startswith("Indian") for m in matches
+            ):
+                matches.append(("Indian", "indian_surnames"))
 
         for group, names in self._asian_lc.items():
             if surname_lc in names:
@@ -265,12 +297,18 @@ class EthnicNameDatabase:
     def is_indian_surname(self, surname: str) -> bool:
         """Check if a surname is commonly South Asian / Indian-subcontinent."""
         self._build_lookup_sets()
-        return surname.strip().lower() in self._indian_lc
+        lc = surname.strip().lower()
+        if lc in getattr(self, "_indian_excl_lc", set()):
+            return False
+        return lc in self._indian_lc
 
     def is_indian_high_confidence_surname(self, surname: str) -> bool:
         """Check if a surname is on the curated high-confidence Indian list."""
         self._build_lookup_sets()
-        return surname.strip().lower() in getattr(self, "_indian_hc_lc", set())
+        lc = surname.strip().lower()
+        if lc in getattr(self, "_indian_excl_lc", set()):
+            return False
+        return lc in getattr(self, "_indian_hc_lc", set())
 
     def subcategories(self, ethnicity: str) -> List[str]:
         """

@@ -627,10 +627,13 @@ class ArchiverApp(ctk.CTk):
 
         self.app_settings = load_settings()
         self.db_path = str(self.app_settings.get("db_path") or "data/offenders.db")
+        self._report_verdicts_path = _ROOT / "data" / "report_verdicts.json"
+        self._load_report_verdicts()
 
         self._build()
         self._load_sources()
         self._poll_log()
+        self._bind_global_copy_shortcuts()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
     # -----------------------------------------------------------------------
@@ -884,7 +887,14 @@ class ArchiverApp(ctk.CTk):
             fg_color=C["elevated"], hover_color=C["border"], text_color=C["text"],
             border_width=1, border_color=C["border"],
         )
-        open_photo.pack(side="left")
+        open_photo.pack(side="left", padx=(0, 6))
+        copy_btn = ctk.CTkButton(
+            btns, text="Copy text", width=90, state="disabled",
+            fg_color=C["elevated"], hover_color=C["border"], text_color=C["text"],
+            border_width=1, border_color=C["border"],
+        )
+        copy_btn.pack(side="left")
+        self._make_textbox_selectable(body)
         card._detail_photo = photo  # type: ignore[attr-defined]
         card._detail_content = content  # type: ignore[attr-defined]
         card._detail_empty = empty  # type: ignore[attr-defined]
@@ -892,6 +902,7 @@ class ArchiverApp(ctk.CTk):
         card._detail_open_html = open_html  # type: ignore[attr-defined]
         card._detail_open_url = open_url  # type: ignore[attr-defined]
         card._detail_open_photo = open_photo  # type: ignore[attr-defined]
+        card._detail_copy = copy_btn  # type: ignore[attr-defined]
         card._detail_image_ref = None  # type: ignore[attr-defined]
         card._detail_record = None  # type: ignore[attr-defined]
         card._detail_body_packed = False  # type: ignore[attr-defined]
@@ -975,6 +986,94 @@ class ArchiverApp(ctk.CTk):
         # Drop after Tk no longer names it
         del old_ref
 
+    def _make_textbox_selectable(self, body: ctk.CTkTextbox) -> None:
+        """Allow select + copy (Ctrl+C / right-click) without editing content."""
+        try:
+            tb = getattr(body, "_textbox", None) or body
+        except Exception:
+            return
+
+        def _block_edit(event):
+            if event.state & 0x4:  # Control
+                if event.keysym.lower() in ("c", "a", "insert"):
+                    return None
+            if event.keysym in (
+                "Left", "Right", "Up", "Down", "Home", "End",
+                "Prior", "Next", "Shift_L", "Shift_R", "Control_L", "Control_R",
+            ):
+                return None
+            return "break"
+
+        def _copy_sel(_event=None):
+            try:
+                if tb.tag_ranges("sel"):
+                    text = tb.get("sel.first", "sel.last")
+                else:
+                    text = tb.get("1.0", "end-1c")
+                if text:
+                    self.clipboard_clear()
+                    self.clipboard_append(text)
+            except Exception:
+                pass
+            return "break"
+
+        def _select_all(_event=None):
+            try:
+                tb.tag_add("sel", "1.0", "end-1c")
+                tb.mark_set("insert", "1.0")
+            except Exception:
+                pass
+            return "break"
+
+        try:
+            tb.bind("<Key>", _block_edit, add="+")
+            tb.bind("<Control-c>", _copy_sel, add="+")
+            tb.bind("<Control-C>", _copy_sel, add="+")
+            tb.bind("<Control-a>", _select_all, add="+")
+            tb.bind("<Control-A>", _select_all, add="+")
+            # Right-click copies selection or full text
+            tb.bind("<Button-3>", lambda _e: _copy_sel(), add="+")
+        except Exception:
+            pass
+
+    def _copy_to_clipboard(self, text: str, *, toast: Optional[str] = None) -> None:
+        try:
+            self.clipboard_clear()
+            self.clipboard_append(text or "")
+            if toast:
+                if hasattr(self, "report_status"):
+                    self.report_status.configure(text=toast)
+                elif hasattr(self, "misclass_status"):
+                    self.misclass_status.configure(text=toast)
+        except Exception as e:
+            messagebox.showerror("Copy", str(e))
+
+    def _bind_global_copy_shortcuts(self) -> None:
+        """Ctrl+C on treeviews copies selected row values as TSV."""
+        def _tree_copy(event):
+            w = event.widget
+            try:
+                if not isinstance(w, ttk.Treeview):
+                    return
+                sel = w.selection()
+                if not sel:
+                    return
+                lines = []
+                for iid in sel:
+                    vals = w.item(iid, "values") or ()
+                    lines.append("\t".join(str(v) for v in vals))
+                if lines:
+                    self._copy_to_clipboard("\n".join(lines))
+                return "break"
+            except Exception:
+                return
+
+        try:
+            self.bind_all("<Control-c>", _tree_copy, add="+")
+            self.bind_all("<Control-C>", _tree_copy, add="+")
+        except Exception:
+            pass
+
     def _fill_detail_drawer(self, drawer: ctk.CTkFrame, record: Optional[Dict[str, Any]]) -> None:
         """Populate a detail drawer from an offender record dict."""
         photo_lbl = drawer._detail_photo  # type: ignore[attr-defined]
@@ -982,6 +1081,7 @@ class ArchiverApp(ctk.CTk):
         btn_html = drawer._detail_open_html  # type: ignore[attr-defined]
         btn_url = drawer._detail_open_url  # type: ignore[attr-defined]
         btn_photo = drawer._detail_open_photo  # type: ignore[attr-defined]
+        btn_copy = getattr(drawer, "_detail_copy", None)
         drawer._detail_record = record  # type: ignore[attr-defined]
 
         def _clear_photo(placeholder: str = "No photo") -> None:
@@ -1003,13 +1103,14 @@ class ArchiverApp(ctk.CTk):
             try:
                 body.configure(state="normal")
                 body.delete("1.0", "end")
-                body.configure(state="disabled")
             except Exception:
                 pass
             try:
                 btn_html.configure(state="disabled", command=None)
                 btn_url.configure(state="disabled", command=None)
                 btn_photo.configure(state="disabled", command=None)
+                if btn_copy is not None:
+                    btn_copy.configure(state="disabled", command=None)
             except Exception:
                 pass
             return
@@ -1041,12 +1142,20 @@ class ArchiverApp(ctk.CTk):
             f"HTML: {record.get('report_html_path') or '—'}",
             f"URL: {record.get('source_url') or '—'}",
         ]
+        detail_text = "\n".join(lines)
         self._detail_set_body_visible(drawer, True)
+        # Keep normal (not disabled) so text can be selected and copied
         body.configure(state="normal")
         body.delete("1.0", "end")
-        body.insert("1.0", "\n".join(lines))
-        body.configure(state="disabled")
+        body.insert("1.0", detail_text)
         self.after(30, lambda b=body: self._detail_hide_unneeded_scrollbars(b))
+        if btn_copy is not None:
+            btn_copy.configure(
+                state="normal",
+                command=lambda t=detail_text: self._copy_to_clipboard(
+                    t, toast="Detail text copied"
+                ),
+            )
 
         photo_path = (record.get("photo_path") or "").strip()
         if photo_path and Path(photo_path).is_file():
@@ -2949,56 +3058,39 @@ class ArchiverApp(ctk.CTk):
             "eth_base_count": eth_base,
         }
 
-        if hasattr(self, "misclass_tree"):
-            self.misclass_tree.delete(*self.misclass_tree.get_children())
-            self._misclass_records_by_iid = {}
-            if getattr(self, "misclass_detail", None) is not None:
-                try:
-                    self._fill_detail_drawer(self.misclass_detail, None)
-                except Exception:
-                    pass
-            for mc in results[:500]:
-                rec = dict(mc.record or {})
-                name = (
-                    f"{rec.get('first_name', '') or ''} "
-                    f"{rec.get('last_name', '') or ''}"
-                ).strip() or (rec.get("full_name") or "—")
-                rec["_misclass_expected_race"] = mc.expected_race
-                rec["_misclass_likely"] = mc.likely_ethnicity
-                rec["_misclass_conf"] = mc.confidence
-                iid = self.misclass_tree.insert(
-                    "",
-                    "end",
-                    values=(
-                        name,
-                        (mc.expected_race or "—")[:14],
-                        (mc.likely_ethnicity or "")[:18],
-                        f"{mc.confidence:.3f}",
-                        "; ".join(mc.matching_names[:3]),
-                    ),
+        # Exclude manually Correct-labeled rows from table + Statistics
+        stats_results = self._results_excluding_correct(results)
+        n_correct = len(results) - len(stats_results)
+
+        if getattr(self, "misclass_detail", None) is not None:
+            try:
+                self._fill_detail_drawer(self.misclass_detail, None)
+            except Exception:
+                pass
+        self._populate_misclass_tree(stats_results)
+        shown = min(500, len(stats_results))
+        if hasattr(self, "misclass_status"):
+            if eth != "all" and eth_base is not None:
+                rate = (len(stats_results) / eth_base * 100.0) if eth_base else 0.0
+                self.misclass_status.configure(
+                    text=(
+                        f"{eth}: {eth_base:,} name matches · "
+                        f"{len(stats_results):,} misclassified ({rate:.1f}%)"
+                        + (f" · {n_correct} marked correct (excluded)" if n_correct else "")
+                        + (f" · showing first {shown}" if len(stats_results) > shown else "")
+                        + " · select a row for photo · Ctrl+C copies row"
+                    )
                 )
-                self._misclass_records_by_iid[iid] = rec
-            shown = min(500, len(results))
-            if hasattr(self, "misclass_status"):
-                if eth != "all" and eth_base is not None:
-                    rate = (len(results) / eth_base * 100.0) if eth_base else 0.0
-                    self.misclass_status.configure(
-                        text=(
-                            f"{eth}: {eth_base:,} name matches · "
-                            f"{len(results):,} misclassified ({rate:.1f}%)"
-                            + (f" · showing first {shown}" if len(results) > shown else "")
-                            + " · select a row for photo"
-                        )
-                    )
-                else:
-                    self.misclass_status.configure(
-                        text=f"{len(results)} potential mismatches"
-                        + (f" · showing first {shown}" if len(results) > shown else "")
-                        + " · select a row for photo · Statistics for transitions"
-                    )
+            else:
+                self.misclass_status.configure(
+                    text=f"{len(stats_results)} potential mismatches"
+                    + (f" · {n_correct} correct excluded" if n_correct else "")
+                    + (f" · showing first {shown}" if len(stats_results) > shown else "")
+                    + " · select a row for photo · Statistics for transitions"
+                )
 
         self._update_misclass_stats(
-            results,
+            stats_results,
             db_total=db_total,
             scanned_cap=limit,
             min_conf=min_conf,
@@ -3006,14 +3098,16 @@ class ArchiverApp(ctk.CTk):
             eth_base_count=eth_base,
         )
         self.log_queue.put(
-            f"Misclassification: {len(results)} mismatches"
+            f"Misclassification: {len(stats_results)} mismatches"
+            + (f" ({n_correct} correct excluded)" if n_correct else "")
             + (f" / {eth_base} {eth}" if eth != "all" else "")
         )
         if hasattr(self, "report_status"):
             self.report_status.configure(
                 text=(
-                    f"Analyze ready · {len(results):,} mismatches · "
-                    "open Reports → Build list to review with photos"
+                    f"Analyze ready · {len(stats_results):,} mismatches"
+                    + (f" · {n_correct} correct excluded" if n_correct else "")
+                    + " · Build list to review with photos"
                 )
             )
 
@@ -3102,6 +3196,11 @@ class ArchiverApp(ctk.CTk):
         ).pack(side="left", padx=(0, 12))
 
         ctk.CTkButton(
+            bar, text="Confirm all visible", width=140,
+            command=self._reports_confirm_all_visible,
+            fg_color="#5c3030", hover_color="#7a4040", text_color=C["text"],
+        ).pack(side="left", padx=(0, 6))
+        ctk.CTkButton(
             bar, text="Export HTML", width=110,
             command=self._reports_export_html,
             fg_color=C["elevated"], hover_color=C["border"], text_color=C["text"],
@@ -3170,6 +3269,35 @@ class ArchiverApp(ctk.CTk):
         )
         self._report_empty.pack(anchor="w", padx=16, pady=24)
 
+    def _load_report_verdicts(self) -> None:
+        path = getattr(self, "_report_verdicts_path", None) or (
+            _ROOT / "data" / "report_verdicts.json"
+        )
+        try:
+            if path.is_file():
+                data = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    self._report_verdicts = {
+                        str(k): str(v)
+                        for k, v in data.items()
+                        if v in ("confirmed", "correct", "skip", "unreviewed")
+                    }
+        except Exception:
+            self._report_verdicts = {}
+
+    def _save_report_verdicts(self) -> None:
+        path = getattr(self, "_report_verdicts_path", None) or (
+            _ROOT / "data" / "report_verdicts.json"
+        )
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                json.dumps(self._report_verdicts, indent=2, sort_keys=True),
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
+
     @staticmethod
     def _report_item_key(mc) -> str:
         rec = mc.record or {}
@@ -3180,6 +3308,108 @@ class ArchiverApp(ctk.CTk):
             f"{rec.get('first_name', '') or ''} {rec.get('last_name', '') or ''}"
         ).strip() or (rec.get("full_name") or "")
         return f"n:{name}|{mc.expected_race}|{mc.likely_ethnicity}|{mc.confidence}"
+
+    @staticmethod
+    def _report_person_key(mc) -> str:
+        """Collapse near-duplicate listings of the same person for the report list."""
+        from scraper.database import Database
+
+        rec = mc.record or {}
+        try:
+            stable = Database.stable_external_key(rec)
+            if stable:
+                return f"p:{stable}"
+        except Exception:
+            pass
+        try:
+            norm = Database.normalize_identity_url(rec.get("source_url") or "")
+            if norm:
+                return f"u:{norm}"
+        except Exception:
+            pass
+        fn = (rec.get("first_name") or "").strip().casefold()
+        ln = (rec.get("last_name") or "").strip().casefold()
+        st = (
+            rec.get("state") or rec.get("source_state") or ""
+        ).strip().upper()
+        dob = (rec.get("date_of_birth") or "").strip().casefold()
+        if fn and ln and st:
+            return f"n:{fn}|{ln}|{st}|{dob}"
+        return ArchiverApp._report_item_key(mc)
+
+    def _verdict_for_mc(self, mc) -> str:
+        return self._report_verdicts.get(self._report_item_key(mc), "unreviewed")
+
+    def _set_verdict_for_mc(self, mc, verdict: str, *, save: bool = True) -> None:
+        key = self._report_item_key(mc)
+        if verdict == "unreviewed":
+            self._report_verdicts.pop(key, None)
+        else:
+            self._report_verdicts[key] = verdict
+        if save:
+            self._save_report_verdicts()
+
+    def _results_excluding_correct(self, results: Optional[list] = None) -> list:
+        """Misclass results with Correct-label verdicts removed (for Statistics)."""
+        src = list(results if results is not None else (self._misclass_results or []))
+        out = []
+        for mc in src:
+            if self._verdict_for_mc(mc) == "correct":
+                continue
+            out.append(mc)
+        return out
+
+    def _refresh_stats_from_verdicts(self) -> None:
+        """Recompute Statistics after Correct labels change."""
+        meta = getattr(self, "_misclass_meta", None) or {}
+        if not meta and not self._misclass_results:
+            return
+        filtered = self._results_excluding_correct()
+        # Correct rows no longer count as mismatches; eth_base unchanged
+        try:
+            self._update_misclass_stats(
+                filtered,
+                db_total=int(meta.get("db_total") or 0),
+                scanned_cap=int(meta.get("scanned_cap") or 0),
+                min_conf=float(meta.get("min_conf") or 0.5),
+                eth_filter=str(meta.get("eth_filter") or "all"),
+                eth_base_count=meta.get("eth_base_count"),
+            )
+        except Exception:
+            pass
+        # Rebuild misclass tree without correct rows
+        if hasattr(self, "misclass_tree"):
+            try:
+                self._populate_misclass_tree(filtered)
+            except Exception:
+                pass
+
+    def _populate_misclass_tree(self, results: list) -> None:
+        if not hasattr(self, "misclass_tree"):
+            return
+        self.misclass_tree.delete(*self.misclass_tree.get_children())
+        self._misclass_records_by_iid = {}
+        for mc in results[:500]:
+            rec = dict(mc.record or {})
+            name = (
+                f"{rec.get('first_name', '') or ''} "
+                f"{rec.get('last_name', '') or ''}"
+            ).strip() or (rec.get("full_name") or "—")
+            rec["_misclass_expected_race"] = mc.expected_race
+            rec["_misclass_likely"] = mc.likely_ethnicity
+            rec["_misclass_conf"] = mc.confidence
+            iid = self.misclass_tree.insert(
+                "",
+                "end",
+                values=(
+                    name,
+                    (mc.expected_race or "—")[:14],
+                    (mc.likely_ethnicity or "")[:18],
+                    f"{mc.confidence:.3f}",
+                    "; ".join(mc.matching_names[:3]),
+                ),
+            )
+            self._misclass_records_by_iid[iid] = rec
 
     def _reports_analyze_and_build(self):
         """Run shared Analyze, then build the visual report list."""
@@ -3238,13 +3468,15 @@ class ArchiverApp(ctk.CTk):
                     continue
                 full = photo_by_id[oid]
                 merged = dict(full)
-                # Keep any analysis-only keys if present
                 for k, v in rec.items():
                     if str(k).startswith("_"):
                         merged[k] = v
                 mc.record = merged
 
-        out = []
+        # Collapse same-person duplicates (session-url variants etc.)
+        from scraper.database import Database
+
+        best_by_person: Dict[str, Any] = {}
         for mc in results:
             rec = mc.record or {}
             race_u = (mc.expected_race or "").strip().upper()
@@ -3254,11 +3486,35 @@ class ArchiverApp(ctk.CTk):
             has_photo = bool(photo and Path(photo).is_file())
             if photos_only and not has_photo:
                 continue
-            key = self._report_item_key(mc)
-            verdict = self._report_verdicts.get(key, "unreviewed")
+            person = self._report_person_key(mc)
+            prev = best_by_person.get(person)
+            if prev is None:
+                best_by_person[person] = mc
+                continue
+            # Prefer richer record / higher confidence
+            prev_rec = prev.record or {}
+            score_new = (
+                Database._row_richness(rec),
+                float(mc.confidence or 0),
+                1 if has_photo else 0,
+            )
+            score_old = (
+                Database._row_richness(prev_rec),
+                float(prev.confidence or 0),
+                1 if (prev_rec.get("photo_path") or "").strip() else 0,
+            )
+            if score_new >= score_old:
+                best_by_person[person] = mc
+
+        out = []
+        for mc in best_by_person.values():
+            verdict = self._verdict_for_mc(mc)
             if vfilter != "all" and verdict != vfilter:
                 continue
             out.append(mc)
+
+        # Stable order: confidence desc
+        out.sort(key=lambda m: float(m.confidence or 0), reverse=True)
 
         try:
             max_n = int(self.report_max_var.get())
@@ -3267,6 +3523,50 @@ class ArchiverApp(ctk.CTk):
         if max_n > 0:
             out = out[:max_n]
         return out
+
+    def _reports_confirm_all_visible(self) -> None:
+        """Mark every currently visible report card as Confirmed misclass."""
+        items = list(self._report_items or [])
+        if not items:
+            messagebox.showinfo("Reports", "Build a report list first.")
+            return
+        n_un = sum(1 for mc in items if self._verdict_for_mc(mc) == "unreviewed")
+        n_all = len(items)
+        ok = messagebox.askyesno(
+            "Confirm all visible?",
+            (
+                f"Mark all {n_all:,} visible people as Confirmed misclass?\n"
+                f"({n_un:,} currently unreviewed — others will be overwritten to confirmed.)\n\n"
+                "Correct-label marks are also overwritten. Use only when the whole "
+                "list is ready for presentation export."
+            ),
+        )
+        if not ok:
+            return
+        for mc in items:
+            self._set_verdict_for_mc(mc, "confirmed", save=False)
+        self._save_report_verdicts()
+        self._reports_rebuild_cards()
+        self._refresh_stats_from_verdicts()
+
+    def _reports_confirm_others(self, keep_mc) -> None:
+        """Confirm every other visible card; leave *keep_mc* unchanged."""
+        keep_key = self._report_item_key(keep_mc)
+        n = 0
+        for mc in list(self._report_items or []):
+            if self._report_item_key(mc) == keep_key:
+                continue
+            if self._verdict_for_mc(mc) == "correct":
+                continue  # don't override Correct labels
+            self._set_verdict_for_mc(mc, "confirmed", save=False)
+            n += 1
+        self._save_report_verdicts()
+        self._reports_rebuild_cards()
+        self._refresh_stats_from_verdicts()
+        if hasattr(self, "report_status"):
+            self.report_status.configure(
+                text=f"Marked {n:,} other visible cards as Confirmed misclass"
+            )
 
     def _reports_build_list(self):
         """Filter Analyze results and render photo cards."""
@@ -3450,8 +3750,8 @@ class ArchiverApp(ctk.CTk):
         )
         status_lbl.pack(side="left", padx=(0, 12))
 
-        def _set(v: str, k=key, c=card, s=status_lbl):
-            self._report_verdicts[k] = v
+        def _set(v: str, m=mc, c=card, s=status_lbl):
+            self._set_verdict_for_mc(m, v, save=True)
             s.configure(
                 text=self._reports_verdict_label(v),
                 text_color=self._reports_verdict_color(v),
@@ -3468,6 +3768,17 @@ class ArchiverApp(ctk.CTk):
             except Exception:
                 pass
             self._reports_update_metrics()
+            # Correct labels drop out of Misclassify Statistics immediately
+            if v == "correct":
+                self._refresh_stats_from_verdicts()
+                # Optionally hide from current list when filter is unreviewed/all
+                vf = (self.report_verdict_filter.get() or "all").strip().lower()
+                if vf in ("all", "unreviewed"):
+                    # Keep visible under "all" but rebuild if filtering unreviewed
+                    if vf == "unreviewed":
+                        self._reports_rebuild_cards()
+            else:
+                self._refresh_stats_from_verdicts()
 
         ctk.CTkButton(
             actions, text="Confirmed misclass", width=150,
@@ -3483,6 +3794,27 @@ class ArchiverApp(ctk.CTk):
             actions, text="Skip", width=70,
             command=lambda: _set("skip"),
             fg_color=C["elevated"], hover_color=C["border"], text_color=C["muted"],
+            border_width=1, border_color=C["border"],
+        ).pack(side="left", padx=(0, 6))
+        ctk.CTkButton(
+            actions, text="Confirm others", width=120,
+            command=lambda m=mc: self._reports_confirm_others(m),
+            fg_color=C["elevated"], hover_color=C["border"], text_color=C["text"],
+            border_width=1, border_color=C["border"],
+        ).pack(side="left", padx=(0, 6))
+
+        # Selectable summary line + copy
+        copy_blob = (
+            f"{name}\nRecorded: {race} → Surname: {eth}\n"
+            f"{meta}\nMatched: {matches or '—'}\n"
+            f"State: {state}\nURL: {rec.get('source_url') or '—'}"
+        )
+        ctk.CTkButton(
+            actions, text="Copy", width=60,
+            command=lambda t=copy_blob, n=name: self._copy_to_clipboard(
+                t, toast=f"Copied {n}"
+            ),
+            fg_color=C["elevated"], hover_color=C["border"], text_color=C["text"],
             border_width=1, border_color=C["border"],
         ).pack(side="left", padx=(0, 6))
 
@@ -3510,6 +3842,19 @@ class ArchiverApp(ctk.CTk):
                 fg_color=C["elevated"], hover_color=C["border"], text_color=C["text"],
                 border_width=1, border_color=C["border"],
             ).pack(side="right", padx=2)
+
+        # Click name to copy
+        try:
+            for child in head.winfo_children():
+                if isinstance(child, ctk.CTkLabel):
+                    child.bind(
+                        "<Button-1>",
+                        lambda _e, n=name: self._copy_to_clipboard(
+                            n, toast=f"Copied name: {n}"
+                        ),
+                    )
+        except Exception:
+            pass
 
     @staticmethod
     def _reports_verdict_label(verdict: str) -> str:

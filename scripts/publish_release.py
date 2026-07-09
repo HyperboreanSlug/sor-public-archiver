@@ -70,7 +70,7 @@ def api_request(
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--tag", default="v1.3.9")
+    ap.add_argument("--tag", default="v1.3.10")
     ap.add_argument(
         "--zip",
         type=Path,
@@ -120,10 +120,10 @@ Standalone **Windows** GUI package (no Python install required).
 4. If the app fails to start, install [VC++ Redistributable 2015–2022 x64](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist)
 
 ### Highlights ({tag})
-- **Duplicate merge**: Integrity → Remove duplicates now unions multi-state registrations, separate charges/listings, and source URLs onto the keeper (`FL | TX`, `Assault | Burglary`) before deleting extras
-- **name_dob strategy**: same first+last+DOB across states (multi-state SOR registrations)
-- **Search**: state filters still match merged multi-state values
-- **flags metadata**: `merged_from_ids` / `merged_listings` recorded on merged keepers
+- **Reports**: photo review cards, Confirm all / Confirm others, Correct label excluded from Statistics
+- **Copy**: selectable detail text, Ctrl+C on tables, Copy on report cards
+- **Dedupe**: normalize NSOPW session `uid=` URLs; stable registry Id; soft name+state when photo/address matches; multi-state/charge merge
+- **Indian surnames**: removed false positives (Shaw, Swain, Ray, Fernandes, Gore, Merchant, Deen, Mann, Corea, Ingle) + hard exclusions list
 
 ### Notes
 - Runtime data (`data/`, downloads, backups) is local-only and is **not** shipped in this package

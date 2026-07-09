@@ -43,6 +43,37 @@ BROWSER_UA = (
 # Cloudflare cool-down after a challenge (seconds), per attempt after the first.
 _CF_BACKOFF_SECONDS = (0, 12, 28, 50)
 
+
+def _stable_source_url(uri: Optional[str]) -> str:
+    """Strip session uid/tokens from offender page URLs (for dedupe)."""
+    if not uri:
+        return ""
+    try:
+        from .database import Database
+
+        return Database.normalize_identity_url(uri) or (uri or "").strip()
+    except Exception:
+        return (uri or "").strip()
+
+
+def _stable_external_id(uri: Optional[str], jurisdiction: Optional[str] = None) -> str:
+    """Prefer stable registry Id over full session URL."""
+    if not uri:
+        return ""
+    try:
+        from .database import Database
+
+        key = Database.stable_external_key(
+            {"source_url": uri, "external_id": uri, "state": jurisdiction or ""},
+            state_hint=jurisdiction,
+        )
+        # key looks like "ga|reg:50604" — store reg id when available
+        if "|reg:" in key:
+            return key.split("|reg:", 1)[1]
+        return Database.normalize_identity_url(uri) or (uri or "").strip()
+    except Exception:
+        return (uri or "").strip()
+
 # Core state/territory codes accepted by NSOPW (excludes "All")
 DEFAULT_JURISDICTIONS = [
     "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "DC", "FL", "GA", "HI",
@@ -187,8 +218,10 @@ class NSOPWOffender:
             "latitude": self.latitude,
             "longitude": self.longitude,
             "source_state": self.jurisdiction_id or "US",
-            "source_url": self.offender_uri or None,
-            "external_id": self.offender_uri or None,
+            # Normalize: NSOPW state links often append volatile uid= session tokens
+            "source_url": _stable_source_url(self.offender_uri) or None,
+            "external_id": _stable_external_id(self.offender_uri, self.jurisdiction_id)
+            or None,
             "photo_url": self.image_uri or None,
             "raw_data_json": json.dumps(self.raw, ensure_ascii=False)[:50000],
             "flags": "nsopw",
