@@ -4732,22 +4732,18 @@ class ArchiverApp(ctk.CTk):
     # NSOPW
     # -----------------------------------------------------------------------
     def _build_nsopw(self, tab):
+        """NSOPW tab: options column (left) + full-height live inserts (right)."""
         tab.configure(fg_color=C["surface"])
-        # Top: settings (no scroll) · Bottom: live inserts (expands)
-        split = _vpaned(tab)
+        # Horizontal split: narrow options · wide results (uses empty width)
+        split = _hpaned(tab)
         split.pack(fill="both", expand=True, padx=4, pady=4)
         self._nsopw_split = split
 
-        controls_host = ctk.CTkFrame(split, fg_color=C["surface"], corner_radius=0)
-        inserts_host = ctk.CTkFrame(split, fg_color=C["surface"], corner_radius=0)
-        # Controls keep natural height; inserts take remaining space
-        split.add(controls_host, minsize=200, stretch="never")
-        split.add(inserts_host, minsize=220, stretch="always")
-        self.after(120, lambda: self._set_sash(split, 0, 0.38))
-
-        # Plain frame — not CTkScrollableFrame (settings must stay visible)
-        ctrl = ctk.CTkFrame(controls_host, fg_color=C["surface"])
-        ctrl.pack(fill="x", padx=6, pady=(6, 2))
+        opts_host = ctk.CTkFrame(split, fg_color=C["surface"], corner_radius=0)
+        results_host = ctk.CTkFrame(split, fg_color=C["surface"], corner_radius=0)
+        split.add(opts_host, minsize=300, stretch="never")
+        split.add(results_host, minsize=420, stretch="always")
+        self.after(120, lambda: self._set_sash(split, 0, 0.30))
 
         # First-name letters: default full A–Z; Indian abbreviated is optional
         self.nsopw_first_mode_var = ctk.StringVar(value="initials")
@@ -4764,214 +4760,215 @@ class ArchiverApp(ctk.CTk):
         self.nsopw_save_html = ctk.BooleanVar(value=True)
         self.nsopw_skip_existing = ctk.BooleanVar(value=True)
         # Default: never re-run finished first+last API queries.
-        # Check this only when you intentionally want to repeat old searches.
         self.nsopw_repeat_searches = ctk.BooleanVar(value=False)
         self.nsopw_new_files_only = ctk.BooleanVar(value=True)
         self.nsopw_limit_surnames = ctk.BooleanVar(value=False)
         self.nsopw_surnames_limit = ctk.IntVar(value=15)
 
-        panel = _card(ctrl)
-        panel.pack(fill="x", padx=2, pady=2)
-
-        # Row 1: ethnicity · subcategory · surname limit
-        r1 = ctk.CTkFrame(panel, fg_color="transparent")
-        r1.pack(fill="x", padx=12, pady=(10, 4))
-        ctk.CTkLabel(r1, text="Surname list", font=FONT_SM, text_color=C["muted"]).pack(
-            side="left", padx=(0, 6)
+        # ---- Left: scrollable options column ----
+        opts = ctk.CTkScrollableFrame(
+            opts_host, fg_color=C["surface"], corner_radius=0,
+            scrollbar_button_color=C["elevated"],
+            scrollbar_button_hover_color=C["border"],
         )
-        self.nsopw_ethnicity = ctk.StringVar(value="hispanic")
-        self.nsopw_eth_combo = ctk.CTkComboBox(
-            r1,
-            variable=self.nsopw_ethnicity,
-            width=160,
-            values=[
-                "hispanic",
-                "asian",
-                "indian",
-                "indian_high_confidence",
-                "african_american",
-                "african",
-                "arabic",
-                "jewish",
-                "portuguese",
-                "native_american",
-                "european",
-                "all",
-            ],
-            fg_color=C["bg"], border_color=C["border"], button_color=C["elevated"],
-            text_color=C["text"], dropdown_fg_color=C["panel"],
-            command=self._nsopw_on_ethnicity_change,
-        )
-        self.nsopw_eth_combo.pack(side="left", padx=(0, 12))
-        ctk.CTkLabel(r1, text="Subcategory", font=FONT_SM, text_color=C["muted"]).pack(
-            side="left", padx=(0, 6)
-        )
-        self.nsopw_subcategory = ctk.StringVar(value="all")
-        self.nsopw_sub_combo = ctk.CTkComboBox(
-            r1,
-            variable=self.nsopw_subcategory,
-            width=140,
-            values=["all"],
-            fg_color=C["bg"], border_color=C["border"], button_color=C["elevated"],
-            text_color=C["text"], dropdown_fg_color=C["panel"],
-            command=self._nsopw_on_subcategory_change,
-            state="disabled",
-        )
-        self.nsopw_sub_combo.pack(side="left", padx=(0, 12))
-        ctk.CTkCheckBox(
-            r1, text="Limit surnames/group",
-            variable=self.nsopw_limit_surnames, font=FONT_SM, text_color=C["text"],
-            fg_color=C["accent"], hover_color=C["accent_hover"],
-            checkmark_color=C["bg"], border_color=C["border"],
-            command=self._nsopw_toggle_surname_cap,
-        ).pack(side="left", padx=(0, 6))
-        self.nsopw_surnames_entry = ctk.CTkEntry(
-            r1, textvariable=self.nsopw_surnames_limit, width=56,
-            fg_color=C["bg"], border_color=C["border"], text_color=C["text"],
-            state="disabled",
-        )
-        self.nsopw_surnames_entry.pack(side="left")
-        self.nsopw_surnames_entry.bind("<KeyRelease>", lambda _e: self._nsopw_update_surname_count())
-        self.nsopw_surnames_entry.bind("<FocusOut>", lambda _e: self._nsopw_update_surname_count())
+        opts.pack(fill="both", expand=True, padx=(2, 0), pady=2)
 
-        self.nsopw_surname_count_label = ctk.CTkLabel(
-            panel, text="Surnames to search: —", font=FONT_SM, text_color=C["text"], anchor="w",
-        )
-        self.nsopw_surname_count_label.pack(fill="x", padx=14, pady=(0, 4))
-        self._nsopw_refresh_subcategories()
+        def _opt_card(title: str) -> ctk.CTkFrame:
+            outer = _card(opts)
+            outer.pack(fill="x", padx=4, pady=(0, 6))
+            ctk.CTkLabel(
+                outer, text=title, font=FONT_BOLD, text_color=C["text"], anchor="w",
+            ).pack(fill="x", padx=10, pady=(8, 2))
+            body = ctk.CTkFrame(outer, fg_color="transparent")
+            body.pack(fill="x", padx=8, pady=(0, 8))
+            return body
 
-        # Row 1b: first-name letter set (biggest lever on query count)
-        r1b = ctk.CTkFrame(panel, fg_color="transparent")
-        r1b.pack(fill="x", padx=12, pady=(0, 4))
-        ctk.CTkLabel(r1b, text="First letters", font=FONT_SM, text_color=C["muted"]).pack(
-            side="left", padx=(0, 6)
-        )
-        self.nsopw_first_mode_combo = ctk.CTkComboBox(
-            r1b,
-            variable=self.nsopw_first_mode_var,
-            width=280,
-            values=[
-                "initials",      # A–Z (default — full coverage)
-                "indian",        # ASRPMKVNBD — Indian first-name letters
-                "indian_wide",   # +GJHT
-            ],
-            fg_color=C["bg"], border_color=C["border"], button_color=C["elevated"],
-            text_color=C["text"], dropdown_fg_color=C["panel"],
-            command=lambda _c=None: self._nsopw_update_surname_count(),
-        )
-        self.nsopw_first_mode_combo.pack(side="left", padx=(0, 8))
-        ctk.CTkLabel(
-            r1b,
-            text="default A–Z+all digraphs · indian = abbreviate firsts AND surname digraphs",
-            font=FONT_SM, text_color=C["dim"],
-        ).pack(side="left")
+        def _field_label(parent, text: str) -> None:
+            ctk.CTkLabel(
+                parent, text=text, font=FONT_SM, text_color=C["muted"], anchor="w",
+            ).pack(fill="x", pady=(4, 1))
 
-        # Row 2: limits + delays
-        r2 = ctk.CTkFrame(panel, fg_color="transparent")
-        r2.pack(fill="x", padx=12, pady=4)
-        for label, var, width in (
-            ("Max searches", self.nsopw_max_searches, 64),
-            ("Max names", self.nsopw_max_reports, 64),
-        ):
-            ctk.CTkLabel(r2, text=label, font=FONT_SM, text_color=C["muted"]).pack(
-                side="left", padx=(0, 4)
-            )
-            ctk.CTkEntry(
-                r2, textvariable=var, width=width,
-                fg_color=C["bg"], border_color=C["border"], text_color=C["text"],
-                placeholder_text="∞",
-            ).pack(side="left", padx=(0, 12))
-        for label, var in (
-            ("Search delay", self.nsopw_search_delay),
-            ("Report delay", self.nsopw_report_delay),
-        ):
-            ctk.CTkLabel(r2, text=label, font=FONT_SM, text_color=C["muted"]).pack(
-                side="left", padx=(0, 4)
-            )
-            ctk.CTkEntry(
-                r2, textvariable=var, width=56,
-                fg_color=C["bg"], border_color=C["border"], text_color=C["text"],
-            ).pack(side="left", padx=(0, 12))
-
-        # Row 3: option checkboxes in one line (wraps if needed)
-        r3 = ctk.CTkFrame(panel, fg_color="transparent")
-        r3.pack(fill="x", padx=12, pady=4)
-        for text, var in (
-            ("Fetch detail sheets", self.nsopw_enrich),
-            ("Archive HTML", self.nsopw_save_html),
-            ("Repeat old searches", self.nsopw_repeat_searches),
-            ("Skip known URLs", self.nsopw_skip_existing),
-            ("New HTML only", self.nsopw_new_files_only),
-        ):
-            ctk.CTkCheckBox(
-                r3, text=text, variable=var, font=FONT_SM, text_color=C["text"],
-                fg_color=C["accent"], hover_color=C["accent_hover"],
-                checkmark_color=C["bg"], border_color=C["border"],
-            ).pack(side="left", padx=(0, 12))
-
-        _muted(
-            panel,
-            "During a run: max searches/names, delays, and the checkboxes above apply "
-            "immediately. Ethnicity / subcategory / surname list apply on the next Start.",
-        ).pack(anchor="w", padx=14, pady=(0, 4))
-
-        # Push live knobs into a thread-safe snapshot whenever the user edits them
-        self._nsopw_bind_live_option_traces()
-        self._nsopw_sync_runtime_options()
-
-        # Row 4: actions
-        act = ctk.CTkFrame(panel, fg_color="transparent")
-        act.pack(fill="x", padx=12, pady=(6, 4))
+        # Run actions
+        run = _opt_card("Run")
         self.nsopw_start_btn = ctk.CTkButton(
-            act, text="Start NSOPW search", height=36, font=FONT_BOLD,
+            run, text="Start NSOPW search", height=34, font=FONT_BOLD,
             fg_color=C["accent"], hover_color=C["accent_hover"], text_color=C["bg"],
             command=self._start_nsopw,
         )
-        self.nsopw_start_btn.pack(side="left", padx=(0, 8))
+        self.nsopw_start_btn.pack(fill="x", pady=(2, 4))
+        act_row = ctk.CTkFrame(run, fg_color="transparent")
+        act_row.pack(fill="x")
         self.nsopw_cancel_btn = ctk.CTkButton(
-            act, text="Cancel", height=36, width=90, state="disabled",
+            act_row, text="Cancel", height=30, state="disabled",
             fg_color=C["elevated"], hover_color=C["danger"], text_color=C["text"],
             border_width=1, border_color=C["border"],
             command=self._cancel_nsopw,
         )
-        self.nsopw_cancel_btn.pack(side="left", padx=(0, 6))
+        self.nsopw_cancel_btn.pack(side="left", fill="x", expand=True, padx=(0, 3))
         ctk.CTkButton(
-            act, text="Open data folder", height=36,
+            act_row, text="Data folder", height=30,
             fg_color=C["elevated"], hover_color=C["border"], text_color=C["text"],
             border_width=1, border_color=C["border"],
             command=self._nsopw_open_data_folder,
-        ).pack(side="left", padx=(0, 6))
+        ).pack(side="left", fill="x", expand=True, padx=3)
         ctk.CTkButton(
-            act, text="Clear table", height=36, width=90,
+            act_row, text="Clear", height=30, width=64,
             fg_color=C["elevated"], hover_color=C["border"], text_color=C["text"],
             border_width=1, border_color=C["border"],
             command=self._nsopw_clear_tree,
-        ).pack(side="left")
+        ).pack(side="left", fill="x", expand=True, padx=(3, 0))
 
-        # Progress + live stats
-        prog_row = ctk.CTkFrame(panel, fg_color="transparent")
-        prog_row.pack(fill="x", padx=12, pady=(6, 2))
-        self.nsopw_eta_label = ctk.CTkLabel(
-            prog_row, text="ETA —", font=FONT_SM, text_color=C["muted"], width=120, anchor="e",
-        )
-        self.nsopw_eta_label.pack(side="right", padx=(8, 0))
-        self.nsopw_progress_label = ctk.CTkLabel(
-            prog_row, text="0%", font=FONT_SM, text_color=C["accent"], width=44, anchor="e",
-        )
-        self.nsopw_progress_label.pack(side="right", padx=(8, 0))
+        prog_row = ctk.CTkFrame(run, fg_color="transparent")
+        prog_row.pack(fill="x", pady=(8, 2))
         self.nsopw_progress = ctk.CTkProgressBar(
             prog_row, mode="determinate", progress_color=C["accent"],
             fg_color=C["elevated"], height=10,
         )
         self.nsopw_progress.pack(side="left", fill="x", expand=True)
         self.nsopw_progress.set(0)
+        self.nsopw_progress_label = ctk.CTkLabel(
+            prog_row, text="0%", font=FONT_SM, text_color=C["accent"], width=40, anchor="e",
+        )
+        self.nsopw_progress_label.pack(side="left", padx=(6, 0))
+        eta_row = ctk.CTkFrame(run, fg_color="transparent")
+        eta_row.pack(fill="x")
+        self.nsopw_eta_label = ctk.CTkLabel(
+            eta_row, text="ETA —", font=FONT_SM, text_color=C["muted"], anchor="w",
+        )
+        self.nsopw_eta_label.pack(side="left")
         self._nsopw_run_t0: Optional[float] = None
-        self._nsopw_eta_samples: List[Tuple[float, float]] = []  # (monotonic, work_done)
+        self._nsopw_eta_samples: List[Tuple[float, float]] = []
 
-        stats_row = ctk.CTkFrame(panel, fg_color=C["elevated"], corner_radius=8)
-        stats_row.pack(fill="x", padx=12, pady=(4, 2))
+        # Search scope
+        scope = _opt_card("Search scope")
+        _field_label(scope, "Surname list")
+        self.nsopw_ethnicity = ctk.StringVar(value="hispanic")
+        self.nsopw_eth_combo = ctk.CTkComboBox(
+            scope,
+            variable=self.nsopw_ethnicity,
+            values=[
+                "hispanic", "asian", "indian", "indian_high_confidence",
+                "african_american", "african", "arabic", "jewish",
+                "portuguese", "native_american", "european", "all",
+            ],
+            fg_color=C["bg"], border_color=C["border"], button_color=C["elevated"],
+            text_color=C["text"], dropdown_fg_color=C["panel"],
+            command=self._nsopw_on_ethnicity_change,
+        )
+        self.nsopw_eth_combo.pack(fill="x")
+
+        _field_label(scope, "Subcategory")
+        self.nsopw_subcategory = ctk.StringVar(value="all")
+        self.nsopw_sub_combo = ctk.CTkComboBox(
+            scope,
+            variable=self.nsopw_subcategory,
+            values=["all"],
+            fg_color=C["bg"], border_color=C["border"], button_color=C["elevated"],
+            text_color=C["text"], dropdown_fg_color=C["panel"],
+            command=self._nsopw_on_subcategory_change,
+            state="disabled",
+        )
+        self.nsopw_sub_combo.pack(fill="x")
+
+        _field_label(scope, "First letters")
+        self.nsopw_first_mode_combo = ctk.CTkComboBox(
+            scope,
+            variable=self.nsopw_first_mode_var,
+            values=["initials", "indian", "indian_wide"],
+            fg_color=C["bg"], border_color=C["border"], button_color=C["elevated"],
+            text_color=C["text"], dropdown_fg_color=C["panel"],
+            command=lambda _c=None: self._nsopw_update_surname_count(),
+        )
+        self.nsopw_first_mode_combo.pack(fill="x")
+        ctk.CTkLabel(
+            scope,
+            text="initials = A–Z · indian = abbreviated firsts + digraphs",
+            font=FONT_SM, text_color=C["dim"], anchor="w", wraplength=260, justify="left",
+        ).pack(fill="x", pady=(2, 4))
+
+        cap_row = ctk.CTkFrame(scope, fg_color="transparent")
+        cap_row.pack(fill="x", pady=(2, 0))
+        ctk.CTkCheckBox(
+            cap_row, text="Limit surnames/group",
+            variable=self.nsopw_limit_surnames, font=FONT_SM, text_color=C["text"],
+            fg_color=C["accent"], hover_color=C["accent_hover"],
+            checkmark_color=C["bg"], border_color=C["border"],
+            command=self._nsopw_toggle_surname_cap,
+        ).pack(side="left")
+        self.nsopw_surnames_entry = ctk.CTkEntry(
+            cap_row, textvariable=self.nsopw_surnames_limit, width=52,
+            fg_color=C["bg"], border_color=C["border"], text_color=C["text"],
+            state="disabled",
+        )
+        self.nsopw_surnames_entry.pack(side="right")
+        self.nsopw_surnames_entry.bind(
+            "<KeyRelease>", lambda _e: self._nsopw_update_surname_count()
+        )
+        self.nsopw_surnames_entry.bind(
+            "<FocusOut>", lambda _e: self._nsopw_update_surname_count()
+        )
+        self.nsopw_surname_count_label = ctk.CTkLabel(
+            scope, text="Surnames to search: —",
+            font=FONT_SM, text_color=C["text"], anchor="w",
+        )
+        self.nsopw_surname_count_label.pack(fill="x", pady=(6, 0))
+        self._nsopw_refresh_subcategories()
+
+        # Limits & delays — 2×2 grid
+        limits = _opt_card("Limits & delays")
+        lim_grid = ctk.CTkFrame(limits, fg_color="transparent")
+        lim_grid.pack(fill="x")
+        lim_grid.grid_columnconfigure((0, 1), weight=1)
+        for i, (label, var, ph) in enumerate((
+            ("Max searches", self.nsopw_max_searches, "∞"),
+            ("Max names", self.nsopw_max_reports, "∞"),
+            ("Search delay (s)", self.nsopw_search_delay, None),
+            ("Report delay (s)", self.nsopw_report_delay, None),
+        )):
+            cell = ctk.CTkFrame(lim_grid, fg_color="transparent")
+            cell.grid(row=i // 2, column=i % 2, sticky="ew", padx=2, pady=2)
+            ctk.CTkLabel(
+                cell, text=label, font=FONT_SM, text_color=C["muted"], anchor="w",
+            ).pack(fill="x")
+            ent = ctk.CTkEntry(
+                cell, textvariable=var,
+                fg_color=C["bg"], border_color=C["border"], text_color=C["text"],
+            )
+            if ph:
+                ent.configure(placeholder_text=ph)
+            ent.pack(fill="x")
+
+        ctk.CTkLabel(
+            limits,
+            text="Live during a run · list/scope apply on next Start",
+            font=FONT_SM, text_color=C["dim"], anchor="w", wraplength=260, justify="left",
+        ).pack(fill="x", pady=(4, 0))
+
+        # Options checkboxes — stacked (readable, no horizontal crush)
+        flags = _opt_card("Options")
+        for text, var in (
+            ("Fetch detail sheets", self.nsopw_enrich),
+            ("Archive HTML", self.nsopw_save_html),
+            ("Skip known URLs", self.nsopw_skip_existing),
+            ("New HTML only", self.nsopw_new_files_only),
+            ("Repeat old searches", self.nsopw_repeat_searches),
+        ):
+            ctk.CTkCheckBox(
+                flags, text=text, variable=var, font=FONT_SM, text_color=C["text"],
+                fg_color=C["accent"], hover_color=C["accent_hover"],
+                checkmark_color=C["bg"], border_color=C["border"],
+            ).pack(anchor="w", pady=2)
+
+        self._nsopw_bind_live_option_traces()
+        self._nsopw_sync_runtime_options()
+
+        # Live stats — compact 2-column grid
+        stats = _opt_card("Live stats")
+        stats_grid = ctk.CTkFrame(stats, fg_color=C["elevated"], corner_radius=8)
+        stats_grid.pack(fill="x")
+        stats_grid.grid_columnconfigure((0, 1), weight=1)
         self._nsopw_stat_vars: Dict[str, ctk.CTkLabel] = {}
-        for key, title in (
+        for i, (key, title) in enumerate((
             ("plan", "Plan"),
             ("searches", "Searches"),
             ("matched", "Matched"),
@@ -4980,9 +4977,9 @@ class ArchiverApp(ctk.CTk):
             ("html", "HTML"),
             ("photos", "Photos"),
             ("race", "Race"),
-        ):
-            cell = ctk.CTkFrame(stats_row, fg_color="transparent")
-            cell.pack(side="left", padx=10, pady=6)
+        )):
+            cell = ctk.CTkFrame(stats_grid, fg_color="transparent")
+            cell.grid(row=i // 2, column=i % 2, sticky="ew", padx=8, pady=4)
             ctk.CTkLabel(
                 cell, text=title, font=FONT_SM, text_color=C["dim"], anchor="w",
             ).pack(anchor="w")
@@ -4992,52 +4989,41 @@ class ArchiverApp(ctk.CTk):
             val.pack(anchor="w")
             self._nsopw_stat_vars[key] = val
 
-        # Always-visible current NSOPW query (first + last terms)
-        search_row = ctk.CTkFrame(panel, fg_color=C["elevated"], corner_radius=8)
-        search_row.pack(fill="x", padx=12, pady=(4, 2))
-        ctk.CTkLabel(
-            search_row, text="Current search", font=FONT_SM, text_color=C["dim"],
-        ).pack(side="left", padx=(12, 8), pady=8)
+        # Current query + status
+        cur = _opt_card("Current search")
         self.nsopw_current_search_label = ctk.CTkLabel(
-            search_row,
-            text="—",
-            font=FONT_BOLD,
-            text_color=C["accent"],
-            anchor="w",
+            cur, text="—", font=FONT_BOLD, text_color=C["accent"],
+            anchor="w", wraplength=260, justify="left",
         )
-        self.nsopw_current_search_label.pack(side="left", fill="x", expand=True, padx=(0, 12), pady=8)
+        self.nsopw_current_search_label.pack(fill="x", pady=(0, 4))
         self._nsopw_last_search_terms = ""
-
         self.nsopw_status = ctk.CTkLabel(
-            panel,
-            text="Ready · A–Z first + short last prefixes (Settings) · blank max = unlimited",
+            cur,
+            text="Ready · blank max = unlimited · drag sash to resize",
             font=FONT_SM, text_color=C["muted"], anchor="w",
+            wraplength=260, justify="left",
         )
-        self.nsopw_status.pack(fill="x", padx=12, pady=(2, 10))
+        self.nsopw_status.pack(fill="x")
         self._nsopw_reset_progress_ui()
 
-        # Recent inserts below sash — independent of controls scroll frame.
-        prev = _card(inserts_host)
-        prev.pack(fill="both", expand=True, padx=4, pady=(2, 4))
+        # ---- Right: full-height live inserts + detail ----
+        prev = _card(results_host)
+        prev.pack(fill="both", expand=True, padx=(0, 2), pady=2)
+        head = ctk.CTkFrame(prev, fg_color="transparent")
+        head.pack(fill="x", padx=12, pady=(10, 4))
         _section_label(
-            prev,
-            "Recent inserts (live) · select row for photo · double-click HTML/photo/URL",
-        ).pack(anchor="w", padx=14, pady=(12, 4))
-        _muted(
-            prev,
-            "Primary tab: surnames in the selected ethnicity list. "
-            "Other surnames tab: still saved to DB/HTML. "
-            "Photos are saved with report HTML (images embedded for offline viewing).",
-        ).pack(anchor="w", padx=14, pady=(0, 6))
+            head,
+            "Recent inserts · select for photo · double-click HTML / photo / URL",
+        ).pack(side="left", anchor="w")
 
-        # Resizable: tables | detail drawer (photo + crime + links)
+        # Resizable: tables | detail drawer
         inserts_split = _hpaned(prev)
-        inserts_split.pack(fill="both", expand=True, padx=10, pady=(0, 12))
+        inserts_split.pack(fill="both", expand=True, padx=8, pady=(0, 8))
         tables_host = ctk.CTkFrame(inserts_split, fg_color="transparent")
-        inserts_split.add(tables_host, minsize=320, stretch="always")
+        inserts_split.add(tables_host, minsize=280, stretch="always")
         self.nsopw_detail = self._make_detail_drawer(inserts_split)
-        inserts_split.add(self.nsopw_detail, minsize=220, stretch="never")
-        self.after(200, lambda: self._set_sash(inserts_split, 0, 0.72))
+        inserts_split.add(self.nsopw_detail, minsize=200, stretch="never")
+        self.after(200, lambda: self._set_sash(inserts_split, 0, 0.70))
 
         insert_tabs = ctk.CTkTabview(
             tables_host,
@@ -5081,7 +5067,6 @@ class ArchiverApp(ctk.CTk):
         self.nsopw_tree_other = _setup_insert_tree(tab_other)
         self._nsopw_insert_count = 0
         self._nsopw_other_count = 0
-        # iid -> full record (for detail drawer) + photo path map
         self._nsopw_records_by_iid: Dict[str, Dict[str, Any]] = {}
         self._nsopw_photo_by_iid: Dict[str, str] = {}
 
