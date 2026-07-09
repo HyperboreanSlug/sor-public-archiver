@@ -623,7 +623,7 @@ class EthnicAndSearchTests(unittest.TestCase):
         db = EthnicNameDatabase()
         for name in (
             "Shaw", "Swain", "Ray", "Fernandes", "Gore",
-            "Merchant", "Deen", "Mann", "Corea", "Ingle",
+            "Merchant", "Deen", "Mann", "Corea", "Ingle", "De",
         ):
             self.assertFalse(db.is_indian_surname(name), name)
             eth, conf, _ = db.classify_by_name(name)
@@ -631,6 +631,36 @@ class EthnicAndSearchTests(unittest.TestCase):
                 eth.startswith("Indian"),
                 f"{name} classified as {eth} conf={conf}",
             )
+
+    def test_first_name_dampens_ambiguous_indian_surnames(self):
+        """Amy Gill / Alberto Perera must not score as strong Indian mismatches."""
+        from scraper.ethnic_names import EthnicNameDatabase
+
+        db = EthnicNameDatabase()
+        eth, conf, _ = db.classify_by_name("Gill", first_name="Amy")
+        self.assertTrue(eth.startswith("Indian") or eth == "Unknown")
+        self.assertLess(
+            conf, 0.5,
+            f"Amy Gill must be below default Analyze threshold, got {conf}",
+        )
+
+        eth2, conf2, _ = db.classify_by_name("Perera", first_name="Alberto")
+        self.assertFalse(
+            eth2.startswith("Indian"),
+            f"Alberto Perera must not be Indian, got {eth2} conf={conf2}",
+        )
+        self.assertLess(conf2 if eth2.startswith("Indian") else 0.0, 0.5)
+
+        # Indic first name can corroborate ambiguous surname
+        eth3, conf3, _ = db.classify_by_name("Gill", first_name="Rahul")
+        self.assertTrue(eth3.startswith("Indian"))
+        self.assertGreaterEqual(conf3, 0.5)
+
+        # Distinctive HC surname still Indian even with Anglo first name, but damped
+        eth4, conf4, _ = db.classify_by_name("Patel", first_name="Amy")
+        self.assertTrue(eth4.startswith("Indian"))
+        self.assertLessEqual(conf4, 0.7)
+        self.assertGreaterEqual(conf4, 0.5)
 
     def test_classify_common_names(self):
         eth = EthnicNameDatabase()

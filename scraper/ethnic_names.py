@@ -1,30 +1,47 @@
-"""Ethnic name database for misclassification detection."""
+"""Ethnic name database for misclassification detection.
+
+Methodology (important):
+  * Surname alone is NEVER enough for high confidence on ambiguous names
+    (e.g. Gill, Perera, Silva) that appear across multiple ethnic groups.
+  * First names are scored together with surnames. Anglo first names
+    (Amy, John, …) tank confidence for weak/ambiguous Indian surnames.
+  * Hispanic first names (Alberto, Carlos, …) with Luso/Hispanic-overlapping
+    surnames (Perera, Silva, …) prefer Hispanic / low Indian confidence.
+  * Distinctive high-confidence Indian surnames (Patel, Singh, …) stay strong
+    unless the first name strongly contradicts.
+"""
+
+from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Optional, Set, Tuple
 
 
 class EthnicNameDatabase:
-    """Loads and queries ethnic surname databases."""
+    """Loads and queries ethnic surname + first-name databases."""
 
     def __init__(self):
-        self.hispanic_surnames = set()
-        # East / Southeast Asian only (Chinese, Korean, Japanese, Vietnamese, Thai, Filipino, …)
-        self.asian_surnames = {}  # nested dict by sub-group
-        # South Asian / Indian subcontinent (India, Pakistan, Bangladesh, Sri Lanka, Nepal, …)
-        self.indian_surnames = set()
-        self.indian_surnames_by_group = {}  # optional nested: india, pakistani, …
-        # Curated subset: clearly Indic surnames (NSOPW "high-confidence Indians")
-        self.indian_high_confidence_surnames = set()
-        self.african_american_surnames = set()
-        self.native_american_surnames = set()
-        self.european_surnames = {}  # nested dict by country
-        self.jewish_surnames = set()
-        self.portuguese_surnames = set()
-        self.arabic_surnames = set()
-        self.african_surnames = {}  # nested dict by region
+        self.hispanic_surnames: Set[str] = set()
+        self.asian_surnames: Dict[str, Set[str]] = {}
+        self.indian_surnames: Set[str] = set()
+        self.indian_surnames_by_group: Dict[str, Set[str]] = {}
+        self.indian_high_confidence_surnames: Set[str] = set()
+        self.indian_surname_exclusions: Set[str] = set()
+        self.indian_ambiguous_surnames: Set[str] = set()
+        self.indian_first_names: Set[str] = set()
+        self.hispanic_first_names: Set[str] = set()
+        self.anglo_western_first_names: Set[str] = set()
+        self.african_american_surnames: Set[str] = set()
+        self.native_american_surnames: Set[str] = set()
+        self.european_surnames: Dict[str, Set[str]] = {}
+        self.jewish_surnames: Set[str] = set()
+        self.portuguese_surnames: Set[str] = set()
+        self.arabic_surnames: Set[str] = set()
+        self.african_surnames: Dict[str, Set[str]] = {}
 
+        self._lookups_ready = False
         self._load_ethnic_names()
 
     def _load_ethnic_names(self):
@@ -32,28 +49,23 @@ class EthnicNameDatabase:
         json_path = Path(__file__).parent / "ethnic_names.json"
 
         if not json_path.exists():
-            # Fallback: use embedded defaults
             self._use_defaults()
             return
 
         with open(json_path, "r", encoding="utf-8") as f:
             data = json.load(f)
 
-        # Hispanic surnames (also includes some common ones that overlap)
         self.hispanic_surnames = set(data.get("hispanic_surnames", []))
 
-        # Asian surnames by sub-group (East/Southeast only — no South Asian)
         asian_data = data.get("asian_surnames", {})
         for group, names in asian_data.items():
             if group.lower() in ("indian", "south_asian", "southasian"):
-                # Legacy key: fold into indian list
                 if isinstance(names, list):
                     self.indian_surnames.update(n.strip() for n in names if n and n.strip())
                 continue
             if isinstance(names, list):
                 self.asian_surnames[group] = set(n.strip() for n in names)
 
-        # Indian / South Asian — list or nested dict by region
         top_indian = data.get("indian_surnames", [])
         if isinstance(top_indian, dict):
             for group, names in top_indian.items():
@@ -65,20 +77,18 @@ class EthnicNameDatabase:
         elif isinstance(top_indian, list):
             self.indian_surnames.update(n.strip() for n in top_indian if n and n.strip())
 
-        # High-confidence Indians (curated; also folded into broad indian for classifiers)
         hc = data.get("indian_high_confidence_surnames", [])
         if isinstance(hc, list):
             self.indian_high_confidence_surnames = {
                 n.strip() for n in hc if n and str(n).strip()
             }
             self.indian_surnames.update(self.indian_high_confidence_surnames)
-            # Expose as a synthetic subgroup for subcategory UI when eth=indian
             if self.indian_high_confidence_surnames:
                 self.indian_surnames_by_group.setdefault(
                     "high_confidence", set()
                 ).update(self.indian_high_confidence_surnames)
 
-        # Hard exclusions: English/Portuguese/etc. names wrongly listed as Indian
+        # Hard exclusions — never Indian
         excl_raw = data.get("indian_surname_exclusions", [])
         self.indian_surname_exclusions = {
             n.strip() for n in (excl_raw or []) if n and str(n).strip()
@@ -97,28 +107,37 @@ class EthnicNameDatabase:
                     n for n in names if n.lower() not in excl_lc
                 }
 
-        # African-American surnames
-        self.african_american_surnames = set(data.get("african_american_surnames", []))
+        amb = data.get("indian_ambiguous_surnames", [])
+        self.indian_ambiguous_surnames = {
+            n.strip() for n in (amb or []) if n and str(n).strip()
+        }
 
-        # Native American surnames
+        self.indian_first_names = {
+            n.strip() for n in (data.get("indian_first_names") or []) if n and str(n).strip()
+        }
+        self.hispanic_first_names = {
+            n.strip()
+            for n in (data.get("hispanic_first_names") or [])
+            if n and str(n).strip()
+        }
+        self.anglo_western_first_names = {
+            n.strip()
+            for n in (data.get("anglo_western_first_names") or [])
+            if n and str(n).strip()
+        }
+
+        self.african_american_surnames = set(data.get("african_american_surnames", []))
         self.native_american_surnames = set(data.get("native_american_surnames", []))
 
-        # European surnames by country
         european_data = data.get("european_surnames", {})
         for country, names in european_data.items():
             if isinstance(names, list):
                 self.european_surnames[country] = set(n.strip() for n in names)
 
-        # Jewish surnames
         self.jewish_surnames = set(data.get("jewish_surnames", []))
-
-        # Portuguese surnames
         self.portuguese_surnames = set(data.get("portuguese_surnames", []))
-
-        # Arabic surnames
         self.arabic_surnames = set(data.get("arabic_surnames", []))
 
-        # African surnames by region
         african_data = data.get("african_surnames", {})
         for region, names in african_data.items():
             if isinstance(names, list):
@@ -129,7 +148,7 @@ class EthnicNameDatabase:
         self.hispanic_surnames = {
             "Garcia", "Rodriguez", "Martinez", "Hernandez", "Lopez", "Gonzalez",
             "Perez", "Sanchez", "Ramirez", "Torres", "Flores", "Rivera", "Gomez",
-            "Diaz", "Cruz", "Morales", "Ortiz", "Ramos", "Gutierrez", "Alvarez"
+            "Diaz", "Cruz", "Morales", "Ortiz", "Ramos", "Gutierrez", "Alvarez",
         }
         self.asian_surnames = {
             "chinese": {"Chen", "Wang", "Li", "Zhang", "Liu"},
@@ -137,13 +156,17 @@ class EthnicNameDatabase:
             "japanese": {"Tanaka", "Suzuki", "Yamamoto"},
         }
         self.indian_surnames = {
-            "Patel", "Shah", "Singh", "Kumar", "Gupta", "Sharma", "Reddy", "Nair"
+            "Patel", "Shah", "Singh", "Kumar", "Gupta", "Sharma", "Reddy", "Nair",
         }
         self.indian_high_confidence_surnames = set(self.indian_surnames)
         self.indian_surnames_by_group = {"high_confidence": set(self.indian_surnames)}
+        self.indian_first_names = {"Rahul", "Priya", "Amit", "Neha", "Raj"}
+        self.hispanic_first_names = {"Alberto", "Carlos", "Maria", "Jose"}
+        self.anglo_western_first_names = {"Amy", "John", "Robert", "Emily"}
+        self.indian_ambiguous_surnames = {"Gill", "Perera", "Silva"}
 
     def _build_lookup_sets(self) -> None:
-        """Cache lowercased sets for O(1) surname membership checks."""
+        """Cache lowercased sets for O(1) membership checks."""
         if getattr(self, "_lookups_ready", False):
             return
         self._hispanic_lc = {n.lower() for n in self.hispanic_surnames}
@@ -153,7 +176,10 @@ class EthnicNameDatabase:
         self._portuguese_lc = {n.lower() for n in self.portuguese_surnames}
         self._arabic_lc = {n.lower() for n in self.arabic_surnames}
         self._indian_excl_lc = {
-            n.lower() for n in (getattr(self, "indian_surname_exclusions", None) or set())
+            n.lower() for n in (self.indian_surname_exclusions or set())
+        }
+        self._indian_amb_lc = {
+            n.lower() for n in (self.indian_ambiguous_surnames or set())
         }
         self._indian_lc = {
             n.lower() for n in self.indian_surnames
@@ -169,6 +195,13 @@ class EthnicNameDatabase:
             }
             for group, names in (self.indian_surnames_by_group or {}).items()
         }
+        self._indian_first_lc = {n.lower() for n in (self.indian_first_names or set())}
+        self._hispanic_first_lc = {
+            n.lower() for n in (self.hispanic_first_names or set())
+        }
+        self._anglo_first_lc = {
+            n.lower() for n in (self.anglo_western_first_names or set())
+        }
         self._asian_lc = {
             group: {n.lower() for n in names}
             for group, names in self.asian_surnames.items()
@@ -183,8 +216,49 @@ class EthnicNameDatabase:
         }
         self._lookups_ready = True
 
-    def classify_by_name(self, surname: str) -> Tuple[str, float, List[str]]:
-        """Classify a surname by ethnicity. Returns (ethnicity, confidence, matching_names)."""
+    @staticmethod
+    def _normalize_given_name(first_name: Optional[str]) -> str:
+        """First token of given name, letters only (handles 'MARY-ANN', 'J.')."""
+        if not first_name:
+            return ""
+        raw = str(first_name).strip()
+        if not raw:
+            return ""
+        # Take first whitespace token; strip punctuation
+        token = raw.replace(",", " ").split()[0]
+        token = re.sub(r"[^A-Za-z\-']", "", token)
+        token = token.strip("-'")
+        return token.lower()
+
+    def _first_name_signal(self, first_name: Optional[str]) -> str:
+        """
+        Return one of: indian | hispanic | anglo | unknown
+        """
+        self._build_lookup_sets()
+        fn = self._normalize_given_name(first_name)
+        if not fn or len(fn) < 2:
+            return "unknown"
+        # Prefer more specific lists; allow dual membership to favor indian
+        # only when explicitly in indian list
+        if fn in self._indian_first_lc:
+            return "indian"
+        if fn in self._hispanic_first_lc:
+            return "hispanic"
+        if fn in self._anglo_first_lc:
+            return "anglo"
+        return "unknown"
+
+    def classify_by_name(
+        self,
+        surname: str,
+        first_name: Optional[str] = None,
+    ) -> Tuple[str, float, List[str]]:
+        """
+        Classify a person by surname + optional first name.
+
+        Returns (ethnicity, confidence, matching_labels).
+        Confidence is intentionally conservative for multi-ethnic surnames.
+        """
         if not surname:
             return ("Unknown", 0.0, [])
 
@@ -194,20 +268,18 @@ class EthnicNameDatabase:
             return ("Unknown", 0.0, [])
 
         matches: List[Tuple[str, str]] = []
-        indian_blocked = surname_lc in getattr(self, "_indian_excl_lc", set())
+        indian_blocked = surname_lc in self._indian_excl_lc
 
         if surname_lc in self._hispanic_lc:
             matches.append(("Hispanic", "hispanic_surnames"))
 
-        # South Asian / Indian before generic Asian so lists stay distinct
-        # High-confidence curated list first (stronger label)
         if not indian_blocked:
-            if surname_lc in getattr(self, "_indian_hc_lc", set()):
+            if surname_lc in self._indian_hc_lc:
                 matches.append(("Indian (high_confidence)", "indian_high_confidence"))
-            if getattr(self, "indian_surnames_by_group", None):
-                for group, names in getattr(self, "_indian_group_lc", {}).items():
+            if self.indian_surnames_by_group:
+                for group, names in self._indian_group_lc.items():
                     if group == "high_confidence":
-                        continue  # already labeled above
+                        continue
                     if surname_lc in names:
                         matches.append((f"Indian ({group})", f"indian_{group}"))
             if surname_lc in self._indian_lc and not any(
@@ -245,48 +317,122 @@ class EthnicNameDatabase:
         if not matches:
             return ("Unknown", 0.0, [])
 
-        # Prefer distinctive ethnic matches over broad/overlapping ones.
+        fn_signal = self._first_name_signal(first_name)
+        is_amb = surname_lc in self._indian_amb_lc
+        is_hc = surname_lc in self._indian_hc_lc
+        has_indian = any(m[0].startswith("Indian") for m in matches)
+        has_hispanic = any(m[0] == "Hispanic" for m in matches)
+        has_portuguese = any(m[0] == "Portuguese" for m in matches)
+        has_european = any(m[0].startswith("European") for m in matches)
+
+        # ---- Choose best ethnicity (first-name aware) ----
         def sort_key(item: Tuple[str, str]) -> float:
             ethnicity, _source = item
+            score = 0.0
             if ethnicity == "Indian" or ethnicity.startswith("Indian ("):
-                return -1.05
-            # East Asian groups before Hispanic; Filipino Spanish surnames after Hispanic
-            if ethnicity.startswith("Asian (filipino)"):
-                return -0.9
-            if ethnicity.startswith("Asian"):
-                return -1.0
-            if ethnicity == "Hispanic":
-                return -0.95
-            if ethnicity == "African American":
-                return -0.9
-            if ethnicity in ("Jewish", "Portuguese", "Arabic"):
-                return -0.85
-            if ethnicity.startswith("African ("):
-                return -0.8
-            if ethnicity == "Native American":
-                return -0.55  # many generic nature/English overlaps
-            if ethnicity.startswith("European"):
-                return -0.4
-            return -0.3
+                score = 1.05
+                if is_amb:
+                    score = 0.55  # weak until first name helps
+                if is_hc and not is_amb:
+                    score = 1.15
+                if fn_signal == "indian":
+                    score += 0.45
+                elif fn_signal == "anglo":
+                    score -= 0.55 if is_amb else (0.25 if not is_hc else 0.15)
+                elif fn_signal == "hispanic":
+                    # Alberto Perera / Carlos Silva — not Indian primary
+                    score -= 0.75 if is_amb or has_portuguese or has_hispanic else 0.35
+            elif ethnicity == "Hispanic":
+                score = 0.95
+                if fn_signal == "hispanic":
+                    score += 0.5
+                if fn_signal == "indian":
+                    score -= 0.2
+            elif ethnicity.startswith("Asian (filipino)"):
+                score = 0.9
+            elif ethnicity.startswith("Asian"):
+                score = 1.0
+            elif ethnicity == "African American":
+                score = 0.9
+            elif ethnicity in ("Jewish", "Portuguese", "Arabic"):
+                score = 0.85
+                if ethnicity == "Portuguese" and fn_signal == "hispanic":
+                    score += 0.35  # Iberian cluster
+                if ethnicity == "Portuguese" and fn_signal == "indian":
+                    score += 0.15  # Goan Christians exist
+            elif ethnicity.startswith("African ("):
+                score = 0.8
+            elif ethnicity == "Native American":
+                score = 0.55
+            elif ethnicity.startswith("European"):
+                score = 0.4
+                if fn_signal == "anglo":
+                    score += 0.25
+            else:
+                score = 0.3
+            return -score  # sort ascending → highest score first
 
         matches.sort(key=sort_key)
         best_match, _ = matches[0]
-        confidence = self._calculate_confidence(surname_lc, matches)
+
+        # If first name is Hispanic and surname is ambiguous Luso/Indic overlap,
+        # prefer Hispanic/Portuguese label over Indian when available.
+        forced_by_first = False
+        if (
+            fn_signal == "hispanic"
+            and best_match.startswith("Indian")
+            and (is_amb or has_portuguese or has_hispanic)
+        ):
+            for eth, _src in matches:
+                if eth in ("Hispanic", "Portuguese"):
+                    best_match = eth
+                    forced_by_first = True
+                    break
+            else:
+                # Surname not on Hispanic list (e.g. Perera) — still not Indian
+                best_match = "Hispanic"
+                forced_by_first = True
+                matches = list(matches) + [("Hispanic", "first_name_signal")]
+
+        confidence = self._calculate_confidence(
+            surname_lc,
+            matches,
+            best_match=best_match,
+            first_name_signal=fn_signal,
+            is_ambiguous=is_amb,
+            is_high_confidence_surname=is_hc,
+        )
+
+        if forced_by_first and best_match in ("Hispanic", "Portuguese"):
+            # First-name-driven reclass: solid but not overconfident
+            confidence = min(confidence, 0.62)
+            confidence = max(confidence, 0.52)
+
+        # Hard floors: ambiguous Indian surname without Indic first name
+        if best_match.startswith("Indian") and is_amb:
+            if fn_signal == "anglo":
+                confidence = min(confidence, 0.28)
+            elif fn_signal == "hispanic":
+                confidence = min(confidence, 0.25)
+            elif fn_signal == "unknown":
+                confidence = min(confidence, 0.42)
 
         return (best_match, confidence, [m[0] for m in matches])
 
-    def get_likely_ethnicity(self, surname: str) -> Tuple[str, float]:
-        """Get the most likely ethnicity for a surname."""
-        ethnicity, confidence, _ = self.classify_by_name(surname)
+    def get_likely_ethnicity(
+        self,
+        surname: str,
+        first_name: Optional[str] = None,
+    ) -> Tuple[str, float]:
+        """Get the most likely ethnicity for a name."""
+        ethnicity, confidence, _ = self.classify_by_name(surname, first_name=first_name)
         return (ethnicity, confidence)
 
     def is_hispanic_surname(self, surname: str) -> bool:
-        """Check if a surname is commonly Hispanic."""
         self._build_lookup_sets()
         return surname.strip().lower() in self._hispanic_lc
 
     def is_asian_surname(self, surname: str) -> Tuple[bool, str]:
-        """Check if a surname is East/Southeast Asian. Returns (is_asian, sub_group)."""
         self._build_lookup_sets()
         surname_lc = surname.strip().lower()
         for group, names in self._asian_lc.items():
@@ -295,28 +441,25 @@ class EthnicNameDatabase:
         return False, ""
 
     def is_indian_surname(self, surname: str) -> bool:
-        """Check if a surname is commonly South Asian / Indian-subcontinent."""
         self._build_lookup_sets()
         lc = surname.strip().lower()
-        if lc in getattr(self, "_indian_excl_lc", set()):
+        if lc in self._indian_excl_lc:
             return False
         return lc in self._indian_lc
 
     def is_indian_high_confidence_surname(self, surname: str) -> bool:
-        """Check if a surname is on the curated high-confidence Indian list."""
         self._build_lookup_sets()
         lc = surname.strip().lower()
-        if lc in getattr(self, "_indian_excl_lc", set()):
+        if lc in self._indian_excl_lc:
             return False
-        return lc in getattr(self, "_indian_hc_lc", set())
+        return lc in self._indian_hc_lc
+
+    def is_indian_ambiguous_surname(self, surname: str) -> bool:
+        self._build_lookup_sets()
+        return surname.strip().lower() in self._indian_amb_lc
 
     def subcategories(self, ethnicity: str) -> List[str]:
-        """
-        Subcategory keys for a top-level ethnicity list.
-        Always includes 'all' first when subgroups exist; flat lists return ['all'] only.
-        """
         eth = (ethnicity or "").lower().strip()
-        # Alias for the curated list as its own ethnicity (no further subcategories)
         if eth in (
             "indian_high_confidence",
             "high_confidence_indian",
@@ -328,7 +471,6 @@ class EthnicNameDatabase:
             return ["all"] + sorted(self.asian_surnames.keys(), key=str.lower)
         if eth == "indian":
             groups = sorted((self.indian_surnames_by_group or {}).keys(), key=str.lower)
-            # Prefer high_confidence first in the dropdown after "all"
             if "high_confidence" in groups:
                 groups = ["high_confidence"] + [g for g in groups if g != "high_confidence"]
             return ["all"] + groups if groups else ["all"]
@@ -336,31 +478,82 @@ class EthnicNameDatabase:
             return ["all"] + sorted(self.european_surnames.keys(), key=str.lower)
         if eth == "african":
             return ["all"] + sorted(self.african_surnames.keys(), key=str.lower)
-        # Flat lists (hispanic, african_american, …) or "all" top-level
         return ["all"]
 
     def has_subcategories(self, ethnicity: str) -> bool:
-        subs = self.subcategories(ethnicity)
-        return len(subs) > 1
+        return len(self.subcategories(ethnicity)) > 1
 
     def is_african_american_surname(self, surname: str) -> bool:
-        """Check if a surname is commonly African-American."""
         self._build_lookup_sets()
         return surname.strip().lower() in self._african_american_lc
 
-    def _calculate_confidence(self, surname: str, matches: List[Tuple[str, str]]) -> float:
-        """Calculate confidence score based on match specificity and ambiguity."""
+    def _calculate_confidence(
+        self,
+        surname: str,
+        matches: List[Tuple[str, str]],
+        *,
+        best_match: str,
+        first_name_signal: str,
+        is_ambiguous: bool,
+        is_high_confidence_surname: bool,
+    ) -> float:
+        """Confidence from surname specificity + first-name corroboration."""
         if not matches:
             return 0.0
 
-        # Single clean match → high confidence; curated HC Indians even higher
         sources = {src for _eth, src in matches}
-        if "indian_high_confidence" in sources:
-            base = 0.95 if len(matches) == 1 else 0.9
-        else:
-            base = 0.85 if len(matches) == 1 else 0.7
+        multi_family = self._family_count(matches) > 1
 
-        # Distinct family groups that also matched reduce confidence
+        # Base from surname quality
+        if best_match.startswith("Indian"):
+            if is_high_confidence_surname and not is_ambiguous:
+                base = 0.92 if not multi_family else 0.85
+            elif is_ambiguous:
+                # Surname alone is weak evidence
+                base = 0.38
+            else:
+                base = 0.72 if not multi_family else 0.58
+        elif best_match == "Hispanic":
+            base = 0.85 if not multi_family else 0.7
+        elif best_match.startswith("Asian"):
+            base = 0.85 if not multi_family else 0.7
+        else:
+            base = 0.8 if len(matches) == 1 else 0.65
+
+        # First-name adjustment
+        if first_name_signal == "indian":
+            if best_match.startswith("Indian"):
+                base = min(1.0, base + (0.4 if is_ambiguous else 0.12))
+            elif best_match in ("Hispanic", "Portuguese"):
+                base = max(0.35, base - 0.15)
+        elif first_name_signal == "hispanic":
+            if best_match.startswith("Indian"):
+                base = min(base, 0.25 if is_ambiguous else 0.4)
+            elif best_match in ("Hispanic", "Portuguese"):
+                base = min(1.0, base + 0.12)
+        elif first_name_signal == "anglo":
+            if best_match.startswith("Indian"):
+                if is_ambiguous:
+                    base = min(base, 0.28)
+                elif is_high_confidence_surname:
+                    # Possible intermarriage / diaspora given name — still dampen
+                    base = min(base, 0.62)
+                else:
+                    base = min(base, 0.45)
+            elif best_match.startswith("European"):
+                base = min(1.0, base + 0.1)
+
+        if multi_family and not best_match.startswith("Indian"):
+            base -= 0.08 * (self._family_count(matches) - 1)
+
+        if "indian_high_confidence" in sources and best_match.startswith("Indian"):
+            if first_name_signal == "indian":
+                base = max(base, 0.9)
+
+        return round(max(0.15, min(base, 1.0)), 2)
+
+    @staticmethod
+    def _family_count(matches: List[Tuple[str, str]]) -> int:
         families = set()
         for ethnicity, _source in matches:
             if ethnicity == "Indian" or ethnicity.startswith("Indian ("):
@@ -373,16 +566,11 @@ class EthnicNameDatabase:
                 families.add("african")
             else:
                 families.add(ethnicity.lower())
-
-        if len(families) > 1:
-            base -= 0.1 * (len(families) - 1)
-
-        # Round to avoid float noise (e.g. 0.4999999999 < 0.5 thresholds)
-        return round(max(0.4, min(base, 1.0)), 2)
+        return len(families)
 
 
-# Singleton instance
 _ethnic_db = None
+
 
 def get_ethnic_database() -> EthnicNameDatabase:
     """Get the singleton ethnic name database."""

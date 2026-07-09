@@ -214,6 +214,19 @@ def _last_name_from_record(record: Dict[str, Any]) -> str:
     return ""
 
 
+def _first_name_from_record(record: Dict[str, Any]) -> str:
+    first = (record.get("first_name") or record.get("FirstName") or "").strip()
+    if first:
+        # Drop middle names / initials for first-name lists
+        return first.split()[0]
+    full = (record.get("full_name") or record.get("Name") or "").strip()
+    if full:
+        parts = full.replace(",", " ").split()
+        if len(parts) >= 2:
+            return parts[0]
+    return ""
+
+
 class SexOffenderSearcher:
     """Search and filter sex offender records with misclassification detection."""
 
@@ -371,6 +384,7 @@ class SexOffenderSearcher:
             limit=scan_limit, newest_first=newest_first
         ):
             last_name = _last_name_from_record(record)
+            first_name = _first_name_from_record(record)
             recorded_race = (record.get("race") or "").strip()
 
             if not last_name:
@@ -379,7 +393,9 @@ class SexOffenderSearcher:
             if hc_only and not self.ethnic_db.is_indian_high_confidence_surname(last_name):
                 continue
 
-            likely_eth, confidence, matching_names = self.ethnic_db.classify_by_name(last_name)
+            likely_eth, confidence, matching_names = self.ethnic_db.classify_by_name(
+                last_name, first_name=first_name or None
+            )
 
             if confidence < min_confidence or likely_eth == "Unknown":
                 continue
@@ -480,7 +496,10 @@ class SexOffenderSearcher:
             if not last_name:
                 continue
 
-            likely_eth, confidence, _ = self.ethnic_db.classify_by_name(last_name)
+            first_name = _first_name_from_record(record)
+            likely_eth, confidence, _ = self.ethnic_db.classify_by_name(
+                last_name, first_name=first_name or None
+            )
             if confidence < min_confidence or likely_eth == "Unknown":
                 continue
 
