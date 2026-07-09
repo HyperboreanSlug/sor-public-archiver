@@ -542,6 +542,19 @@ def _bind_tree_scroll_isolation(tree: ttk.Treeview, wrap: ctk.CTkFrame) -> None:
         w.bind("<Button-5>", _on_wheel)
 
 
+def _misclass_race_bucket(recorded_race: Optional[str]) -> str:
+    """Map a recorded race label to Black / White / Other for Statistics pie."""
+    key = (recorded_race or "").strip().upper()
+    if key in ("WHITE", "W", "CAUCASIAN", "CAUCASION"):
+        return "White"
+    if key in (
+        "BLACK", "B", "AFRICAN AMERICAN", "AFRICAN-AMERICAN",
+        "BLACK OR AFRICAN AMERICAN",
+    ):
+        return "Black"
+    return "Other"
+
+
 def _tree_cell_sort_key(val: Any):
     """
     Sort key for tree cells: numeric 0→100 (and 0%→100%) before text.
@@ -2935,14 +2948,9 @@ class ArchiverApp(ctk.CTk):
                 )
 
         by_eth = Counter((mc.likely_ethnicity or "—") for mc in results)
-        # "Misclassified as (race)": only Black / White / Other.
-        # Asian (and codes like I, American Indian, Arabic, Hispanic, …) are
-        # omitted — Asian is a correct registry race for many Indian surnames.
-        _race_stats_keep = frozenset({"BLACK", "WHITE", "OTHER"})
-        by_race = Counter(
-            (mc.expected_race or "—")
-            for mc in results
-            if (mc.expected_race or "—").strip().upper() in _race_stats_keep
+        # "Misclassified as (race)" pie: Black / White / Other (residual bucket).
+        by_race: Counter = Counter(
+            _misclass_race_bucket(mc.expected_race) for mc in results
         )
         race_n = sum(by_race.values())
 
@@ -3439,8 +3447,6 @@ class ArchiverApp(ctk.CTk):
             return []
 
         photos_only = bool(self.report_photos_only.get())
-        race_bw = bool(self.report_race_bw_other.get())
-        keep_races = frozenset({"BLACK", "WHITE", "OTHER"})
         vfilter = (self.report_verdict_filter.get() or "all").strip().lower()
 
         # Prefetch photo paths when missing
@@ -3491,9 +3497,6 @@ class ArchiverApp(ctk.CTk):
         best_by_person: Dict[str, Any] = {}
         for mc in results:
             rec = mc.record or {}
-            race_u = (mc.expected_race or "").strip().upper()
-            if race_bw and race_u not in keep_races:
-                continue
             photo = (rec.get("photo_path") or "").strip()
             has_photo = bool(photo and Path(photo).is_file())
             if photos_only and not has_photo:
@@ -3907,14 +3910,7 @@ class ArchiverApp(ctk.CTk):
 
     def _reports_update_metrics(self) -> None:
         items = self._report_items or []
-        # Also count verdicts across all filtered-by-race source pool when possible
         source = list(self._misclass_results or [])
-        if bool(getattr(self, "report_race_bw_other", None) and self.report_race_bw_other.get()):
-            keep = frozenset({"BLACK", "WHITE", "OTHER"})
-            source = [
-                mc for mc in source
-                if (mc.expected_race or "").strip().upper() in keep
-            ]
 
         n_photo = 0
         n_conf = n_ok = n_un = 0
