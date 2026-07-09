@@ -331,6 +331,17 @@ class EthnicNameDatabase:
         fn_signal = self._first_name_signal(first_name)
         is_amb = surname_lc in self._indian_amb_lc
         is_hc = surname_lc in self._indian_hc_lc
+        # Very short surnames (Dey, Rai, …) are easy false positives with Western
+        # given names even when they also appear on Indian lists.
+        is_short_surname = len(surname_lc) <= 3
+        # Distinctive short forms that are almost only South Asian
+        _strong_short = frozenset({
+            "jha", "rao", "rai", "kaur", "nair", "jain", "bose", "modi",
+            "iyer", "kaul", "goel", "saha", "das", "dev", "lal", "pal",
+        })
+        is_weak_with_western = is_amb or (
+            is_short_surname and surname_lc not in _strong_short
+        )
         has_indian = any(m[0].startswith("Indian") for m in matches)
         has_hispanic = any(m[0] == "Hispanic" for m in matches)
         has_portuguese = any(m[0] == "Portuguese" for m in matches)
@@ -342,17 +353,24 @@ class EthnicNameDatabase:
             score = 0.0
             if ethnicity == "Indian" or ethnicity.startswith("Indian ("):
                 score = 1.05
-                if is_amb:
+                if is_amb or is_weak_with_western:
                     score = 0.55  # weak until first name helps
-                if is_hc and not is_amb:
+                if is_hc and not is_amb and not is_weak_with_western:
                     score = 1.15
                 if fn_signal == "indian":
                     score += 0.45
                 elif fn_signal == "anglo":
-                    score -= 0.55 if is_amb else (0.25 if not is_hc else 0.15)
+                    if is_amb or is_weak_with_western:
+                        score -= 0.65
+                    elif is_hc:
+                        score -= 0.2
+                    else:
+                        score -= 0.35
                 elif fn_signal == "hispanic":
                     # Alberto Perera / Carlos Silva — not Indian primary
-                    score -= 0.75 if is_amb or has_portuguese or has_hispanic else 0.35
+                    score -= 0.75 if (
+                        is_amb or is_weak_with_western or has_portuguese or has_hispanic
+                    ) else 0.35
             elif ethnicity == "Hispanic":
                 score = 0.95
                 if fn_signal == "hispanic":
@@ -410,8 +428,8 @@ class EthnicNameDatabase:
             matches,
             best_match=best_match,
             first_name_signal=fn_signal,
-            is_ambiguous=is_amb,
-            is_high_confidence_surname=is_hc,
+            is_ambiguous=is_amb or is_weak_with_western,
+            is_high_confidence_surname=is_hc and not is_weak_with_western,
         )
 
         if forced_by_first and best_match in ("Hispanic", "Portuguese"):
@@ -419,14 +437,18 @@ class EthnicNameDatabase:
             confidence = min(confidence, 0.62)
             confidence = max(confidence, 0.52)
 
-        # Hard floors: ambiguous Indian surname without Indic first name
-        if best_match.startswith("Indian") and is_amb:
+        # Hard floors: weak/ambiguous Indian surname without Indic first name
+        if best_match.startswith("Indian") and (is_amb or is_weak_with_western):
             if fn_signal == "anglo":
-                confidence = min(confidence, 0.28)
+                # Adam Dey, Amy Gill — must not clear default 0.5 Analyze floor
+                confidence = min(confidence, 0.32)
             elif fn_signal == "hispanic":
                 confidence = min(confidence, 0.25)
             elif fn_signal == "unknown":
                 confidence = min(confidence, 0.42)
+        elif best_match.startswith("Indian") and fn_signal == "anglo" and is_hc:
+            # Amy Patel: still Indian, but not max confidence
+            confidence = min(confidence, 0.55)
 
         return (best_match, confidence, [m[0] for m in matches])
 

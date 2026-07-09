@@ -672,6 +672,17 @@ class EthnicAndSearchTests(unittest.TestCase):
         eth6, conf6, _ = db.classify_by_name("More", first_name="CRISTÓBAL")
         self.assertFalse(eth6.startswith("Indian"))
 
+        # Adam Dey — Western given name + short/ambiguous surname, below Analyze 0.5
+        eth7, conf7, _ = db.classify_by_name("Dey", first_name="Adam")
+        self.assertLess(
+            conf7, 0.5,
+            f"Adam Dey must be below default min conf, got {eth7} conf={conf7}",
+        )
+        # Indic given name can still support Dey
+        eth8, conf8, _ = db.classify_by_name("Dey", first_name="Rahul")
+        self.assertTrue(eth8.startswith("Indian"))
+        self.assertGreaterEqual(conf8, 0.5)
+
     def test_classify_common_names(self):
         eth = EthnicNameDatabase()
         self.assertEqual(eth.classify_by_name("Garcia")[0], "Hispanic")
