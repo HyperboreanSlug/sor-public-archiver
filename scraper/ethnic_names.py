@@ -264,10 +264,11 @@ class EthnicNameDatabase:
         # only when explicitly in indian list
         if fn in self._indian_first_lc:
             return "indian"
-        if fn in self._hispanic_first_lc:
-            return "hispanic"
+        # Slavic before Hispanic so Ivan/Andrei stay Slavic (not Spanish-default)
         if fn in self._slavic_first_lc:
             return "slavic"
+        if fn in self._hispanic_first_lc:
+            return "hispanic"
         if fn in self._anglo_first_lc:
             return "anglo"
         return "unknown"
