@@ -15,6 +15,8 @@ class EthnicNameDatabase:
         # South Asian / Indian subcontinent (India, Pakistan, Bangladesh, Sri Lanka, Nepal, …)
         self.indian_surnames = set()
         self.indian_surnames_by_group = {}  # optional nested: india, pakistani, …
+        # Curated subset: clearly Indic surnames (NSOPW "high-confidence Indians")
+        self.indian_high_confidence_surnames = set()
         self.african_american_surnames = set()
         self.native_american_surnames = set()
         self.european_surnames = {}  # nested dict by country
@@ -63,6 +65,19 @@ class EthnicNameDatabase:
         elif isinstance(top_indian, list):
             self.indian_surnames.update(n.strip() for n in top_indian if n and n.strip())
 
+        # High-confidence Indians (curated; also folded into broad indian for classifiers)
+        hc = data.get("indian_high_confidence_surnames", [])
+        if isinstance(hc, list):
+            self.indian_high_confidence_surnames = {
+                n.strip() for n in hc if n and str(n).strip()
+            }
+            self.indian_surnames.update(self.indian_high_confidence_surnames)
+            # Expose as a synthetic subgroup for subcategory UI when eth=indian
+            if self.indian_high_confidence_surnames:
+                self.indian_surnames_by_group.setdefault(
+                    "high_confidence", set()
+                ).update(self.indian_high_confidence_surnames)
+
         # African-American surnames
         self.african_american_surnames = set(data.get("african_american_surnames", []))
 
@@ -105,6 +120,8 @@ class EthnicNameDatabase:
         self.indian_surnames = {
             "Patel", "Shah", "Singh", "Kumar", "Gupta", "Sharma", "Reddy", "Nair"
         }
+        self.indian_high_confidence_surnames = set(self.indian_surnames)
+        self.indian_surnames_by_group = {"high_confidence": set(self.indian_surnames)}
 
     def _build_lookup_sets(self) -> None:
         """Cache lowercased sets for O(1) surname membership checks."""
@@ -117,6 +134,9 @@ class EthnicNameDatabase:
         self._portuguese_lc = {n.lower() for n in self.portuguese_surnames}
         self._arabic_lc = {n.lower() for n in self.arabic_surnames}
         self._indian_lc = {n.lower() for n in self.indian_surnames}
+        self._indian_hc_lc = {
+            n.lower() for n in (self.indian_high_confidence_surnames or set())
+        }
         self._indian_group_lc = {
             group: {n.lower() for n in names}
             for group, names in (self.indian_surnames_by_group or {}).items()
@@ -151,8 +171,13 @@ class EthnicNameDatabase:
             matches.append(("Hispanic", "hispanic_surnames"))
 
         # South Asian / Indian before generic Asian so lists stay distinct
+        # High-confidence curated list first (stronger label)
+        if surname_lc in getattr(self, "_indian_hc_lc", set()):
+            matches.append(("Indian (high_confidence)", "indian_high_confidence"))
         if getattr(self, "indian_surnames_by_group", None):
             for group, names in getattr(self, "_indian_group_lc", {}).items():
+                if group == "high_confidence":
+                    continue  # already labeled above
                 if surname_lc in names:
                     matches.append((f"Indian ({group})", f"indian_{group}"))
         if surname_lc in self._indian_lc and not any(m[0].startswith("Indian") for m in matches):
@@ -242,16 +267,32 @@ class EthnicNameDatabase:
         self._build_lookup_sets()
         return surname.strip().lower() in self._indian_lc
 
+    def is_indian_high_confidence_surname(self, surname: str) -> bool:
+        """Check if a surname is on the curated high-confidence Indian list."""
+        self._build_lookup_sets()
+        return surname.strip().lower() in getattr(self, "_indian_hc_lc", set())
+
     def subcategories(self, ethnicity: str) -> List[str]:
         """
         Subcategory keys for a top-level ethnicity list.
         Always includes 'all' first when subgroups exist; flat lists return ['all'] only.
         """
         eth = (ethnicity or "").lower().strip()
+        # Alias for the curated list as its own ethnicity (no further subcategories)
+        if eth in (
+            "indian_high_confidence",
+            "high_confidence_indian",
+            "high-confidence indian",
+            "indian_hc",
+        ):
+            return ["all"]
         if eth == "asian":
             return ["all"] + sorted(self.asian_surnames.keys(), key=str.lower)
         if eth == "indian":
             groups = sorted((self.indian_surnames_by_group or {}).keys(), key=str.lower)
+            # Prefer high_confidence first in the dropdown after "all"
+            if "high_confidence" in groups:
+                groups = ["high_confidence"] + [g for g in groups if g != "high_confidence"]
             return ["all"] + groups if groups else ["all"]
         if eth == "european":
             return ["all"] + sorted(self.european_surnames.keys(), key=str.lower)
@@ -274,8 +315,12 @@ class EthnicNameDatabase:
         if not matches:
             return 0.0
 
-        # Single clean match → high confidence
-        base = 0.85 if len(matches) == 1 else 0.7
+        # Single clean match → high confidence; curated HC Indians even higher
+        sources = {src for _eth, src in matches}
+        if "indian_high_confidence" in sources:
+            base = 0.95 if len(matches) == 1 else 0.9
+        else:
+            base = 0.85 if len(matches) == 1 else 0.7
 
         # Distinct family groups that also matched reduce confidence
         families = set()

@@ -67,29 +67,49 @@ def last_name_search_prefix(
     return last_s[:need]
 
 
+def _surname_alnum(s: str) -> str:
+    """Lowercase letters-only form for surname comparison (drops spaces/hyphens)."""
+    return re.sub(r"[^a-z]", "", (s or "").strip().lower())
+
+
+# Prefix-expand list surnames only at this length+ (Garcia→Garciaz).
+# Shorter tokens (De, Das, John, del, Ali) are exact-match only so compact
+# NSOPW queries do not bucket De-Vries/Delosantos/Johnson as ethnicity matches.
+_MIN_PREFIX_EXPAND_LEN = 5
+
+
 def last_matches_target_surnames(last_name: str, targets: Sequence[str]) -> bool:
     """
     True if hit last name is covered by any full list surname.
 
-    Match rules (case-insensitive):
-      - exact equality, or
-      - hit starts with a list surname of length >= 2 (e.g. Garciaz ≈ Garcia)
+    Match rules (case-insensitive, hyphens/spaces ignored for comparison):
+      - exact equality on the full last name, or
+      - prefix expand only when the *list* surname is long enough
+        (default ≥5 letters), e.g. Garciaz ≈ Garcia
 
-    Single-letter list tokens only match exactly (avoids "A" matching everyone).
-    Keeps short-prefix NSOPW searches from treating unrelated hits (Ahern) as
-    list matches for Ahmed/Ahmad.
+    Short list names (De, John, Das, Ali, del, …) match **exactly only**.
+    Otherwise De→Delosantos/De-Vries and John→Johnson false-positive as
+    Indian (or other) ethnicity-list matches.
     """
     last = (last_name or "").strip().lower()
     if not last:
         return False
+    last_compact = _surname_alnum(last)
+    if not last_compact:
+        return False
+
     for t in targets:
         tl = (t or "").strip().lower()
         if not tl:
             continue
-        if last == tl:
+        tl_compact = _surname_alnum(tl)
+        if not tl_compact:
+            continue
+        # Exact full last name (raw or alphanumeric-compact)
+        if last == tl or last_compact == tl_compact:
             return True
-        # Prefix expand only for multi-char list surnames
-        if len(tl) >= 2 and last.startswith(tl):
+        # Prefix expand only for longer list surnames (never De/John/del/…)
+        if len(tl_compact) >= _MIN_PREFIX_EXPAND_LEN and last_compact.startswith(tl_compact):
             return True
     return False
 
@@ -196,19 +216,46 @@ class BuildStats:
 class RateLimiter:
     """Minimum interval between *starts* of operations (caller waits then works)."""
 
+    # Poll cancel this often while sleeping (keeps Cancel responsive under 3s+ delays)
+    CANCEL_POLL_S = 0.05
+
     def __init__(self, min_interval: float):
         self.min_interval = max(0.0, float(min_interval))
         self._last = 0.0
 
-    def wait(self) -> None:
+    def set_interval(self, min_interval: float) -> None:
+        """Update pacing (e.g. GUI changed search/report delay mid-run)."""
+        self.min_interval = max(0.0, float(min_interval))
+
+    def wait(self, cancel_check: Optional[Callable[[], bool]] = None) -> bool:
+        """
+        Wait for min_interval since last operation.
+
+        Returns True if *cancel_check* fired mid-wait (caller should abort).
+        Sleeps in short slices so Cancel is felt in ~50ms, not after a full delay.
+        """
+        if cancel_check and cancel_check():
+            return True
         if self.min_interval <= 0:
             self._last = time.monotonic()
-            return
+            return bool(cancel_check and cancel_check())
         now = time.monotonic()
-        elapsed = now - self._last
-        if elapsed < self.min_interval:
-            time.sleep(self.min_interval - elapsed)
+        remaining = self.min_interval - (now - self._last)
+        if remaining <= 0:
+            self._last = time.monotonic()
+            return bool(cancel_check and cancel_check())
+        end = now + remaining
+        poll = max(0.02, float(self.CANCEL_POLL_S))
+        while True:
+            if cancel_check and cancel_check():
+                return True
+            now = time.monotonic()
+            left = end - now
+            if left <= 0:
+                break
+            time.sleep(left if left < poll else poll)
         self._last = time.monotonic()
+        return bool(cancel_check and cancel_check())
 
 
 class NSOPWEthnicDatabaseBuilder:
@@ -237,7 +284,17 @@ class NSOPWEthnicDatabaseBuilder:
         client_search_sleep = search_delay if client_owned_delay else 0.0
         client_report_sleep = report_delay if client_owned_delay else 0.0
         self.client = NSOPWClient(delay=client_search_sleep)
-        self.reports = ReportFetcher(delay=client_report_sleep)
+        # Shared cookie jar + captcha queue (manual browser solve → import cookies)
+        from .cookie_jar import CaptchaQueue, CookieJarStore
+
+        self.cookie_store = CookieJarStore()
+        self.captcha_queue = CaptchaQueue()
+        self.reports = ReportFetcher(
+            delay=client_report_sleep,
+            cookie_store=self.cookie_store,
+            captcha_queue=self.captcha_queue,
+            use_saved_cookies=True,
+        )
         self.search_limiter = RateLimiter(0.0 if client_owned_delay else search_delay)
         self.report_limiter = RateLimiter(0.0 if client_owned_delay else report_delay)
         self.html_dir = Path(html_dir)
@@ -260,7 +317,12 @@ class NSOPWEthnicDatabaseBuilder:
             self._known_urls = set()
 
     def _ensure_query_log(self) -> None:
-        """Track completed NSOPW (first, surname) queries for resume support."""
+        """Track completed NSOPW API queries (first + last token) for resume support.
+
+        Ethnicity is stored for audit only. Skip decisions key on (first, last)
+        because the NSOPW name API is not ethnicity-filtered — re-running the same
+        first/last under another ethnicity would be a duplicate network search.
+        """
         self.db._conn.execute(
             """
             CREATE TABLE IF NOT EXISTS nsopw_query_log (
@@ -273,7 +335,35 @@ class NSOPWEthnicDatabaseBuilder:
             )
             """
         )
+        # Fast lookup by API identity (first + last), any ethnicity
+        self.db._conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_nsopw_query_log_api
+            ON nsopw_query_log (first_prefix, surname)
+            """
+        )
         self.db._conn.commit()
+        # In-memory set of completed (first_upper, last_lower); filled by _load_completed_queries
+        self._completed_queries: Set[Tuple[str, str]] = set()
+
+    @staticmethod
+    def _query_key(first: str, surname: str) -> Tuple[str, str]:
+        """Canonical API search identity: (FIRST, last)."""
+        return ((first or "").strip().upper(), (surname or "").strip().lower())
+
+    def _load_completed_queries(self) -> Set[Tuple[str, str]]:
+        """Load all completed (first, last) pairs from the DB (any ethnicity)."""
+        try:
+            rows = self.db._conn.execute(
+                "SELECT first_prefix, surname FROM nsopw_query_log"
+            ).fetchall()
+        except Exception:
+            return set()
+        out: Set[Tuple[str, str]] = set()
+        for row in rows:
+            out.add(self._query_key(row[0], row[1]))
+        self._completed_queries = out
+        return out
 
     def _state_stats(self, state: str) -> StateReportStats:
         key = (state or "UNK").upper()[:12] or "UNK"
@@ -281,22 +371,34 @@ class NSOPWEthnicDatabaseBuilder:
             self.stats.by_state[key] = StateReportStats()
         return self.stats.by_state[key]
 
-    def _query_done(self, first: str, surname: str, ethnicity: str) -> bool:
+    def _query_done(self, first: str, surname: str, ethnicity: str = "") -> bool:
+        """True if this first+last API query was completed (ethnicity ignored)."""
+        key = self._query_key(first, surname)
+        if key in getattr(self, "_completed_queries", ()):
+            return True
+        # DB fallback (and when set not preloaded)
         row = self.db._conn.execute(
             """
             SELECT 1 FROM nsopw_query_log
-            WHERE first_prefix = ? AND surname = ? AND ethnicity = ?
+            WHERE first_prefix = ? AND surname = ?
             LIMIT 1
             """,
-            (first.strip().upper(), surname.strip().lower(), (ethnicity or "").lower()),
+            key,
         ).fetchone()
-        return row is not None
+        if row is not None:
+            self._completed_queries.add(key)
+            return True
+        return False
 
     def _mark_query_done(
-        self, first: str, surname: str, ethnicity: str, hit_count: int = 0
+        self, first: str, surname: str, ethnicity: str = "", hit_count: int = 0
     ) -> None:
         from datetime import datetime, timezone
 
+        fp, sn = self._query_key(first, surname)
+        if not fp or not sn:
+            return
+        eth = (ethnicity or "").strip().lower()
         now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
         self.db._conn.execute(
             """
@@ -306,15 +408,10 @@ class NSOPWEthnicDatabaseBuilder:
                 completed_at = excluded.completed_at,
                 hit_count = excluded.hit_count
             """,
-            (
-                first.strip().upper(),
-                surname.strip().lower(),
-                (ethnicity or "").lower(),
-                now,
-                int(hit_count),
-            ),
+            (fp, sn, eth, now, int(hit_count)),
         )
         self.db._conn.commit()
+        self._completed_queries.add((fp, sn))
 
     @staticmethod
     def _html_path_for(url: str, html_dir: Path, jurisdiction: str) -> Path:
@@ -387,11 +484,24 @@ class NSOPWEthnicDatabaseBuilder:
                 if sub and group.lower() != sub:
                     continue
                 take(names, f"Asian ({group})", group_cap())
+        # Curated high-confidence Indians (own ethnicity OR indian → high_confidence sub)
+        hc_names = getattr(self.ethnic_db, "indian_high_confidence_surnames", None) or set()
+        if eth in (
+            "indian_high_confidence",
+            "high_confidence_indian",
+            "high-confidence indian",
+            "indian_hc",
+        ) or (eth == "indian" and sub == "high_confidence"):
+            take(hc_names, "Indian (high_confidence)", cap if eth != "all" else group_cap())
         # Indian subcontinent / South Asian (separate list; optional regional groups)
-        if eth in ("all", "indian"):
+        # Note: high_confidence is a curated subset — only when subcategory selects it
+        # (handled above); never merge into eth=indian "all" (avoids dupes + noise).
+        if eth in ("all", "indian") and sub != "high_confidence":
             by_group = getattr(self.ethnic_db, "indian_surnames_by_group", None) or {}
             if by_group:
                 for group, names in sorted(by_group.items()):
+                    if group.lower() == "high_confidence":
+                        continue
                     if sub and group.lower() != sub:
                         continue
                     take(names, f"Indian ({group})", group_cap())
@@ -453,6 +563,7 @@ class NSOPWEthnicDatabaseBuilder:
         log: Optional[Callable[[str], None]] = None,
         on_insert: Optional[Callable[[Dict[str, Any]], None]] = None,
         on_progress: Optional[Callable[[Dict[str, Any]], None]] = None,
+        live_options: Optional[Callable[[], Dict[str, Any]]] = None,
     ) -> BuildStats:
         """
         Run the ethnic-name NSOPW search pipeline.
@@ -480,7 +591,9 @@ class NSOPWEthnicDatabaseBuilder:
           None or <= 0 means unlimited.
 
         skip_completed_searches:
-          Resume mode — skip (first, last_prefix) pairs already in nsopw_query_log.
+          When True (default), never re-run a (first, last) API query already in
+          nsopw_query_log — ethnicity is ignored for this check. Set False only
+          to explicitly repeat old searches.
         new_files_only:
           Skip report HTTP download when local HTML already exists for that URL.
         all_surnames:
@@ -490,6 +603,9 @@ class NSOPWEthnicDatabaseBuilder:
         (used by the GUI for live Recent inserts).
         on_progress: optional callback with a progress dict after each plan step
         (plan_i, plan_total, searches, inserted, hits, current query, etc.).
+        live_options: optional callable returning a dict of runtime knobs re-read
+          during the run (delays, caps, skip/enrich/save flags). Ethnicity and
+          surname plan are fixed at start; only operational knobs are live.
         """
         def _log(msg: str) -> None:
             if log:
@@ -507,10 +623,92 @@ class NSOPWEthnicDatabaseBuilder:
                 return None
             return None if n <= 0 else n
 
+        # Fresh counters each run (do not accumulate across build() calls)
+        self.stats = BuildStats()
+
         search_cap = _cap(max_searches)
         # "Max reports" in the GUI means max unique names, not HTTP report fetches.
         # Prefer explicit max_names; fall back to max_report_fetches for CLI.
         names_cap = _cap(max_names if max_names is not None else max_report_fetches)
+
+        # Live-tunable operational flags (mutated by _apply_live_options each step)
+        skip_existing_urls = bool(skip_existing_urls)
+        skip_completed_searches = bool(skip_completed_searches)
+        new_files_only = bool(new_files_only)
+        enrich_reports = bool(enrich_reports)
+        save_html = bool(save_html)
+        _live_last_sig: Optional[str] = None
+
+        def _apply_live_options(*, announce: bool = True) -> None:
+            """Refresh delays/caps/flags from live_options callback (GUI mid-run)."""
+            nonlocal search_cap, names_cap
+            nonlocal skip_existing_urls, skip_completed_searches, new_files_only
+            nonlocal enrich_reports, save_html, _live_last_sig
+            if not live_options:
+                return
+            try:
+                opts = live_options() or {}
+            except Exception:
+                return
+            if not isinstance(opts, dict):
+                return
+
+            if "max_searches" in opts:
+                search_cap = _cap(opts.get("max_searches"))
+            if "max_names" in opts:
+                names_cap = _cap(opts.get("max_names"))
+            elif "max_report_fetches" in opts:
+                names_cap = _cap(opts.get("max_report_fetches"))
+
+            if "skip_existing_urls" in opts:
+                skip_existing_urls = bool(opts.get("skip_existing_urls"))
+            if "skip_completed_searches" in opts:
+                skip_completed_searches = bool(opts.get("skip_completed_searches"))
+            if "new_files_only" in opts:
+                new_files_only = bool(opts.get("new_files_only"))
+            if "enrich_reports" in opts:
+                enrich_reports = bool(opts.get("enrich_reports"))
+            if "save_html" in opts:
+                save_html = bool(opts.get("save_html"))
+
+            if "search_delay" in opts and opts.get("search_delay") is not None:
+                try:
+                    sd = max(DEFAULT_MIN_SEARCH_INTERVAL, float(opts["search_delay"]))
+                    self.search_delay = sd
+                    self.search_limiter.set_interval(sd)
+                except (TypeError, ValueError):
+                    pass
+            if "report_delay" in opts and opts.get("report_delay") is not None:
+                try:
+                    rd = max(DEFAULT_MIN_REPORT_INTERVAL, float(opts["report_delay"]))
+                    self.report_delay = rd
+                    self.report_limiter.set_interval(rd)
+                except (TypeError, ValueError):
+                    pass
+
+            # Skip-existing turned on mid-run → load URL cache once
+            if skip_existing_urls and not self._known_urls:
+                self._load_known_urls()
+
+            sig = (
+                f"sc={search_cap}|nc={names_cap}|sd={self.search_delay:.2f}|"
+                f"rd={self.report_delay:.2f}|se={int(skip_existing_urls)}|"
+                f"sk={int(skip_completed_searches)}|nf={int(new_files_only)}|"
+                f"en={int(enrich_reports)}|sh={int(save_html)}"
+            )
+            if announce and sig != _live_last_sig and _live_last_sig is not None:
+                _log(
+                    "Live options updated: "
+                    f"max_searches={'∞' if search_cap is None else search_cap}, "
+                    f"max_names={'∞' if names_cap is None else names_cap}, "
+                    f"search_delay={self.search_delay:.2f}s, "
+                    f"report_delay={self.report_delay:.2f}s, "
+                    f"skip_urls={skip_existing_urls}, "
+                    f"skip_done={skip_completed_searches}, "
+                    f"new_html_only={new_files_only}, "
+                    f"enrich={enrich_reports}, save_html={save_html}"
+                )
+            _live_last_sig = sig
 
         mode = (first_mode or "initials").lower().strip()
         if first_names is not None:
@@ -544,8 +742,8 @@ class NSOPWEthnicDatabaseBuilder:
                 surname_pairs, firsts, min_combined=mcl
             )
         else:
-            # One query per full surname × first (no prefix collapse)
-            search_plan = []
+            # One query per full surname × first (no prefix collapse), de-duped
+            plan_map: Dict[Tuple[str, str], Tuple[str, str, str, Set[str]]] = {}
             for sn, eth_lab in surname_pairs:
                 for fn in firsts:
                     f = (fn or "").strip()
@@ -554,7 +752,19 @@ class NSOPWEthnicDatabaseBuilder:
                         continue
                     if len(f) + len(s) < mcl:
                         continue
-                    search_plan.append((f, s, eth_lab or "", [s]))
+                    key = self._query_key(f, s)
+                    if key not in plan_map:
+                        plan_map[key] = (f, s, eth_lab or "", {s})
+                    else:
+                        prev_f, prev_s, prev_eth, cov = plan_map[key]
+                        cov.add(s)
+                        if eth_lab and not prev_eth:
+                            plan_map[key] = (prev_f, prev_s, eth_lab or "", cov)
+            search_plan = [
+                (f, s, eth, sorted(cov, key=str.lower))
+                for f, s, eth, cov in plan_map.values()
+            ]
+            search_plan.sort(key=lambda t: (t[1].upper(), t[0].upper()))
         compact_queries = len(search_plan)
         # Full selected ethnicity surname list — used to bucket hits matched vs other
         eth_surnames_list = [s for s, _ in surname_pairs]
@@ -592,7 +802,10 @@ class NSOPWEthnicDatabaseBuilder:
             f"report/HTML: {self.report_delay:.2f}s  "
             f"(search is slower: Cloudflare on nsopw-api)"
         )
-        _log(f"Resume/skip completed searches: {skip_completed_searches}")
+        _log(
+            f"Skip completed searches: {skip_completed_searches} "
+            f"({'default — will not re-hit finished first+last pairs' if skip_completed_searches else 'OFF — will re-run old searches'})"
+        )
         _log(f"Skip known URLs in DB: {skip_existing_urls}")
         _log(f"New report files only (no re-download): {new_files_only}")
         _log(f"Save report HTML: {save_html} → {self.html_dir}")
@@ -602,6 +815,27 @@ class NSOPWEthnicDatabaseBuilder:
             _log(f"Known URLs cached for skip: {len(self._known_urls):,}")
         else:
             self._known_urls = set()
+
+        # Preload completed API queries so we never re-hit NSOPW for the same
+        # (first, last) unless skip_completed_searches is False (explicit repeat).
+        already_done_n = 0
+        planned_done_n = 0
+        if skip_completed_searches:
+            completed = self._load_completed_queries()
+            already_done_n = len(completed)
+            planned_done_n = sum(
+                1
+                for f, last_tok, *_rest in search_plan
+                if self._query_key(f, last_tok) in completed
+            )
+            _log(
+                f"Completed search log: {already_done_n:,} unique first+last pairs in DB; "
+                f"{planned_done_n:,} of {len(search_plan):,} planned queries already done (will skip)"
+            )
+        else:
+            self._completed_queries = set()
+            _log("Repeat mode: completed-search log ignored for this run")
+
         _log("NSOPW Conditions of Use apply: https://www.nsopw.gov/")
         if use_compact_prefixes:
             _log(
@@ -620,10 +854,12 @@ class NSOPWEthnicDatabaseBuilder:
         report_count = 0
         names_processed = 0  # unique names after dedupe (counts toward max names)
         plan_total = len(search_plan)
-        # Effective search work: plan size, optionally capped by max_searches
-        work_total = plan_total
+        # New work only: planned queries not already completed (when resume/skip on)
+        remaining = plan_total - planned_done_n if skip_completed_searches else plan_total
+        work_total = remaining
         if search_cap is not None:
-            work_total = min(plan_total, search_cap) if plan_total else int(search_cap)
+            work_total = min(remaining, search_cap) if remaining else 0
+        work_total = max(int(work_total or 0), 1)
 
         def _search_limit_reached() -> bool:
             return search_cap is not None and search_count >= search_cap
@@ -637,7 +873,11 @@ class NSOPWEthnicDatabaseBuilder:
             try:
                 pi = int(extra.get("plan_i", 0) or 0)
                 pt = int(extra.get("plan_total", plan_total) or 0)
-                total = max(int(work_total or pt or 1), 1)
+                # Refresh work_total from current caps for the progress bar
+                if search_cap is not None:
+                    total = max(int(search_cap), 1)
+                else:
+                    total = max(int(work_total or pt or 1), 1)
                 on_progress({
                     "plan_i": pi,
                     "plan_total": pt,
@@ -659,15 +899,35 @@ class NSOPWEthnicDatabaseBuilder:
                     "errors": len(self.stats.errors),
                     "current": str(extra.get("current") or ""),
                     "phase": str(extra.get("phase") or "running"),
+                    # Explicit search terms for the GUI progress line
+                    "search_first": str(extra.get("search_first") or ""),
+                    "search_last": str(extra.get("search_last") or ""),
+                    "search_covers": str(extra.get("search_covers") or ""),
+                    "search_label": str(extra.get("search_label") or ""),
+                    "search_cap": search_cap,
+                    "names_cap": names_cap,
+                    "search_delay": self.search_delay,
+                    "report_delay": self.report_delay,
                 })
             except Exception:
                 pass
 
+        if live_options:
+            _log(
+                "Live options enabled: max searches/names, delays, and checkboxes "
+                "re-apply every step. Ethnicity / surname plan stay fixed for this run."
+            )
+            _apply_live_options(announce=False)
+
         _progress(plan_i=0, plan_total=plan_total, current="starting…", phase="start")
 
+        last_plan_i = 0
         for plan_i, (first, last_token, eth_label, covered_surnames) in enumerate(
             search_plan, start=1
         ):
+            last_plan_i = plan_i
+            # GUI may have changed delays/caps/checkboxes since last step
+            _apply_live_options(announce=True)
             if self.cancel_check():
                 _log("Cancelled by user.")
                 _progress(
@@ -678,48 +938,109 @@ class NSOPWEthnicDatabaseBuilder:
                 )
                 break
             if _search_limit_reached() or _names_limit_reached():
+                _log(
+                    "Limit reached: "
+                    + (
+                        f"searches {search_count}/{search_cap}"
+                        if search_cap is not None and search_count >= search_cap
+                        else f"names {names_processed}/{names_cap}"
+                    )
+                )
                 break
 
-            # Resume: skip API queries already completed successfully
+            # Default: never re-hit an API query already logged (any ethnicity).
+            # Only re-runs when skip_completed_searches is False (explicit repeat).
             if skip_completed_searches and self._query_done(first, last_token, eth_key):
                 self.stats.searches_skipped += 1
+                # Quiet skip log: only every 25th + first few (avoids spam looking like re-runs)
+                if self.stats.searches_skipped <= 3 or self.stats.searches_skipped % 25 == 0:
+                    cov = ",".join(covered_surnames[:4])
+                    if len(covered_surnames) > 4:
+                        cov += f"…(+{len(covered_surnames) - 4})"
+                    _log(
+                        f"  Skip completed search #{self.stats.searches_skipped}: "
+                        f"'{first}' {last_token} [{cov}]"
+                    )
                 cov = ",".join(covered_surnames[:4])
                 if len(covered_surnames) > 4:
                     cov += f"…(+{len(covered_surnames) - 4})"
-                _log(f"  Skip completed search: '{first}' {last_token} [{cov}]")
                 _progress(
                     plan_i=plan_i,
                     plan_total=plan_total,
-                    current=f"skip '{first}' {last_token}",
+                    current=f"skip first='{first}' last='{last_token}'",
                     phase="resume_skip",
+                    search_first=first,
+                    search_last=last_token,
+                    search_covers=cov,
+                    search_label=eth_label or "",
                 )
                 continue
 
+            if self.cancel_check():
+                _log("Cancelled by user.")
+                _progress(
+                    plan_i=plan_i - 1,
+                    plan_total=plan_total,
+                    current="cancelled",
+                    phase="cancelled",
+                )
+                break
             search_count += 1
             self.stats.searches = search_count
-            self.search_limiter.wait()
+            if self.search_limiter.wait(self.cancel_check):
+                _log("Cancelled by user (during search delay).")
+                _progress(
+                    plan_i=plan_i - 1,
+                    plan_total=plan_total,
+                    current="cancelled",
+                    phase="cancelled",
+                )
+                # Don't count a search we never issued
+                search_count = max(0, search_count - 1)
+                self.stats.searches = search_count
+                break
+            if self.cancel_check():
+                _log("Cancelled by user.")
+                _progress(
+                    plan_i=plan_i - 1,
+                    plan_total=plan_total,
+                    current="cancelled",
+                    phase="cancelled",
+                )
+                search_count = max(0, search_count - 1)
+                self.stats.searches = search_count
+                break
             cap_label = "∞" if search_cap is None else str(search_cap)
             cov = ",".join(covered_surnames[:4])
             if len(covered_surnames) > 4:
                 cov += f"…(+{len(covered_surnames) - 4})"
+            # Always search with normalized tokens (same as query log keys)
+            first_q, last_q = self._query_key(first, last_token)
+            # Preserve display casing of first if single letter already upper
+            first_api = first_q
+            last_api = last_token.strip()  # NSOPW accepts any case; log uses last_q
             _log(
-                f"[{search_count}/{cap_label}] NSOPW: '{first}' {last_token} "
+                f"[{search_count}/{cap_label}] NSOPW: first='{first_api}' last='{last_api}' "
                 f"({eth_label}; covers {len(covered_surnames)}: {cov})"
             )
             _progress(
                 plan_i=plan_i,
                 plan_total=plan_total,
-                current=f"'{first}' {last_token}",
+                current=f"first='{first_api}' last='{last_api}'",
                 phase="search",
+                search_first=first_api,
+                search_last=last_api,
+                search_covers=cov,
+                search_label=eth_label or "",
             )
 
             try:
-                hits = self.client.search_by_name(first, last_token, jurisdictions=jurs)
+                hits = self.client.search_by_name(first_api, last_api, jurisdictions=jurs)
             except Exception as e:
                 msg = f"  Search error: {e}"
                 self.stats.errors.append(msg)
                 _log(msg)
-                # Do not mark complete — resume will retry
+                # Do not mark complete — next run will retry
                 continue
 
             # Split hits: ethnicity-list surnames (primary) vs other surnames from
@@ -732,8 +1053,9 @@ class NSOPWEthnicDatabaseBuilder:
                 else:
                     other_hits.append(h)
 
+            # Log as done immediately after a successful API response (0 hits is still done)
             self._mark_query_done(
-                first, last_token, eth_key, hit_count=len(eth_matched) + len(other_hits)
+                first_api, last_q, eth_key, hit_count=len(eth_matched) + len(other_hits)
             )
             self.stats.search_hits += len(hits)
             self.stats.search_hits_matched += len(eth_matched)
@@ -755,8 +1077,11 @@ class NSOPWEthnicDatabaseBuilder:
                 (h, True) for h in eth_matched
             ] + [(h, False) for h in other_hits]
 
+            cancelled = False
             for hit, is_eth_match in ordered_hits:
+                _apply_live_options(announce=False)
                 if self.cancel_check():
+                    cancelled = True
                     break
                 # Max names applies only to ethnicity-list matches; still save "other".
                 if is_eth_match and _names_limit_reached():
@@ -815,11 +1140,19 @@ class NSOPWEthnicDatabaseBuilder:
                         record["flags"] = json.dumps(flags_list)
                         _log(f"  Report skip (local HTML): {existing_html}")
                     else:
+                        if self.cancel_check():
+                            cancelled = True
+                            break
                         report_count += 1
                         self.stats.reports_fetched = report_count
                         sst = self._state_stats(st)
                         sst.reports_attempted += 1
-                        self.report_limiter.wait()
+                        if self.report_limiter.wait(self.cancel_check):
+                            cancelled = True
+                            break
+                        if self.cancel_check():
+                            cancelled = True
+                            break
                         _log(
                             f"  Name ({names_processed}/{ncap_label}) "
                             f"report [{st}]: {url[:90]}"
@@ -853,6 +1186,12 @@ class NSOPWEthnicDatabaseBuilder:
                             sst.blocks[reason] = sst.blocks.get(reason, 0) + 1
                             if status.startswith("error:"):
                                 sst.errors += 1
+                        if demo.get("needs_manual_captcha"):
+                            _log(
+                                "    ↳ CAPTCHA/WAF wall — queued for manual browser solve "
+                                "(Settings → Access assistance: open URL, complete challenge, "
+                                "import cookies, re-run / requeue)"
+                            )
                         if not demo.get("report_fetch_ok"):
                             _log(
                                 f"    ↳ no demographics "
@@ -878,6 +1217,10 @@ class NSOPWEthnicDatabaseBuilder:
                 # Save offender photo (NSOPW imageUri and/or report-page assets)
                 self._ensure_photo(record, hit, st)
 
+                if self.cancel_check():
+                    cancelled = True
+                    break
+
                 try:
                     self.db.insert_offender(record)
                     self.stats.inserted += 1
@@ -897,14 +1240,25 @@ class NSOPWEthnicDatabaseBuilder:
                     self.stats.errors.append(msg)
                     _log(msg)
 
+            if cancelled:
+                _log("Cancelled by user.")
+                _progress(
+                    plan_i=plan_i,
+                    plan_total=plan_total,
+                    current="cancelled",
+                    phase="cancelled",
+                )
+                break
+
+        was_cancelled = bool(self.cancel_check())
         _progress(
-            plan_i=plan_total,
+            plan_i=last_plan_i if was_cancelled else plan_total,
             plan_total=plan_total,
-            current="complete",
-            phase="done",
+            current="cancelled" if was_cancelled else "complete",
+            phase="cancelled" if was_cancelled else "done",
         )
         _log("")
-        _log("=== Build complete ===")
+        _log("=== Build cancelled ===" if was_cancelled else "=== Build complete ===")
         _log(f"Searches (new):        {self.stats.searches}")
         _log(f"Searches skipped:      {self.stats.searches_skipped} (already completed)")
         _log(f"Raw hits:              {self.stats.search_hits}")
@@ -943,8 +1297,15 @@ class NSOPWEthnicDatabaseBuilder:
                 )
             _log(
                 "Note: iCrimeWatch/OffenderWatch disclaimers are auto-accepted when possible. "
-                "NY reCAPTCHA and some WAF walls still cannot yield full sheets."
+                "Interactive CAPTCHA/WAF pages are queued (data/captcha_queue.json) — "
+                "solve in a browser, import cookies under Settings → Access assistance, then requeue."
             )
+            try:
+                n_q = len(self.captcha_queue.list_items())
+                if n_q:
+                    _log(f"CAPTCHA queue size: {n_q} (see Settings)")
+            except Exception:
+                pass
         return self.stats
 
     def requeue_incomplete(
@@ -1012,7 +1373,12 @@ class NSOPWEthnicDatabaseBuilder:
             rid = rec.get("id")
             st = (rec.get("state") or rec.get("source_state") or "UNK").upper()
             summary["attempted"] += 1
-            self.report_limiter.wait()
+            if self.report_limiter.wait(self.cancel_check):
+                _log("Requeue cancelled (during delay).")
+                break
+            if self.cancel_check():
+                _log("Requeue cancelled.")
+                break
             name = (
                 (rec.get("full_name") or "").strip()
                 or f"{rec.get('first_name') or ''} {rec.get('last_name') or ''}".strip()
@@ -1189,12 +1555,11 @@ class NSOPWEthnicDatabaseBuilder:
 
         Priority:
           1. Dedicated NSOPW/state photo URL (imageUri / photo_url) — real mugshot
-          2. Best image from archived report HTML assets (largest / high-score)
-          3. Keep existing path only if it is already a solid local file
+          2. Best image from archived report HTML assets (JPEG/PNG preferred)
+          3. Keep existing path only if it is already a solid mugshot file
 
-        Previously we preferred *any* asset file next to HTML first. That often
-        locked in a shared site badge/icon (~1–2KB, same hash across records)
-        and skipped the real imageUri download.
+        HTML assets often include large site chrome GIFs (FL FDLE banners ~30KB).
+        Those must never block a dedicated CallImage / imageUri download.
         """
         min_primary = int(getattr(self.reports, "MIN_PRIMARY_PHOTO_BYTES", 2000) or 2000)
         min_any = int(getattr(self.reports, "MIN_PHOTO_BYTES", 80) or 80)
@@ -1206,7 +1571,41 @@ class NSOPWEthnicDatabaseBuilder:
             except OSError:
                 return False
 
+        def _looks_like_mugshot(path: str) -> bool:
+            """True for local files that are likely offender photos, not site chrome."""
+            try:
+                p = Path(path)
+                if not p.is_file():
+                    return False
+                sz = p.stat().st_size
+                if sz < min_any:
+                    return False
+                ext = p.suffix.lower()
+                # GIFs on state sites are almost always logos/banners/spacers
+                if ext == ".gif":
+                    return False
+                # Files under HTML *_assets/ are frequently shared site chrome
+                # (even large PNGs). Only trust dedicated …/photos/ downloads
+                # as final mugshots when a photo_url exists.
+                parts_l = [x.lower() for x in p.parts]
+                in_assets = any(x.endswith("_assets") or x == "assets" for x in parts_l)
+                in_photos = "photos" in parts_l
+                if ext in (".jpg", ".jpeg", ".png", ".webp", ".bmp"):
+                    if in_photos and sz >= 500:
+                        return True
+                    if in_assets:
+                        # Asset only counts as mugshot if fairly large JPEG-like
+                        # and not a known tiny placeholder size band
+                        return ext in (".jpg", ".jpeg") and sz >= 5000
+                    return sz >= min_primary
+                return False
+            except OSError:
+                return False
+
         def _set_path(path: str, *, from_url: bool = False) -> None:
+            # Never persist GIFs as the offender photo
+            if path and str(path).lower().endswith(".gif"):
+                return
             record["photo_path"] = path
             self.stats.photos_saved += 1
             if not from_url:
@@ -1222,67 +1621,103 @@ class NSOPWEthnicDatabaseBuilder:
             record["flags"] = json.dumps(flags)
 
         existing = (record.get("photo_path") or "").strip()
-        existing_strong = bool(existing and _file_ok(existing, min_primary))
+        existing_is_mugshot = bool(existing and _looks_like_mugshot(existing))
+        existing_in_photos = bool(
+            existing and "photos" in [x.lower() for x in Path(existing).parts]
+        )
 
-        # 1) Dedicated mugshot URL from NSOPW search hit / record
+        from .report_fetcher import extract_dedicated_photo_urls, photo_state_from_url
+
+        def _download_dedicated(url: str) -> Optional[str]:
+            """Download mugshot into html_dir/<jur>/photos/ and return local path."""
+            host_st = photo_state_from_url(url)
+            jur_raw = (
+                host_st
+                or jurisdiction
+                or record.get("state")
+                or record.get("source_state")
+                or "UNK"
+            )
+            jur = re.sub(r"[^A-Za-z0-9_-]", "", str(jur_raw).upper())[:12] or "UNK"
+            # WatchSystems CDN serves many states — keep under NSOPW/record jurisdiction
+            if "watchsystems.com" in url.lower() and not host_st:
+                jur = re.sub(
+                    r"[^A-Za-z0-9_-]",
+                    "",
+                    str(jurisdiction or record.get("state") or record.get("source_state") or "UNK").upper(),
+                )[:12] or "UNK"
+            photo_dir = self.html_dir / jur / "photos"
+            stem = sha1(
+                (url + "|" + (record.get("source_url") or "")).encode(
+                    "utf-8", errors="replace"
+                )
+            ).hexdigest()[:16]
+            referer = (record.get("source_url") or "").strip()
+            if not referer and "watchsystems.com" in url.lower():
+                referer = "https://www.icrimewatch.net/"
+            if not referer:
+                referer = "https://www.nsopw.gov/"
+            return self.reports.download_photo(
+                url,
+                photo_dir,
+                referer=referer,
+                stem=stem,
+                reject_gif=True,
+            )
+
+        # 1) Dedicated mugshot URL when present — always preferred over HTML assets
         photo_url = (
             (record.get("photo_url") or "").strip()
             or (getattr(hit, "image_uri", None) or "").strip()
         )
+        # Recover WatchSystems /pictures/ URL from archived HTML when imageUri missing
+        html_path = (record.get("report_html_path") or "").strip()
+        if not photo_url and html_path:
+            try:
+                raw_html = Path(html_path).read_text(encoding="utf-8", errors="replace")
+                dedicated = extract_dedicated_photo_urls(raw_html)
+                if dedicated:
+                    photo_url = dedicated[0]
+            except Exception:
+                pass
+
         if photo_url:
             record["photo_url"] = photo_url
-            # Only skip download if we already have a strong local mugshot
-            if not existing_strong:
-                jur = re.sub(r"[^A-Za-z0-9_-]", "", (jurisdiction or "UNK").upper())[:12] or "UNK"
-                photo_dir = self.html_dir / jur / "photos"
-                stem = sha1(
-                    (photo_url + "|" + (record.get("source_url") or "")).encode(
-                        "utf-8", errors="replace"
-                    )
-                ).hexdigest()[:16]
-                path = self.reports.download_photo(
-                    photo_url,
-                    photo_dir,
-                    referer=record.get("source_url") or "https://www.nsopw.gov/",
-                    stem=stem,
-                )
-                if path and _file_ok(path, min_any):
-                    # Prefer dedicated download over a weak HTML-asset primary
-                    if (not existing_strong) or (
-                        Path(path).stat().st_size
-                        > (Path(existing).stat().st_size if existing and Path(existing).is_file() else 0)
-                    ):
-                        _set_path(path, from_url=True)
-                        return
+            # Only skip network if we already have a dedicated photos/ download
+            if not (existing_is_mugshot and existing_in_photos):
+                path = _download_dedicated(photo_url)
+                if path and _file_ok(path, min_any) and not str(path).lower().endswith(".gif"):
+                    _set_path(path, from_url=True)
+                    return
 
-        if existing_strong:
+        if existing_is_mugshot and existing_in_photos:
+            return
+        if existing_is_mugshot and not photo_url:
+            # Keep decent asset JPEG only when no dedicated URL exists
             return
 
-        # 2) Best image from report HTML assets (not first alphabetical)
-        html_path = (record.get("report_html_path") or "").strip()
+        # 2) Best image from report HTML assets (not GIF; prefer portrait JPEG)
         if html_path:
             best = self._best_asset_photo(html_path, min_bytes=min_any)
-            if best:
-                # Prefer larger asset over tiny existing placeholder
-                if not existing or not _file_ok(existing, min_primary):
-                    try:
-                        if (
-                            not existing
-                            or not Path(existing).is_file()
-                            or Path(best).stat().st_size > Path(existing).stat().st_size
-                        ):
-                            try:
-                                rel = str(Path(best).relative_to(Path.cwd()))
-                            except ValueError:
-                                rel = best
-                            _set_path(rel, from_url=False)
-                            return
-                    except OSError:
-                        pass
+            if best and _looks_like_mugshot(best):
+                try:
+                    rel = str(Path(best).relative_to(Path.cwd()))
+                except ValueError:
+                    rel = best
+                _set_path(rel, from_url=False)
+                return
 
-        # 3) Keep weak existing path rather than clearing it
-        if existing and _file_ok(existing, min_any):
+        # 3) Keep a weak existing path only if nothing better is available
+        if existing and _file_ok(existing, min_any) and not existing.lower().endswith(".gif"):
+            # Prefer clearing shared asset placeholders so integrity shows missing
+            parts_l = [x.lower() for x in Path(existing).parts]
+            if any(x.endswith("_assets") for x in parts_l) and photo_url:
+                record["photo_path"] = None
+                return
             return
+        # Drop GIF placeholders so integrity shows missing photo
+        if existing and existing.lower().endswith(".gif"):
+            record["photo_path"] = None
 
     @staticmethod
     def _best_asset_photo(html_path: str, *, min_bytes: int = 80) -> Optional[str]:
@@ -1306,18 +1741,48 @@ class NSOPWEthnicDatabaseBuilder:
             if sz < min_bytes:
                 continue
             name = cand.name.lower()
+            ext = cand.suffix.lower()
             score = 0
-            for bad in ("logo", "icon", "sprite", "pixel", "spacer", "banner", "button"):
+            # FL and others ship large banner/logo GIFs — never prefer them
+            if ext == ".gif":
+                score -= 40
+            if ext in (".jpg", ".jpeg", ".png", ".webp"):
+                score += 12
+            for bad in (
+                "logo", "icon", "sprite", "pixel", "spacer", "banner", "button",
+                "header", "footer", "nav", "seal", "badge", "map",
+            ):
                 if bad in name:
-                    score -= 20
-            for good in ("photo", "offender", "mug", "portrait", "face", "sor"):
+                    score -= 25
+            for good in ("photo", "offender", "mug", "portrait", "face", "sor", "image"):
                 if good in name:
                     score += 10
             if sz >= 2000:
-                score += 15
-            score += min(sz // 4000, 10)
+                score += 8
+            # Mild size preference (aspect ratio below matters more for AL banners)
+            score += min(sz // 20000, 3)
+            # Prefer portrait/square; penalize wide office banners (~800x200)
+            try:
+                from PIL import Image
+
+                with Image.open(cand) as im:
+                    w, h = im.size
+                if w > 0 and h > 0:
+                    if min(w, h) < 40:
+                        score -= 25
+                    ratio = max(w, h) / float(min(w, h))
+                    if ratio >= 2.4:
+                        score -= 30
+                    ar = w / float(h)
+                    if 0.55 <= ar <= 1.35:
+                        score += 14
+            except Exception:
+                pass
             if best is None or (score, sz) > (best[0], best[1]):
                 best = (score, sz, cand)
         if best is None:
+            return None
+        # Reject GIF winners entirely
+        if best[2].suffix.lower() == ".gif":
             return None
         return str(best[2])

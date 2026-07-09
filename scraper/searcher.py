@@ -147,7 +147,7 @@ def format_race_label(recorded_race: str) -> str:
 def _ethnicity_family(likely_ethnicity: str) -> str:
     """Normalize a classify_by_name label to a coarse family key."""
     eth = (likely_ethnicity or "").strip().lower()
-    if eth == "indian" or eth.startswith("indian"):
+    if eth == "indian" or eth.startswith("indian") or "high_confidence" in eth:
         return "indian"
     if eth.startswith("asian"):
         return "asian"
@@ -252,7 +252,7 @@ class SexOffenderSearcher:
         state: Optional[str] = None,
         limit: int = 1000
     ) -> SearchResults:
-        """Search offenders by race."""
+        """Search offenders by race (INDIAN matches South Asian tags too)."""
         start = time.time()
 
         records = self.db.search_by_race(race, state=state, limit=limit)
@@ -263,6 +263,44 @@ class SexOffenderSearcher:
             total_count=len(records),
             query_time_ms=elapsed_ms,
             filters_applied={"race": race, "state": state or ""}
+        )
+
+    def search_by_surname_ethnicity(
+        self,
+        ethnicity: str,
+        state: Optional[str] = None,
+        limit: int = 1000,
+    ) -> SearchResults:
+        """Search by curated surname-ethnicity lists (e.g. indian, indian_high_confidence)."""
+        start = time.time()
+        eth = (ethnicity or "").strip().lower()
+        surnames: List[str] = []
+        if eth in ("indian_high_confidence", "high_confidence_indian", "indian_hc"):
+            surnames = list(self.ethnic_db.indian_high_confidence_surnames or [])
+        elif eth == "indian":
+            surnames = list(self.ethnic_db.indian_surnames or [])
+        elif eth == "hispanic":
+            surnames = list(self.ethnic_db.hispanic_surnames or [])
+        elif eth == "asian":
+            for names in (self.ethnic_db.asian_surnames or {}).values():
+                surnames.extend(names)
+        elif eth == "african_american":
+            surnames = list(self.ethnic_db.african_american_surnames or [])
+        elif eth == "arabic":
+            surnames = list(self.ethnic_db.arabic_surnames or [])
+        elif eth == "jewish":
+            surnames = list(self.ethnic_db.jewish_surnames or [])
+        elif eth == "portuguese":
+            surnames = list(self.ethnic_db.portuguese_surnames or [])
+        elif eth == "native_american":
+            surnames = list(self.ethnic_db.native_american_surnames or [])
+        records = self.db.search_by_surname_list(surnames, state=state, limit=limit)
+        elapsed_ms = (time.time() - start) * 1000
+        return SearchResults(
+            records=records,
+            total_count=len(records),
+            query_time_ms=elapsed_ms,
+            filters_applied={"surname_ethnicity": eth, "state": state or ""},
         )
 
     def search_by_state(
@@ -294,16 +332,35 @@ class SexOffenderSearcher:
         min_confidence: float = 0.5,
         limit: int = 10000,
         ethnicity_filter: Optional[str] = None,
-    ) -> List[Misclassification]:
+        return_base_count: bool = False,
+    ):
         """Find potential race/ethnicity misclassifications.
 
         ethnicity_filter: optional family key such as 'hispanic', 'asian',
-        'african_american'. When set, only that family is considered.
+        'indian', 'indian_high_confidence', 'african_american'.
+        When set, only that family (or curated HC Indian list) is considered.
+
+        If return_base_count is True, returns
+        ``(misclassifications, base_count)`` where *base_count* is how many
+        scanned offenders matched the selected ethnicity at min_confidence
+        (compatible + mismatched). Rate of misclassification among the
+        selected ethnicity is misclass / base_count.
         """
         # Stream rows instead of materializing the whole table as a list first
         # (faster, lower memory; same misclassification rules).
         misclassifications: List[Misclassification] = []
+        base_count = 0
         filter_key = (ethnicity_filter or "").strip().lower() or None
+        hc_only = filter_key in (
+            "indian_high_confidence",
+            "high_confidence_indian",
+            "high-confidence indian",
+            "indian_hc",
+        )
+        if hc_only:
+            family_filter = "indian"
+        else:
+            family_filter = filter_key
         scan_limit = None if limit is None or int(limit) <= 0 else int(limit)
 
         for record in self.db.iter_offenders(limit=scan_limit):
@@ -313,14 +370,20 @@ class SexOffenderSearcher:
             if not last_name:
                 continue
 
+            if hc_only and not self.ethnic_db.is_indian_high_confidence_surname(last_name):
+                continue
+
             likely_eth, confidence, matching_names = self.ethnic_db.classify_by_name(last_name)
 
             if confidence < min_confidence or likely_eth == "Unknown":
                 continue
 
             family = _ethnicity_family(likely_eth)
-            if filter_key and family != filter_key:
+            if family_filter and family != family_filter:
                 continue
+
+            # Matched selected ethnicity at threshold
+            base_count += 1
 
             if _is_compatible(likely_eth, recorded_race):
                 continue
@@ -335,6 +398,8 @@ class SexOffenderSearcher:
             ))
 
         misclassifications.sort(key=lambda m: m.confidence, reverse=True)
+        if return_base_count:
+            return misclassifications, base_count
         return misclassifications
 
     def find_hispanic_misclassifications(

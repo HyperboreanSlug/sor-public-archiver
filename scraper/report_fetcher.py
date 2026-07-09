@@ -15,13 +15,14 @@ import re
 import time
 from hashlib import sha1
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import parse_qs, urljoin, urlparse, urlunparse
 
 import requests
 from bs4 import BeautifulSoup
 
 from .config import DEFAULT_DELAY, REQUEST_TIMEOUT
+from .cookie_jar import CaptchaQueue, CookieJarStore
 
 # Prefer a browser UA for state sites (many WAF on custom bots).
 BROWSER_UA = (
@@ -143,14 +144,156 @@ def _normalize_url(url: str) -> str:
     )
     return url
 
+
+# Host fragments → state code for photo storage folders
+_PHOTO_HOST_STATE = (
+    ("scor.sled.sc.gov", "SC"),
+    ("sled.sc.gov", "SC"),
+    ("sor.tbi.tn.gov", "TN"),
+    ("tbi.tn.gov", "TN"),
+    ("offender.fdle.state.fl.us", "FL"),
+    ("fdle.state.fl.us", "FL"),
+    ("state.sor.gbi.ga.gov", "GA"),
+    ("gbi.ga.gov", "GA"),
+)
+
+
+def photo_state_from_url(photo_url: str) -> Optional[str]:
+    """Infer registry state from a dedicated photo URL host (SC/TN/FL…)."""
+    try:
+        host = (urlparse(_normalize_url(photo_url)).netloc or "").lower()
+    except Exception:
+        return None
+    if not host:
+        return None
+    for frag, st in _PHOTO_HOST_STATE:
+        if frag in host:
+            return st
+    return None
+
+
+def photo_url_variants(photo_url: str) -> List[str]:
+    """
+    Candidate URLs for a mugshot download.
+
+    SC SLED DisplayImage.aspx often returns an empty GIF for Thumb=false but a
+    real PNG/JPEG for Thumb=true (Content-Type may still say image/gif).
+
+    AL / iCrimewatch: NSOPW may hand out wsdocs.watchsystems.com while the live
+    page uses docs.watchsystems.com (and vice versa) — try both.
+    """
+    url = _normalize_url((photo_url or "").strip())
+    if not url:
+        return []
+    out: List[str] = []
+    seen: Set[str] = set()
+
+    def _add(u: str) -> None:
+        u = _normalize_url(u)
+        if u and u not in seen:
+            seen.add(u)
+            out.append(u)
+
+    _add(url)
+    low = url.lower()
+    if "displayimage.aspx" in low or "displayimage" in low:
+        # Flip Thumb= true/false
+        if re.search(r"thumb=false", url, flags=re.I):
+            _add(re.sub(r"thumb=false", "Thumb=true", url, flags=re.I))
+        elif re.search(r"thumb=true", url, flags=re.I):
+            _add(re.sub(r"thumb=true", "Thumb=false", url, flags=re.I))
+        else:
+            sep = "&" if "?" in url else "?"
+            _add(url + sep + "Thumb=true")
+            _add(url + sep + "Thumb=false")
+    # iCrimewatch / WatchSystems CDN host aliases (AL and many sheriff portals)
+    if "watchsystems.com" in low:
+        if "wsdocs.watchsystems.com" in low:
+            _add(re.sub(r"wsdocs\.watchsystems\.com", "docs.watchsystems.com", url, flags=re.I))
+        if "docs.watchsystems.com" in low and "wsdocs" not in low:
+            _add(re.sub(r"(?<!ws)docs\.watchsystems\.com", "wsdocs.watchsystems.com", url, flags=re.I))
+            # also plain docs → wsdocs
+            _add(url.replace("docs.watchsystems.com", "wsdocs.watchsystems.com"))
+            _add(url.replace("Docs.watchsystems.com", "wsdocs.watchsystems.com"))
+        # http/https already normalized; try both schemes lightly
+        if url.startswith("https://"):
+            _add("http://" + url[len("https://") :])
+        elif url.startswith("http://"):
+            _add("https://" + url[len("http://") :])
+    return out
+
+
+def extract_dedicated_photo_urls(html: str, base_url: str = "") -> List[str]:
+    """
+    Pull dedicated mugshot URLs from report HTML (before/without asset rewrite).
+
+    Prefers WatchSystems /pictures/ paths (AL iCrimewatch) over /offices/ banners.
+    """
+    text = html or ""
+    found: List[str] = []
+    seen: Set[str] = set()
+
+    def _add(u: str) -> None:
+        u = _normalize_url(urljoin(base_url or "", (u or "").strip()))
+        if not u.lower().startswith(("http://", "https://")):
+            return
+        low = u.lower()
+        # Skip clear chrome
+        if any(b in low for b in ("/offices/", "button_", "spacer", "logo", "1x1")):
+            return
+        if u not in seen:
+            seen.add(u)
+            found.append(u)
+
+    # Absolute CDN mugshots
+    for m in re.findall(
+        r"https?://[^\s\"'<>]+watchsystems\.com/[^\s\"'<>]+", text, flags=re.I
+    ):
+        if "/pictures/" in m.lower() or "/picture/" in m.lower():
+            _add(m.rstrip(".,);'\"\\"))
+    # img src= (may be protocol-relative)
+    for src in re.findall(
+        r"<img[^>]+(?:src|data-src)\s*=\s*[\"']([^\"']+)[\"']", text, flags=re.I
+    ):
+        low = src.lower()
+        if "watchsystems.com" in low and "/pictures/" in low:
+            _add(src)
+        elif "callimage" in low or "displayimage" in low or "/sorimage/" in low:
+            _add(src)
+    # Prefer /pictures/ first
+    found.sort(
+        key=lambda u: (
+            0 if "/pictures/" in u.lower() else 1,
+            0 if "watchsystems" in u.lower() else 1,
+            u,
+        )
+    )
+    return found
+
 class ReportFetcher:
     """HTTP client that scrapes demographic fields from report URLs."""
 
-    def __init__(self, delay: float = DEFAULT_DELAY, timeout: float = REQUEST_TIMEOUT):
+    def __init__(
+        self,
+        delay: float = DEFAULT_DELAY,
+        timeout: float = REQUEST_TIMEOUT,
+        *,
+        cookie_store: Optional[CookieJarStore] = None,
+        captcha_queue: Optional[CaptchaQueue] = None,
+        use_saved_cookies: bool = True,
+    ):
         # delay=0 when the caller (builder) owns rate limiting — avoid double sleeps.
         self.delay = max(0.0, float(delay))
         self.timeout = timeout
+        self.cookie_store = cookie_store if cookie_store is not None else CookieJarStore()
+        self.captcha_queue = captcha_queue if captcha_queue is not None else CaptchaQueue()
+        self.use_saved_cookies = bool(use_saved_cookies)
         self.session = self._make_session()
+        if self.use_saved_cookies:
+            try:
+                self.cookie_store.apply_to_session(self.session)
+            except Exception:
+                pass
 
     @staticmethod
     def _make_session() -> Any:
@@ -165,6 +308,11 @@ class ReportFetcher:
             {
                 "Accept": "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8",
                 "Accept-Language": "en-US,en;q=0.9",
+                "Upgrade-Insecure-Requests": "1",
+                "Sec-Fetch-Dest": "document",
+                "Sec-Fetch-Mode": "navigate",
+                "Sec-Fetch-Site": "none",
+                "Sec-Fetch-User": "?1",
             }
         )
         return session
@@ -172,6 +320,29 @@ class ReportFetcher:
     def close(self) -> None:
         try:
             self.session.close()
+        except Exception:
+            pass
+
+    def _note_captcha_block(
+        self,
+        url: str,
+        *,
+        jurisdiction: str = "",
+        reason: str = "captcha",
+        name: str = "",
+    ) -> None:
+        try:
+            self.captcha_queue.add(
+                url, jurisdiction=jurisdiction, reason=reason, name=name
+            )
+        except Exception:
+            pass
+
+    def _persist_cookies(self, url: str) -> None:
+        if not self.use_saved_cookies:
+            return
+        try:
+            self.cookie_store.capture_from_session(self.session, url)
         except Exception:
             pass
 
@@ -239,8 +410,21 @@ class ReportFetcher:
 
             if resp.status_code >= 400:
                 result["report_block_reason"] = self._classify_block(resp)
+                br = result["report_block_reason"] or ""
+                if "captcha" in br or "waf" in br:
+                    self._note_captcha_block(
+                        report_url, jurisdiction=jurisdiction, reason=br
+                    )
+                    result["needs_manual_captcha"] = True
                 self._pace()
                 return result
+
+            # Re-apply domain cookies (in case store was updated mid-run)
+            if self.use_saved_cookies:
+                try:
+                    self.cookie_store.apply_to_session(self.session, report_url)
+                except Exception:
+                    pass
 
             # Click through Conditions / disclaimer forms
             passed = self._click_through_disclaimers(resp, max_hops=4)
@@ -249,8 +433,15 @@ class ReportFetcher:
                 result["report_final_url"] = getattr(resp, "url", result["report_final_url"])
                 result["report_fetch_status"] = resp.status_code
                 result["disclaimer_passed"] = True
+                self._persist_cookies(result.get("report_final_url") or report_url)
                 if resp.status_code >= 400:
                     result["report_block_reason"] = self._classify_block(resp)
+                    br = result["report_block_reason"] or ""
+                    if "captcha" in br or "waf" in br:
+                        self._note_captcha_block(
+                            report_url, jurisdiction=jurisdiction, reason=br
+                        )
+                        result["needs_manual_captcha"] = True
                     self._pace()
                     return result
                 # After agreement, re-fetch original detail URL (CO JSF, WI terms, etc.)
@@ -294,15 +485,43 @@ class ReportFetcher:
 
             text = raw_bytes.decode("utf-8", errors="replace")
             block = self._page_block_reason(text)
+            if block and ("captcha" in block or "waf" in block):
+                self._note_captcha_block(
+                    result.get("report_final_url") or report_url,
+                    jurisdiction=jurisdiction,
+                    reason=block,
+                )
+                result["needs_manual_captcha"] = True
+                result["report_block_reason"] = block
+                result["report_fetch_status"] = f"blocked:{block}"
+                self._pace()
+                return result
             if block:
                 result["report_block_reason"] = block
             extracted = self._from_html(text, base_url=result["report_final_url"])
             result.update(extracted)
+            # AL iCrimewatch / WatchSystems: pull dedicated /pictures/ mugshot URL
+            # from the page so _ensure_photo can archive under …/photos/ even when
+            # NSOPW imageUri is empty or points at a host alias.
+            if not result.get("photo_url"):
+                dedicated = extract_dedicated_photo_urls(
+                    text, base_url=str(result.get("report_final_url") or report_url)
+                )
+                if dedicated:
+                    result["photo_url"] = dedicated[0]
             result["report_fetch_ok"] = self._has_demographics(result)
             if resp.status_code == 200 and len(text) > 500:
                 result["report_page_fetched"] = True
             if not result["report_fetch_ok"] and block:
                 result["report_fetch_status"] = f"blocked:{block}"
+            if result.get("report_fetch_ok"):
+                final_u = result.get("report_final_url") or report_url
+                self._persist_cookies(final_u)
+                try:
+                    self.captcha_queue.remove_url(report_url)
+                    self.captcha_queue.remove_url(final_u)
+                except Exception:
+                    pass
             return result
         except Exception as e:
             result["report_fetch_status"] = f"error:{type(e).__name__}"
@@ -719,6 +938,7 @@ class ReportFetcher:
         referer: str = "",
         stem: str = "",
         min_bytes: Optional[int] = None,
+        reject_gif: bool = False,
     ) -> Optional[str]:
         """
         Download a single photo URL into photo_dir.
@@ -726,79 +946,138 @@ class ReportFetcher:
 
         Retries with verify=False on TLS/certificate failures (common on some
         state SOR hosts with curl_cffi / incomplete CA stores on Windows).
+
+        SC DisplayImage: tries Thumb=true/false variants when the first response
+        is empty, HTML, or a non-image GIF stub.
         """
-        url = _normalize_url((photo_url or "").strip())
-        if not url.lower().startswith(("http://", "https://")):
+        base = _normalize_url((photo_url or "").strip())
+        if not base.lower().startswith(("http://", "https://")):
+            return None
+        low_u = base.lower()
+        # No photo on record (SC/others use ImageId=0 as placeholder)
+        if "imgid=0" in low_u or "imageid=0" in low_u or "image_id=0" in low_u:
             return None
         min_sz = self.MIN_PHOTO_BYTES if min_bytes is None else int(min_bytes)
         try:
             photo_dir = Path(photo_dir)
             photo_dir.mkdir(parents=True, exist_ok=True)
-            key = stem or sha1(url.encode("utf-8", errors="replace")).hexdigest()[:16]
-            # Extension from URL path or Content-Type later
-            ext = Path(urlparse(url).path).suffix.lower()
-            if ext not in (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"):
-                ext = ""
-            # Skip if already have any matching stem
+            # Stable stem from the *original* URL so variants share one file
+            key = stem or sha1(base.encode("utf-8", errors="replace")).hexdigest()[:16]
+            # Skip if already have a solid file for this stem
             for existing in photo_dir.glob(f"{key}.*"):
                 if existing.is_file() and existing.stat().st_size >= min_sz:
+                    if reject_gif and existing.suffix.lower() == ".gif":
+                        continue
+                    # Reject empty/broken cached stubs
+                    try:
+                        head = existing.read_bytes()[:16]
+                    except OSError:
+                        continue
+                    if head[:3] == b"\xff\xd8\xff" or head[:8] == b"\x89PNG\r\n\x1a\n":
+                        pass
+                    elif head[:6] in (b"GIF87a", b"GIF89a") and reject_gif:
+                        continue
+                    elif len(head) < 8:
+                        continue
                     try:
                         return str(existing.relative_to(Path.cwd()))
                     except ValueError:
                         return str(existing)
 
-            headers: Dict[str, str] = {
-                "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
-            }
-            if referer:
-                headers["Referer"] = referer
-                parsed = urlparse(referer)
-                if parsed.scheme and parsed.netloc:
-                    headers.setdefault("Origin", f"{parsed.scheme}://{parsed.netloc}")
+            # Prefer a referer on the same registry host (SC/TN need this)
+            parsed_photo = urlparse(base)
+            host_referer = ""
+            if parsed_photo.scheme and parsed_photo.netloc:
+                host_referer = f"{parsed_photo.scheme}://{parsed_photo.netloc}/"
+            referers: List[str] = []
+            for r in (referer, host_referer, "https://www.nsopw.gov/"):
+                r = (r or "").strip()
+                if r and r not in referers:
+                    referers.append(r)
+            if not referers:
+                referers = [""]
 
-            resp = self._get_photo_response(url, headers=headers)
-            if resp is None:
-                return None
-            if getattr(resp, "status_code", 0) >= 400:
-                return None
-            body = resp.content or b""
-            if len(body) < min_sz:
-                return None
-            # Reject HTML error pages saved as images
-            head = body[:200].lstrip().lower()
-            if head.startswith(b"<!doctype") or head.startswith(b"<html") or head.startswith(b"<?xml"):
-                return None
-            # Reject obvious non-image content types
-            ct = (resp.headers.get("Content-Type") or "").split(";")[0].strip().lower()
-            if ct and not (
-                ct.startswith("image/")
-                or ct in ("application/octet-stream", "binary/octet-stream", "")
-            ):
-                # Some SORs return image/* without a proper type; allow empty/octet-stream
-                if "json" in ct or "text/" in ct or "html" in ct:
-                    return None
-            if not ext:
-                guess = mimetypes.guess_extension(ct) or ""
-                if guess == ".jpe":
-                    guess = ".jpg"
-                ext = guess if guess in (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp") else ".jpg"
-            # Sniff magic if still ambiguous
-            if body[:3] == b"\xff\xd8\xff":
-                ext = ".jpg"
-            elif body[:8] == b"\x89PNG\r\n\x1a\n":
-                ext = ".png"
-            elif body[:6] in (b"GIF87a", b"GIF89a"):
-                ext = ".gif"
-            elif body[:4] == b"RIFF" and body[8:12] == b"WEBP":
-                ext = ".webp"
-            dest = photo_dir / f"{key}{ext}"
-            dest.write_bytes(body)
-            try:
-                return str(dest.relative_to(Path.cwd()))
-            except ValueError:
-                return str(dest)
+            for cand in photo_url_variants(base):
+                for ref in referers:
+                    path = self._download_photo_once(
+                        cand,
+                        photo_dir,
+                        key=key,
+                        referer=ref,
+                        min_sz=min_sz,
+                        reject_gif=reject_gif,
+                    )
+                    if path:
+                        return path
+            return None
         except Exception:
             return None
+
+    def _download_photo_once(
+        self,
+        url: str,
+        photo_dir: Path,
+        *,
+        key: str,
+        referer: str,
+        min_sz: int,
+        reject_gif: bool,
+    ) -> Optional[str]:
+        """Single GET + validate + write. Returns local path or None."""
+        headers: Dict[str, str] = {
+            "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+        }
+        if referer:
+            headers["Referer"] = referer
+            parsed = urlparse(referer)
+            if parsed.scheme and parsed.netloc:
+                headers.setdefault("Origin", f"{parsed.scheme}://{parsed.netloc}")
+
+        resp = self._get_photo_response(url, headers=headers)
+        if resp is None:
+            return None
+        if getattr(resp, "status_code", 0) >= 400:
+            return None
+        body = resp.content or b""
+        if len(body) < min_sz:
+            return None
+        # Reject HTML error pages saved as images (SC often returns the portal HTML)
+        head = body[:200].lstrip().lower()
+        if head.startswith(b"<!doctype") or head.startswith(b"<html") or head.startswith(b"<?xml"):
+            return None
+        ct = (resp.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+        if ct and not (
+            ct.startswith("image/")
+            or ct in ("application/octet-stream", "binary/octet-stream", "")
+        ):
+            if "json" in ct or "text/" in ct or "html" in ct:
+                return None
+        # Sniff magic (authoritative — SC labels PNG as Image/gif)
+        ext = Path(urlparse(url).path).suffix.lower()
+        if ext not in (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"):
+            ext = ""
+        if body[:3] == b"\xff\xd8\xff":
+            ext = ".jpg"
+        elif body[:8] == b"\x89PNG\r\n\x1a\n":
+            ext = ".png"
+        elif body[:6] in (b"GIF87a", b"GIF89a"):
+            ext = ".gif"
+        elif body[:4] == b"RIFF" and len(body) > 12 and body[8:12] == b"WEBP":
+            ext = ".webp"
+        elif not ext:
+            guess = mimetypes.guess_extension(ct) or ""
+            if guess == ".jpe":
+                guess = ".jpg"
+            ext = guess if guess in (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp") else ".jpg"
+        if reject_gif and ext == ".gif":
+            return None
+        # Content-Type image/gif with non-GIF magic is fine (already sniffed)
+        dest = photo_dir / f"{key}{ext}"
+        dest.write_bytes(body)
+        try:
+            return str(dest.relative_to(Path.cwd()))
+        except ValueError:
+            return str(dest)
 
     def _get_photo_response(self, url: str, *, headers: Dict[str, str]) -> Any:
         """GET image bytes; fall back to verify=False on TLS failures."""
@@ -896,16 +1175,30 @@ class ReportFetcher:
             except ValueError:
                 html_path = str(dest)
 
-            # Prefer photo already under assets next to HTML
+            # Prefer photo already under assets next to HTML (never GIF chrome)
             if not primary_photo and assets.is_dir():
-                for p in sorted(assets.iterdir()):
-                    if p.suffix.lower() in (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"):
-                        if p.stat().st_size > 80:
-                            try:
-                                primary_photo = str(p.relative_to(Path.cwd()))
-                            except ValueError:
-                                primary_photo = str(p)
-                            break
+                ranked: List[Tuple[int, Path]] = []
+                for p in assets.iterdir():
+                    if not p.is_file():
+                        continue
+                    ext = p.suffix.lower()
+                    if ext not in (".jpg", ".jpeg", ".png", ".webp", ".bmp"):
+                        continue  # skip .gif site chrome
+                    try:
+                        sz = p.stat().st_size
+                    except OSError:
+                        continue
+                    if sz < self.MIN_PHOTO_BYTES:
+                        continue
+                    score = sz + (50_000 if ext in (".jpg", ".jpeg") else 0)
+                    ranked.append((score, p))
+                if ranked:
+                    ranked.sort(key=lambda t: t[0], reverse=True)
+                    p = ranked[0][1]
+                    try:
+                        primary_photo = str(p.relative_to(Path.cwd()))
+                    except ValueError:
+                        primary_photo = str(p)
 
             return html_path, primary_photo
         except OSError:
@@ -943,17 +1236,63 @@ class ReportFetcher:
         def _score_url(u: str, el_tag: str = "img") -> int:
             low = u.lower()
             score = 10
-            for bad in ("logo", "icon", "sprite", "pixel", "tracking", "1x1", "spacer", "banner", "button"):
+            for bad in (
+                "logo", "icon", "sprite", "pixel", "tracking", "1x1", "spacer",
+                "banner", "button", "header", "footer", "seal", "badge", "map",
+            ):
                 if bad in low:
                     score -= 8
-            for good in ("photo", "offender", "mug", "portrait", "image", "pic", "face", "sor", "reg"):
+            for good in (
+                "photo", "offender", "mug", "portrait", "image", "pic", "face",
+                "sor", "reg", "callimage", "imgid", "displayimage", "pictures/",
+            ):
                 if good in low:
-                    score += 6
+                    score += 8
+            # Dedicated mugshot endpoints / CDNs beat decorative chrome
+            if (
+                "callimage" in low
+                or "imgid=" in low
+                or "/sorimage/" in low
+                or "displayimage" in low
+            ):
+                score += 20
+            # AL iCrimewatch: real mugshots live under /pictures/; office headers under /offices/
+            if "watchsystems.com" in low and "/pictures/" in low:
+                score += 35
+            if "/pictures/" in low:
+                score += 15
+            if "/offices/" in low:
+                score -= 40
             if el_tag == "img":
                 score += 2
             if any(low.endswith(ext) for ext in (".jpg", ".jpeg", ".png", ".webp")):
-                score += 3
+                score += 5
+            if low.endswith(".gif") or ".gif?" in low:
+                score -= 25
             return score
+
+        def _aspect_score(local_path: str) -> int:
+            """Prefer portrait/square mugshots; penalize wide banners and tiny icons."""
+            try:
+                from PIL import Image
+
+                with Image.open(local_path) as im:
+                    w, h = im.size
+                if w < 1 or h < 1:
+                    return -15
+                if min(w, h) < 40:
+                    return -25
+                ratio = max(w, h) / float(min(w, h))
+                # Sheriff office banners are often ~800x200 (ratio 4)
+                if ratio >= 2.4:
+                    return -30
+                # Typical mugshot / headshot
+                ar = w / float(h)
+                if 0.55 <= ar <= 1.35:
+                    return 12
+                return 0
+            except Exception:
+                return 0
 
         # Collect img src (+ srcset first url) and meta og:image
         img_srcs: List[Tuple[Any, str]] = []
@@ -986,19 +1325,41 @@ class ReportFetcher:
                     continue
                 url_to_local[abs_u] = local
                 score = _score_url(abs_u, getattr(el, "name", "img") or "img")
+                # Alt text: icrimewatch sets alt='Offender photo' on the mugshot
+                try:
+                    alt = (el.get("alt") or "").strip().lower() if hasattr(el, "get") else ""
+                except Exception:
+                    alt = ""
+                if alt:
+                    if any(k in alt for k in ("offender", "mug", "photo of", "registrant")):
+                        score += 30
+                    elif "photo" in alt and "office" not in alt:
+                        score += 18
+                    if any(k in alt for k in ("sheriff", "office", "search", "email", "tip", "logo")):
+                        score -= 25
                 try:
                     fsz = Path(local).stat().st_size
+                    fext = Path(local).suffix.lower()
                 except OSError:
                     fsz = 0
+                    fext = ""
                 # Size boost: real mugshots are usually multi-KB; shared site
                 # chrome (icons/badges) is often 1–2KB and repeats across records.
+                # Large GIFs (FL banners ~30KB) must still lose to JPEG CallImage.
+                if fext == ".gif":
+                    score -= 30
+                if fext in (".jpg", ".jpeg", ".png", ".webp"):
+                    score += 10
                 if fsz >= self.MIN_PRIMARY_PHOTO_BYTES:
-                    score += 12
+                    score += 8
                 elif fsz >= 800:
-                    score += 3
+                    score += 2
                 else:
                     score -= 10
-                score += min(fsz // 5000, 8)  # mild preference for larger files
+                # Mild size preference — but aspect ratio matters more than raw KB
+                # (AL office banners are often larger files than mugshots).
+                score += min(fsz // 20000, 3)
+                score += _aspect_score(local)
                 candidates.append((score, fsz, abs_u, local))
 
             # Rewrite to relative path next to the HTML file

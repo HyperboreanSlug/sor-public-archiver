@@ -16,8 +16,8 @@ DEFAULT_SETTINGS_PATH = Path("data/app_settings.json")
 DEFAULTS: Dict[str, Any] = {
     # Database
     "db_path": "data/offenders.db",
-    # Backups
-    "backup_on_close": True,
+    # Backups (optional — off by default; use Settings → Backup now or enable on-close)
+    "backup_on_close": False,
     "backup_dir": "data/backups",
     "max_backups": 10,
     # NSOPW search strategy: short partials (min first+last = 3 letters)
@@ -62,7 +62,7 @@ def normalize_settings(s: Dict[str, Any]) -> Dict[str, Any]:
     out["backup_dir"] = (
         str(out.get("backup_dir") or DEFAULTS["backup_dir"]).strip() or DEFAULTS["backup_dir"]
     )
-    out["backup_on_close"] = bool(out.get("backup_on_close", True))
+    out["backup_on_close"] = bool(out.get("backup_on_close", False))
     out["nsopw_compact_prefixes"] = bool(out.get("nsopw_compact_prefixes", True))
 
     try:

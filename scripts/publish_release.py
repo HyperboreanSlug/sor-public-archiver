@@ -70,7 +70,7 @@ def api_request(
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--tag", default="v1.3.4")
+    ap.add_argument("--tag", default="v1.3.5")
     ap.add_argument(
         "--zip",
         type=Path,
@@ -119,16 +119,15 @@ Standalone **Windows** GUI package (no Python install required).
 3. Run `SOR-Public-Archiver.exe` (keep `_internal` beside the exe)
 4. If the app fails to start, install [VC++ Redistributable 2015–2022 x64](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist)
 
-### Highlights
-- **Settings tab**: DB path, auto backup on close, backup folder / keep-N, compact 3-letter NSOPW prefixes
-- **Database backups**: SQLite online backup + integrity check; Backup now + auto on exit
-- **Photo save fixes**: TLS `verify=False` retry for state image hosts; prefer NSOPW `imageUri` over site chrome
-- **NSOPW progress**: determinate progress bar + live stats (plan/searches/matched/other/hits/HTML/photos)
-- Expanded **Indian / Pakistani** surname lists; detail drawer has no empty scrollbar
-- Integrity dashboard, CSV→DB import, requeue incomplete reports, photos + crime scrape
-- Browse unified Search / Integrity / Misclassify / Statistics
-- Short partial name queries (min first+last = 3) with prefix collapse
-- Ethnicity match vs other-surname insert tabs
+### Highlights ({tag})
+- **NSOPW**: live options mid-run (delays/caps/checkboxes), current search terms, ETA, faster Cancel
+- **Skip completed searches** by default; explicit “Repeat old searches” to re-hit API
+- **Indian surnames**: curated **indian_high_confidence** list; short names no longer false-match (De→De-Vries, John→Johnson)
+- **Photos**: SC DisplayImage Thumb fallback; AL/iCrimewatch WatchSystems docs↔wsdocs; fewer GIF chrome mugshots
+- **Browse Search**: Indian race + surname-ethnicity filters (incl. high-confidence Indian)
+- **Misclassify / Statistics**: % misclassified of selected ethnicity; **photo detail drawer** on row select
+- **Settings**: backup-on-close **off by default** (optional checkbox); Backup now still available
+- Cookie jar / CAPTCHA queue for blocked report pages
 
 ### Notes
 - Runtime data (`data/`, downloads, backups) is local-only and is **not** shipped in this package

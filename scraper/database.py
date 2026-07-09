@@ -73,6 +73,8 @@ class Database:
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")  # Better concurrency
         self._conn.execute("PRAGMA foreign_keys=ON")
+        # Wait for other writers (GUI + repair scripts) instead of failing immediately
+        self._conn.execute("PRAGMA busy_timeout=60000")
         self._init_schema()
 
     def _init_schema(self):
@@ -366,11 +368,14 @@ class Database:
         params.extend([search_term, search_term, search_term])
 
         if state and state.upper() != "ALL":
-            query += " AND UPPER(state) = UPPER(?)"
-            params.append(state)
+            query += (
+                " AND (UPPER(COALESCE(state, '')) = UPPER(?) "
+                "OR UPPER(COALESCE(source_state, '')) = UPPER(?))"
+            )
+            params.extend([state, state])
 
         if race:
-            query += " AND UPPER(race) = UPPER(?)"
+            query += " AND UPPER(COALESCE(race, '')) = UPPER(?)"
             params.append(race)
 
         query += " ORDER BY last_name ASC, first_name ASC LIMIT ? OFFSET ?"
@@ -386,19 +391,77 @@ class Database:
         limit: int = 1000,
         offset: int = 0
     ) -> List[Dict[str, Any]]:
-        """Search offenders by race (case-insensitive)."""
+        """Search offenders by race (case-insensitive).
+
+        Special token ``INDIAN`` matches race/ethnicity/likely_ethnicity fields
+        that look South Asian / Indian (not only exact race = INDIAN).
+        """
         limit = max(0, int(limit))
         offset = max(0, int(offset))
-        query = "SELECT * FROM offenders WHERE UPPER(race) = UPPER(?)"
-        params: List[Any] = [race]
+        race_key = (race or "").strip().upper()
+
+        if race_key in ("INDIAN", "ASIAN INDIAN", "SOUTH ASIAN", "ASIAN/INDIAN"):
+            # Broad match: registry race codes + stored name-ethnicity tags
+            query = """
+                SELECT * FROM offenders WHERE (
+                    UPPER(COALESCE(race, '')) LIKE '%INDIAN%'
+                    OR UPPER(COALESCE(race, '')) LIKE '%SOUTH ASIAN%'
+                    OR UPPER(COALESCE(ethnicity, '')) LIKE '%INDIAN%'
+                    OR UPPER(COALESCE(ethnicity, '')) LIKE '%SOUTH ASIAN%'
+                    OR UPPER(COALESCE(likely_ethnicity, '')) LIKE '%INDIAN%'
+                )
+            """
+            params: List[Any] = []
+        else:
+            query = "SELECT * FROM offenders WHERE UPPER(COALESCE(race, '')) = UPPER(?)"
+            params = [race]
 
         if state and state.upper() != "ALL":
-            query += " AND UPPER(state) = UPPER(?)"
-            params.append(state)
+            query += (
+                " AND (UPPER(COALESCE(state, '')) = UPPER(?) "
+                "OR UPPER(COALESCE(source_state, '')) = UPPER(?))"
+            )
+            params.extend([state, state])
 
         query += " ORDER BY last_name ASC LIMIT ? OFFSET ?"
         params.extend([limit, offset])
 
+        rows = self._conn.execute(query, params).fetchall()
+        return [dict(row) for row in rows]
+
+    def search_by_surname_list(
+        self,
+        surnames: List[str],
+        state: Optional[str] = None,
+        limit: int = 1000,
+        offset: int = 0,
+    ) -> List[Dict[str, Any]]:
+        """Return offenders whose last_name (or full_name tail) is in *surnames*."""
+        limit = max(0, int(limit))
+        offset = max(0, int(offset))
+        cleaned = sorted({
+            (s or "").strip() for s in (surnames or []) if (s or "").strip()
+        }, key=str.lower)
+        if not cleaned:
+            return []
+        # Case-insensitive IN via lower() = ?
+        placeholders = ",".join("?" for _ in cleaned)
+        lowers = [s.lower() for s in cleaned]
+        query = f"""
+            SELECT * FROM offenders WHERE (
+                LOWER(COALESCE(last_name, '')) IN ({placeholders})
+                OR LOWER(TRIM(COALESCE(full_name, ''))) IN ({placeholders})
+            )
+        """
+        params: List[Any] = list(lowers) + list(lowers)
+        if state and state.upper() != "ALL":
+            query += (
+                " AND (UPPER(COALESCE(state, '')) = UPPER(?) "
+                "OR UPPER(COALESCE(source_state, '')) = UPPER(?))"
+            )
+            params.extend([state, state])
+        query += " ORDER BY last_name ASC LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
         rows = self._conn.execute(query, params).fetchall()
         return [dict(row) for row in rows]
 
@@ -408,18 +471,25 @@ class Database:
         limit: int = 1000,
         offset: int = 0
     ) -> List[Dict[str, Any]]:
-        """Search offenders by state. Use state='ALL' (or empty) to return any state."""
+        """Search offenders by state. Use state='ALL' (or empty) to return any state.
+
+        Matches either ``state`` or ``source_state`` so imports/scrapes that only
+        set one column still appear in filters.
+        """
         limit = max(0, int(limit))
         offset = max(0, int(offset))
         if not state or state.upper() == "ALL":
             query = "SELECT * FROM offenders ORDER BY last_name ASC LIMIT ? OFFSET ?"
             rows = self._conn.execute(query, (limit, offset)).fetchall()
         else:
+            st = state.strip()
             query = (
-                "SELECT * FROM offenders WHERE UPPER(state) = UPPER(?) "
+                "SELECT * FROM offenders WHERE "
+                "UPPER(COALESCE(state, '')) = UPPER(?) "
+                "OR UPPER(COALESCE(source_state, '')) = UPPER(?) "
                 "ORDER BY last_name ASC LIMIT ? OFFSET ?"
             )
-            rows = self._conn.execute(query, (state, limit, offset)).fetchall()
+            rows = self._conn.execute(query, (st, st, limit, offset)).fetchall()
         return [dict(row) for row in rows]
 
     def get_race_distribution(self) -> List[Dict[str, Any]]:

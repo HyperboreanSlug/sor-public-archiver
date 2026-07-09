@@ -44,6 +44,23 @@ class DatabaseTests(unittest.TestCase):
         self.assertEqual(len(self.db.search_by_race("white")), 1)
         self.assertEqual(len(self.db.search_by_state("fl")), 1)
         self.assertEqual(len(self.db.search_by_state("ALL")), 1)
+        # Second state search must still return rows (regression)
+        self.assertEqual(len(self.db.search_by_state("FL")), 1)
+        self.assertEqual(len(self.db.search_by_state("FL")), 1)
+
+    def test_search_state_matches_source_state(self):
+        self.db.insert_offender({
+            "first_name": "Only",
+            "last_name": "SourceState",
+            "source_state": "TX",
+            # state intentionally empty
+        })
+        rows = self.db.search_by_state("TX")
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["last_name"], "SourceState")
+        # Name + state filter also sees source_state
+        rows2 = self.db.search_by_name("Source", state="TX")
+        self.assertEqual(len(rows2), 1)
 
     def test_batch_and_export_empty(self):
         n = self.db.insert_offenders_batch([
@@ -150,15 +167,15 @@ class AppSettingsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "app_settings.json"
             s = load_settings(path)
-            self.assertTrue(s["backup_on_close"])
+            self.assertFalse(s["backup_on_close"])  # optional; default off
             self.assertTrue(s["nsopw_compact_prefixes"])
             self.assertEqual(s["nsopw_min_combined_len"], 3)
-            s["backup_on_close"] = False
+            s["backup_on_close"] = True
             s["max_backups"] = 5
             s["nsopw_min_combined_len"] = 2  # clamp to >= 3
             save_settings(s, path)
             s2 = load_settings(path)
-            self.assertFalse(s2["backup_on_close"])
+            self.assertTrue(s2["backup_on_close"])
             self.assertEqual(s2["max_backups"], 5)
             self.assertEqual(s2["nsopw_min_combined_len"], 3)
             self.assertIn("db_path", DEFAULTS)

@@ -562,11 +562,15 @@ Examples:
     p_nsopw.add_argument(
         "--ethnicity",
         choices=[
-            "all", "hispanic", "asian", "indian", "african_american", "african",
+            "all", "hispanic", "asian", "indian", "indian_high_confidence",
+            "african_american", "african",
             "arabic", "jewish", "portuguese", "native_american", "european",
         ],
         default="hispanic",
-        help="Ethnic surname list (asian=East/SE Asian; indian=South Asian; default: hispanic)",
+        help=(
+            "Ethnic surname list (asian=East/SE Asian; indian=South Asian; "
+            "indian_high_confidence=curated high-confidence Indians; default: hispanic)"
+        ),
     )
     p_nsopw.add_argument(
         "--subcategory", type=str, default="all",
@@ -582,7 +586,14 @@ Examples:
     )
     p_nsopw.add_argument(
         "--no-resume", action="store_true",
-        help="Do not skip previously completed (first, surname) searches",
+        help=(
+            "Repeat old searches: re-run (first, last) queries already in the "
+            "completed-search log. Default is to skip finished queries."
+        ),
+    )
+    p_nsopw.add_argument(
+        "--repeat-searches", action="store_true", dest="no_resume",
+        help="Alias for --no-resume (explicitly re-run completed searches)",
     )
     p_nsopw.add_argument(
         "--redownload-html", action="store_true",

@@ -12,6 +12,7 @@ if str(ROOT) not in sys.path:
 from scraper.nsopw_client import NSOPWClient, NSOPWOffender
 from scraper.nsopw_builder import (
     NSOPWEthnicDatabaseBuilder,
+    RateLimiter,
     compact_search_plan,
     last_matches_target_surnames,
     last_name_search_prefix,
@@ -229,6 +230,28 @@ class ReportFetcherTests(unittest.TestCase):
         self.assertEqual(data.get("fwd"), "abc123")
 
 
+class RateLimiterTests(unittest.TestCase):
+    def test_wait_cancelled_mid_sleep(self):
+        import threading
+        import time
+
+        lim = RateLimiter(2.0)
+        lim.wait()  # prime so next wait actually sleeps
+        flag = {"c": False}
+
+        def fire():
+            time.sleep(0.12)
+            flag["c"] = True
+
+        t0 = time.monotonic()
+        threading.Thread(target=fire, daemon=True).start()
+        cancelled = lim.wait(lambda: flag["c"])
+        dt = time.monotonic() - t0
+        self.assertTrue(cancelled)
+        self.assertLess(dt, 0.6)
+        self.assertGreaterEqual(dt, 0.1)
+
+
 class CompactPrefixTests(unittest.TestCase):
     def test_last_prefix_min_combined_3(self):
         self.assertEqual(last_name_search_prefix("Ahmed", "M"), "Ah")
@@ -253,6 +276,18 @@ class CompactPrefixTests(unittest.TestCase):
         self.assertTrue(last_matches_target_surnames("AHMAD", ["Ahmed", "Ahmad"]))
         self.assertFalse(last_matches_target_surnames("Ahern", ["Ahmed", "Ahmad"]))
         self.assertTrue(last_matches_target_surnames("Garciaz", ["Garcia"]))
+        # Short list surnames must not prefix-match unrelated Western names
+        # (Indian list includes De / John — caused false "matched" buckets)
+        self.assertTrue(last_matches_target_surnames("De", ["De", "Dev", "John"]))
+        self.assertTrue(last_matches_target_surnames("John", ["De", "John"]))
+        self.assertFalse(last_matches_target_surnames("Delosantos", ["De", "Dev"]))
+        self.assertFalse(last_matches_target_surnames("De-Vries", ["De", "Dev"]))
+        self.assertFalse(last_matches_target_surnames("Devries", ["De"]))
+        self.assertFalse(last_matches_target_surnames("Johnson", ["John"]))
+        self.assertFalse(last_matches_target_surnames("Anthony", ["Anand", "Ali"]))
+        # Longer list names still allow slight suffix variants
+        self.assertTrue(last_matches_target_surnames("Sharma", ["Sharma", "Patel"]))
+        self.assertTrue(last_matches_target_surnames("Patelx", ["Patel"]))  # len(Patel)>=5
 
     def test_ethnicity_bucket_split(self):
         """Hits with list surnames vs other surnames for the same short prefix."""
@@ -271,6 +306,25 @@ class CompactPrefixTests(unittest.TestCase):
         self.assertEqual(matched, ["AHMED", "AHMAD"])
         self.assertEqual(other, ["AHERN", "ASHLEY"])
 
+    def test_indian_short_names_do_not_false_match(self):
+        """Real Indian list: short names must not claim Johnson / De-Vries as Indian."""
+        from scraper.ethnic_names import get_ethnic_database
+
+        # Fresh load (module may cache; EthnicNameDatabase reads JSON on init)
+        targets = list(get_ethnic_database().indian_surnames)
+        self.assertIn("De", targets)
+        self.assertTrue(last_matches_target_surnames("Das", targets))
+        self.assertTrue(last_matches_target_surnames("Patel", targets))
+        self.assertTrue(last_matches_target_surnames("Singh", targets))
+        self.assertFalse(last_matches_target_surnames("Johnson", targets))
+        self.assertFalse(last_matches_target_surnames("Delosantos", targets))
+        self.assertFalse(last_matches_target_surnames("De-Vries", targets))
+        self.assertFalse(last_matches_target_surnames("Anthony", targets))
+        # Western names that used to sit on the Indian list
+        self.assertFalse(last_matches_target_surnames("John", targets))
+        self.assertFalse(last_matches_target_surnames("Abraham", targets))
+        self.assertFalse(last_matches_target_surnames("Joseph", targets))
+
     def test_compact_fewer_than_naive(self):
         pairs = [(f"Name{i:03d}xyz", "X") for i in range(50)]
         # Many unique 2-letter prefixes from Name### - actually all start with "Na"
@@ -284,6 +338,37 @@ class CompactPrefixTests(unittest.TestCase):
 
 
 class BuilderSurnameTests(unittest.TestCase):
+    def test_indian_high_confidence_list(self):
+        """Curated high-confidence Indians exclude Western noise like Dwayne."""
+        from scraper.ethnic_names import EthnicNameDatabase
+
+        db = EthnicNameDatabase()
+        self.assertGreater(len(db.indian_high_confidence_surnames), 50)
+        self.assertIn("Patel", db.indian_high_confidence_surnames)
+        self.assertIn("Singh", db.indian_high_confidence_surnames)
+        self.assertNotIn("Dwayne", db.indian_high_confidence_surnames)
+        for bad in ("Dwayne", "George", "Paul", "Thomas", "Jacob", "John"):
+            self.assertFalse(
+                any(x.lower() == bad.lower() for x in db.indian_surnames),
+                f"{bad} must not be on broad Indian list",
+            )
+        b = NSOPWEthnicDatabaseBuilder(db_path=":memory:", delay=1.5, report_delay=0.1)
+        try:
+            pairs = b.surnames_for_ethnicity(
+                "indian_high_confidence", all_surnames=True
+            )
+            names = {s for s, _lab in pairs}
+            self.assertIn("Patel", names)
+            self.assertNotIn("Dwayne", names)
+            self.assertTrue(all(lab == "Indian (high_confidence)" for _s, lab in pairs))
+            # Subcategory path under indian
+            pairs2 = b.surnames_for_ethnicity(
+                "indian", subcategory="high_confidence", all_surnames=True
+            )
+            self.assertEqual({s for s, _ in pairs2}, names)
+        finally:
+            b.close()
+
     def test_hispanic_surnames_selected(self):
         b = NSOPWEthnicDatabaseBuilder(db_path=":memory:", delay=1.5, report_delay=0.1)
         try:
@@ -354,7 +439,137 @@ class BuilderSurnameTests(unittest.TestCase):
             b._mark_query_done("A", "Garcia", "hispanic", hit_count=5)
             self.assertTrue(b._query_done("A", "Garcia", "hispanic"))
             self.assertTrue(b._query_done("a", "garcia", "HISPANIC"))  # normalized
+            # Same first+last under a different ethnicity must still count as done
+            # (NSOPW API is not ethnicity-filtered — do not re-hit the network)
+            self.assertTrue(b._query_done("A", "Garcia", "asian"))
+            self.assertTrue(b._query_done("A", "garcia", "indian"))
             self.assertFalse(b._query_done("B", "Garcia", "hispanic"))
+            # Preload set also sees the pair
+            loaded = b._load_completed_queries()
+            self.assertIn(("A", "garcia"), loaded)
+        finally:
+            b.close()
+
+    def test_live_options_raise_search_cap_mid_run(self):
+        """Raising max_searches via live_options must allow more API calls."""
+        b = NSOPWEthnicDatabaseBuilder(db_path=":memory:", delay=0.0, report_delay=0.0)
+        try:
+            pairs = [("Garcia", "Hispanic"), ("Gomez", "Hispanic"), ("Lopez", "Hispanic"),
+                     ("Martinez", "Hispanic"), ("Rodriguez", "Hispanic")]
+            mock_client = MagicMock()
+            mock_client.search_by_name.return_value = []
+            b.client = mock_client
+            b.search_limiter.wait = lambda: None  # type: ignore
+            b.report_limiter.wait = lambda: None  # type: ignore
+            b.search_limiter.set_interval(0.0)
+            # Start with cap 1; after first search, live_options raises cap to 3
+            state = {"n": 0}
+
+            def live():
+                state["n"] += 1
+                # First few polls: cap 1; then raise to 3
+                cap = 1 if state["n"] < 3 else 3
+                return {
+                    "max_searches": cap,
+                    "max_names": 0,
+                    "search_delay": 2.0,
+                    "report_delay": 0.25,
+                    "skip_existing_urls": True,
+                    "skip_completed_searches": False,
+                    "new_files_only": True,
+                    "enrich_reports": False,
+                    "save_html": False,
+                }
+
+            with patch.object(b, "surnames_for_ethnicity", return_value=pairs):
+                stats = b.build(
+                    ethnicity="hispanic",
+                    surnames_limit=10,
+                    first_mode="initials",
+                    first_names=["A"],
+                    max_searches=1,
+                    max_names=0,
+                    skip_completed_searches=False,
+                    enrich_reports=False,
+                    save_html=False,
+                    use_compact_prefixes=True,
+                    live_options=live,
+                )
+            # Without live bump would be 1; with bump should be > 1
+            self.assertGreaterEqual(stats.searches, 2)
+            self.assertGreaterEqual(mock_client.search_by_name.call_count, 2)
+            # Delay live-update applied
+            self.assertGreaterEqual(b.search_delay, 2.0)
+        finally:
+            b.close()
+
+    def test_build_skips_completed_unless_repeat(self):
+        """Build must not call search_by_name for logged queries unless repeat is on."""
+        b = NSOPWEthnicDatabaseBuilder(db_path=":memory:", delay=0.0, report_delay=0.0)
+        try:
+            pairs = [("Garcia", "Hispanic"), ("Gomez", "Hispanic"), ("Lopez", "Hispanic")]
+            # Compact plan with first=A → last prefixes "ga", "go", "lo"
+            b._mark_query_done("A", "ga", "hispanic", hit_count=0)
+            b._mark_query_done("A", "go", "asian", hit_count=0)  # other ethnicity still blocks
+            mock_client = MagicMock()
+            mock_client.search_by_name.return_value = []
+            b.client = mock_client
+            b.search_limiter.wait = lambda: None  # type: ignore
+            b.report_limiter.wait = lambda: None  # type: ignore
+
+            with patch.object(b, "surnames_for_ethnicity", return_value=pairs):
+                stats = b.build(
+                    ethnicity="hispanic",
+                    surnames_limit=10,
+                    all_surnames=False,
+                    first_mode="initials",
+                    first_names=["A"],
+                    max_searches=50,
+                    max_names=0,
+                    skip_completed_searches=True,
+                    enrich_reports=False,
+                    save_html=False,
+                    use_compact_prefixes=True,
+                )
+            searched = []
+            for call in mock_client.search_by_name.call_args_list:
+                args, _kwargs = call
+                first = str(args[0] if args else "").strip().upper()
+                last = str(args[1] if len(args) > 1 else "").strip().lower()
+                searched.append((first, last))
+                self.assertNotIn(
+                    (first, last),
+                    {("A", "ga"), ("A", "go")},
+                    "must not re-search completed first+last pairs",
+                )
+            self.assertGreaterEqual(stats.searches_skipped, 2)
+            # Only Lopez / "lo" should be new among the three prefixes
+            self.assertIn(("A", "lo"), searched)
+            self.assertEqual(stats.searches, 1)
+
+            # Explicit repeat: skip_completed_searches=False must re-hit completed pairs
+            mock_client.search_by_name.reset_mock()
+            mock_client.search_by_name.return_value = []
+            with patch.object(b, "surnames_for_ethnicity", return_value=pairs):
+                stats2 = b.build(
+                    ethnicity="hispanic",
+                    surnames_limit=10,
+                    first_mode="initials",
+                    first_names=["A"],
+                    max_searches=10,
+                    max_names=0,
+                    skip_completed_searches=False,
+                    enrich_reports=False,
+                    save_html=False,
+                    use_compact_prefixes=True,
+                )
+            self.assertEqual(stats2.searches_skipped, 0)
+            self.assertGreaterEqual(stats2.searches, 2)
+            repeated = {
+                (str(c.args[0]).upper(), str(c.args[1]).lower())
+                for c in mock_client.search_by_name.call_args_list
+            }
+            self.assertTrue({("A", "ga"), ("A", "go")}.issubset(repeated))
         finally:
             b.close()
 
@@ -420,6 +635,127 @@ class BuilderSurnameTests(unittest.TestCase):
                 self.assertTrue(Path(path).is_file())
                 self.assertIn(False, calls["verify"])
         finally:
+            f.close()
+
+    def test_sc_displayimage_thumb_fallback(self):
+        """SC DisplayImage Thumb=false empty GIF → try Thumb=true PNG."""
+        from scraper.report_fetcher import ReportFetcher, photo_url_variants, photo_state_from_url
+        import tempfile
+
+        png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 2000
+
+        class EmptyGif:
+            status_code = 200
+            headers = {"Content-Type": "Image/gif"}
+            content = b""
+
+        class PngAsGif:
+            status_code = 200
+            headers = {"Content-Type": "Image/gif"}
+            content = png
+
+        def fake_get(url, **kwargs):
+            if "Thumb=true" in url or "thumb=true" in url.lower():
+                return PngAsGif()
+            return EmptyGif()
+
+        base = (
+            "https://scor.sled.sc.gov/DisplayImage.aspx?"
+            "OffenderId=2279254&ImageId=805619&Thumb=false"
+        )
+        variants = photo_url_variants(base)
+        self.assertTrue(any("Thumb=true" in v or "thumb=true" in v.lower() for v in variants))
+        self.assertEqual(photo_state_from_url(base), "SC")
+        self.assertEqual(
+            photo_state_from_url("https://sor.tbi.tn.gov/api/sorimage/001"), "TN"
+        )
+
+        f = ReportFetcher(delay=0)
+        f.session.get = fake_get  # type: ignore
+        try:
+            with tempfile.TemporaryDirectory() as td:
+                path = f.download_photo(
+                    base,
+                    Path(td),
+                    referer="https://scor.sled.sc.gov/OffenderDetails.aspx",
+                    stem="sctest",
+                    reject_gif=True,
+                )
+                self.assertIsNotNone(path)
+                self.assertTrue(str(path).endswith(".png"))
+                self.assertTrue(Path(path).is_file())
+                self.assertGreaterEqual(Path(path).stat().st_size, 2000)
+        finally:
+            f.close()
+
+    def test_al_watchsystems_host_variants_and_extract(self):
+        """AL iCrimewatch: docs↔wsdocs aliases + extract /pictures/ from HTML."""
+        from scraper.report_fetcher import (
+            photo_url_variants,
+            extract_dedicated_photo_urls,
+            ReportFetcher,
+        )
+        import tempfile
+
+        ws = (
+            "https://wsdocs.watchsystems.com/pictures/54174/"
+            "1601693-6b547b0b-d945-45c7-a1ef-df9e92c4b0ed.jpg"
+        )
+        variants = photo_url_variants(ws)
+        self.assertTrue(any("docs.watchsystems.com" in v for v in variants))
+        self.assertTrue(any("wsdocs.watchsystems.com" in v for v in variants))
+
+        html = """
+        <html><body>
+        <img src="https://docs.watchsystems.com/offices/54174/54174-8020.jpg"
+             alt="Etowah County AL Sheriff's Office" width="800" height="200">
+        <img src='https://docs.watchsystems.com/pictures/54174/1601693-abc.jpg'
+             width='200px' alt='Offender photo'>
+        </body></html>
+        """
+        found = extract_dedicated_photo_urls(html)
+        self.assertTrue(found)
+        self.assertIn("/pictures/", found[0].lower())
+        self.assertNotIn("/offices/", found[0].lower())
+
+        jpeg = b"\xff\xd8\xff\xe0" + b"\x00" * 3000 + b"\xff\xd9"
+
+        class OkResp:
+            status_code = 200
+            headers = {"Content-Type": "image/jpeg"}
+            content = jpeg
+
+        class FailResp:
+            status_code = 404
+            headers = {"Content-Type": "text/html"}
+            content = b"not found"
+
+        def fake_get(url, **kwargs):
+            # Only docs host "works" — forces variant retry off wsdocs
+            if "docs.watchsystems.com" in url and "/pictures/" in url:
+                return OkResp()
+            return FailResp()
+
+        f = ReportFetcher(delay=0)
+        f.session.get = fake_get  # type: ignore
+        # Avoid stock-requests last-ditch path in tests
+        import scraper.report_fetcher as rfmod
+
+        real_requests_get = rfmod.requests.get
+        rfmod.requests.get = fake_get  # type: ignore
+        try:
+            with tempfile.TemporaryDirectory() as td:
+                path = f.download_photo(
+                    ws,  # wsdocs first
+                    Path(td),
+                    referer="https://www.icrimewatch.net/offenderdetails.php?OfndrID=1",
+                    stem="altest",
+                    reject_gif=True,
+                )
+                self.assertIsNotNone(path)
+                self.assertTrue(Path(path).is_file())
+        finally:
+            rfmod.requests.get = real_requests_get
             f.close()
 
     def test_embed_images_rewrites_img_src(self):
