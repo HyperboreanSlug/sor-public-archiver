@@ -70,7 +70,7 @@ def api_request(
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--tag", default="v1.3.7")
+    ap.add_argument("--tag", default="v1.3.8")
     ap.add_argument(
         "--zip",
         type=Path,
@@ -120,12 +120,10 @@ Standalone **Windows** GUI package (no Python install required).
 4. If the app fails to start, install [VC++ Redistributable 2015–2022 x64](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist)
 
 ### Highlights ({tag})
-- **Scrape → DB**: auto-import scrape results into SQLite (for Search / Integrity / Misclassify)
-- **Misclassify**: scan entire DB by default; when capped, newest rows first so imports are included
-- **Duplicates**: Integrity + CLI `dedupe` — check and remove safe dups (URL / external id / name+DOB); skips CAPTCHA portal URL clusters
-- **CSV import**: fills `full_name` / `source_state`; integrity + misclass include imported rows
-- **NSOPW**: optional Indian abbreviated firsts + surname digraphs; default full A–Z; yield mode keeps API hits
-- **Live controls**, ETA, skip completed searches, Indian HC list, photo fixes
+- **Reports tab**: scrollable photo cards for manual misclassification review (Confirmed / Correct / Skip)
+- **Presentation export**: HTML gallery + CSV from Reports (confirmed-only or full list)
+- **Statistics**: “Misclassified as (race)” pie limited to **Black / White / Other** (Asian kept as correct for Indian surnames)
+- **Analyze → Reports**: Build list from last Analyze, or Analyze + build in one click
 
 ### Notes
 - Runtime data (`data/`, downloads, backups) is local-only and is **not** shipped in this package

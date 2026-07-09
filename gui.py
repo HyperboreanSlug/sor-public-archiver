@@ -614,6 +614,9 @@ class ArchiverApp(ctk.CTk):
         self.is_running = False
         self._nsopw_cancel = False
         self._misclass_results: list = []
+        self._report_verdicts: Dict[str, str] = {}  # key → confirmed|correct|skip
+        self._report_items: list = []  # filtered Misclassification rows for Reports
+        self._report_image_refs: list = []
         self._closing = False
         # NSOPW options snapshot (main thread writes; worker reads under lock)
         self._nsopw_runtime_lock = threading.Lock()
@@ -792,7 +795,7 @@ class ArchiverApp(ctk.CTk):
     # Browse (Search + Integrity + Misclassify + Statistics)
     # -----------------------------------------------------------------------
     def _build_browse(self, tab):
-        """Primary tab: search, integrity, misclassification, deep stats."""
+        """Primary tab: search, integrity, misclassification, stats, reports."""
         tab.configure(fg_color=C["surface"])
         sub = ctk.CTkTabview(
             tab,
@@ -808,12 +811,13 @@ class ArchiverApp(ctk.CTk):
         )
         sub.pack(fill="both", expand=True, padx=6, pady=6)
         self.browse_tabs = sub
-        for name in ("Search", "Integrity", "Misclassify", "Statistics"):
+        for name in ("Search", "Integrity", "Misclassify", "Statistics", "Reports"):
             sub.add(name)
         self._build_search(sub.tab("Search"))
         self._build_integrity(sub.tab("Integrity"))
         self._build_misclass(sub.tab("Misclassify"))
         self._build_misclass_statistics(sub.tab("Statistics"))
+        self._build_reports(sub.tab("Reports"))
         try:
             sub.set("Search")
         except Exception:
@@ -2468,7 +2472,7 @@ class ArchiverApp(ctk.CTk):
         _muted(
             results_card,
             "Surname ethnicity does not match recorded race. "
-            "Select a row for photo and detail · Statistics for breakdowns.",
+            "Select a row for photo · Statistics for charts · Reports for photo review.",
         ).pack(anchor="w", padx=14, pady=(0, 6))
 
         wrap, self.misclass_tree = _tree_frame(results_card)
@@ -2786,18 +2790,28 @@ class ArchiverApp(ctk.CTk):
                 )
 
         by_eth = Counter((mc.likely_ethnicity or "—") for mc in results)
-        by_race = Counter((mc.expected_race or "—") for mc in results)
+        # "Misclassified as (race)": only Black / White / Other.
+        # Asian (and codes like I, American Indian, Arabic, Hispanic, …) are
+        # omitted — Asian is a correct registry race for many Indian surnames.
+        _race_stats_keep = frozenset({"BLACK", "WHITE", "OTHER"})
+        by_race = Counter(
+            (mc.expected_race or "—")
+            for mc in results
+            if (mc.expected_race or "—").strip().upper() in _race_stats_keep
+        )
+        race_n = sum(by_race.values())
 
-        def _fill(tree, counter: Counter):
+        def _fill(tree, counter: Counter, total: Optional[int] = None):
             if tree is None:
                 return
+            denom = n if total is None else total
             tree.delete(*tree.get_children())
             for label, cnt in counter.most_common():
-                pct = (cnt / n * 100.0) if n else 0.0
+                pct = (cnt / denom * 100.0) if denom else 0.0
                 tree.insert("", "end", values=(str(label), str(cnt), f"{pct:.1f}%"))
 
         _fill(getattr(self, "mcstat_eth_tree", None), by_eth)
-        _fill(getattr(self, "mcstat_race_tree", None), by_race)
+        _fill(getattr(self, "mcstat_race_tree", None), by_race, total=race_n)
 
         # Confidence bands (high → low)
         bands = Counter()
@@ -2985,6 +2999,13 @@ class ArchiverApp(ctk.CTk):
             f"Misclassification: {len(results)} mismatches"
             + (f" / {eth_base} {eth}" if eth != "all" else "")
         )
+        if hasattr(self, "report_status"):
+            self.report_status.configure(
+                text=(
+                    f"Analyze ready · {len(results):,} mismatches · "
+                    "open Reports → Build list to review with photos"
+                )
+            )
 
     def _export_misclass(self):
         from scraper.searcher import SexOffenderSearcher
@@ -3003,6 +3024,765 @@ class ArchiverApp(ctk.CTk):
         finally:
             searcher.close()
         messagebox.showinfo("Exported", f"{n} rows → {path}")
+
+    # -----------------------------------------------------------------------
+    # Reports — visual list for manual misclassification review + export
+    # -----------------------------------------------------------------------
+    def _build_reports(self, tab):
+        """Scrollable photo gallery for verifying mismatches and exporting."""
+        tab.configure(fg_color=C["surface"])
+        tab.grid_columnconfigure(0, weight=1)
+        tab.grid_rowconfigure(2, weight=1)
+
+        # ---- Toolbar ----
+        top = ctk.CTkFrame(tab, fg_color=C["surface"])
+        top.grid(row=0, column=0, sticky="ew", padx=8, pady=(8, 2))
+
+        bar = ctk.CTkFrame(top, fg_color="transparent")
+        bar.pack(fill="x", padx=4, pady=(0, 4))
+
+        ctk.CTkButton(
+            bar, text="Build list", width=110,
+            command=self._reports_build_list,
+            fg_color=C["accent"], hover_color=C["accent_hover"], text_color=C["bg"],
+        ).pack(side="left", padx=(0, 6))
+        ctk.CTkButton(
+            bar, text="Analyze + build", width=130,
+            command=self._reports_analyze_and_build,
+            fg_color=C["elevated"], hover_color=C["border"], text_color=C["text"],
+            border_width=1, border_color=C["border"],
+        ).pack(side="left", padx=(0, 12))
+
+        self.report_photos_only = ctk.BooleanVar(value=True)
+        ctk.CTkCheckBox(
+            bar, text="Photos only", variable=self.report_photos_only,
+            font=FONT_SM, text_color=C["text"],
+            fg_color=C["accent"], hover_color=C["accent_hover"],
+            border_color=C["border"], checkmark_color=C["bg"],
+        ).pack(side="left", padx=(0, 10))
+
+        self.report_race_bw_other = ctk.BooleanVar(value=True)
+        ctk.CTkCheckBox(
+            bar, text="Black / White / Other only",
+            variable=self.report_race_bw_other,
+            font=FONT_SM, text_color=C["text"],
+            fg_color=C["accent"], hover_color=C["accent_hover"],
+            border_color=C["border"], checkmark_color=C["bg"],
+        ).pack(side="left", padx=(0, 10))
+
+        ctk.CTkLabel(bar, text="Max", font=FONT_SM, text_color=C["muted"]).pack(
+            side="left", padx=(4, 4)
+        )
+        self.report_max_var = ctk.IntVar(value=80)
+        ctk.CTkEntry(
+            bar, textvariable=self.report_max_var, width=56,
+            fg_color=C["bg"], border_color=C["border"], text_color=C["text"],
+        ).pack(side="left", padx=(0, 10))
+
+        ctk.CTkLabel(bar, text="Show", font=FONT_SM, text_color=C["muted"]).pack(
+            side="left", padx=(4, 4)
+        )
+        self.report_verdict_filter = ctk.StringVar(value="all")
+        ctk.CTkComboBox(
+            bar, variable=self.report_verdict_filter, width=130,
+            values=["all", "unreviewed", "confirmed", "correct", "skip"],
+            fg_color=C["bg"], border_color=C["border"], button_color=C["elevated"],
+            text_color=C["text"], dropdown_fg_color=C["panel"],
+            command=lambda _v: self._reports_rebuild_cards(),
+        ).pack(side="left", padx=(0, 12))
+
+        ctk.CTkButton(
+            bar, text="Export HTML", width=110,
+            command=self._reports_export_html,
+            fg_color=C["elevated"], hover_color=C["border"], text_color=C["text"],
+            border_width=1, border_color=C["border"],
+        ).pack(side="left", padx=(0, 6))
+        ctk.CTkButton(
+            bar, text="Export CSV", width=100,
+            command=self._reports_export_csv,
+            fg_color=C["elevated"], hover_color=C["border"], text_color=C["text"],
+            border_width=1, border_color=C["border"],
+        ).pack(side="left")
+
+        # ---- Summary metrics ----
+        sum_row = ctk.CTkFrame(top, fg_color="transparent")
+        sum_row.pack(fill="x", padx=4, pady=(0, 4))
+
+        def _chip(key: str) -> ctk.CTkLabel:
+            chip = ctk.CTkFrame(
+                sum_row, fg_color=C["elevated"], corner_radius=6,
+                border_width=1, border_color=C["border"],
+            )
+            chip.pack(side="left", padx=3, pady=1, fill="x", expand=True)
+            lb = ctk.CTkLabel(
+                chip, text="—", font=FONT_SM, text_color=C["text"], anchor="center",
+            )
+            lb.pack(padx=8, pady=5)
+            setattr(self, key, lb)
+            return lb
+
+        _chip("report_m_total")
+        _chip("report_m_photo")
+        _chip("report_m_confirmed")
+        _chip("report_m_correct")
+        _chip("report_m_unreviewed")
+
+        self.report_status = ctk.CTkLabel(
+            top,
+            text=(
+                "Run Analyze on Misclassify (or Analyze + build), then Build list. "
+                "Mark each person Confirmed / Correct for export."
+            ),
+            font=FONT_SM, text_color=C["dim"], anchor="w",
+        )
+        self.report_status.pack(fill="x", padx=8, pady=(0, 4))
+
+        # ---- Scrollable card list ----
+        scroll = ctk.CTkScrollableFrame(
+            tab, fg_color=C["surface"], corner_radius=0, border_width=0,
+        )
+        scroll.grid(row=2, column=0, sticky="nsew", padx=4, pady=(0, 6))
+        scroll.grid_columnconfigure(0, weight=1)
+        self._report_scroll = scroll
+        self.after(30, lambda: _wire_wide_scroll(tab, scroll))
+
+        # Empty-state placeholder
+        self._report_empty = ctk.CTkLabel(
+            scroll,
+            text=(
+                "No report list yet.\n\n"
+                "1. Set ethnicity / min conf on Misclassify\n"
+                "2. Click Build list (or Analyze + build)\n"
+                "3. Review each card — Confirmed misclass or Correct label\n"
+                "4. Export HTML for a presentation-ready gallery"
+            ),
+            font=FONT_SM, text_color=C["dim"], justify="left",
+        )
+        self._report_empty.pack(anchor="w", padx=16, pady=24)
+
+    @staticmethod
+    def _report_item_key(mc) -> str:
+        rec = mc.record or {}
+        rid = rec.get("id")
+        if rid is not None:
+            return f"id:{rid}"
+        name = (
+            f"{rec.get('first_name', '') or ''} {rec.get('last_name', '') or ''}"
+        ).strip() or (rec.get("full_name") or "")
+        return f"n:{name}|{mc.expected_race}|{mc.likely_ethnicity}|{mc.confidence}"
+
+    def _reports_analyze_and_build(self):
+        """Run shared Analyze, then build the visual report list."""
+        try:
+            self._run_misclassification()
+        except Exception as e:
+            messagebox.showerror("Analyze", str(e))
+            return
+        self._reports_build_list()
+
+    def _reports_filtered_source(self) -> list:
+        """Apply report filters to current misclassification results."""
+        results = list(self._misclass_results or [])
+        if not results:
+            return []
+
+        photos_only = bool(self.report_photos_only.get())
+        race_bw = bool(self.report_race_bw_other.get())
+        keep_races = frozenset({"BLACK", "WHITE", "OTHER"})
+        vfilter = (self.report_verdict_filter.get() or "all").strip().lower()
+
+        # Prefetch photo paths when missing
+        need_ids: List[int] = []
+        for mc in results:
+            rec = mc.record or {}
+            if not (rec.get("photo_path") or "").strip() and rec.get("id") is not None:
+                try:
+                    need_ids.append(int(rec["id"]))
+                except (TypeError, ValueError):
+                    pass
+        photo_by_id: Dict[int, Dict[str, Any]] = {}
+        if need_ids:
+            try:
+                from scraper.database import Database
+
+                db = Database(self.db_path)
+                try:
+                    for oid in need_ids[:2000]:
+                        full = db.get_offender_by_id(oid)
+                        if full:
+                            photo_by_id[oid] = full
+                finally:
+                    db.close()
+            except Exception:
+                photo_by_id = {}
+
+        # Enrich records with DB fields (photo / HTML / URL)
+        if photo_by_id:
+            for mc in results:
+                rec = mc.record or {}
+                try:
+                    oid = int(rec["id"]) if rec.get("id") is not None else None
+                except (TypeError, ValueError):
+                    oid = None
+                if oid is None or oid not in photo_by_id:
+                    continue
+                full = photo_by_id[oid]
+                merged = dict(full)
+                # Keep any analysis-only keys if present
+                for k, v in rec.items():
+                    if str(k).startswith("_"):
+                        merged[k] = v
+                mc.record = merged
+
+        out = []
+        for mc in results:
+            rec = mc.record or {}
+            race_u = (mc.expected_race or "").strip().upper()
+            if race_bw and race_u not in keep_races:
+                continue
+            photo = (rec.get("photo_path") or "").strip()
+            has_photo = bool(photo and Path(photo).is_file())
+            if photos_only and not has_photo:
+                continue
+            key = self._report_item_key(mc)
+            verdict = self._report_verdicts.get(key, "unreviewed")
+            if vfilter != "all" and verdict != vfilter:
+                continue
+            out.append(mc)
+
+        try:
+            max_n = int(self.report_max_var.get())
+        except (TypeError, ValueError):
+            max_n = 80
+        if max_n > 0:
+            out = out[:max_n]
+        return out
+
+    def _reports_build_list(self):
+        """Filter Analyze results and render photo cards."""
+        if not self._misclass_results:
+            messagebox.showinfo(
+                "Reports",
+                "No Analyze results yet.\n\n"
+                "Run Analyze on the Misclassify tab, or click Analyze + build.",
+            )
+            return
+        self._report_items = self._reports_filtered_source()
+        self._reports_rebuild_cards()
+        self._reports_update_metrics()
+
+    def _reports_rebuild_cards(self):
+        """Destroy and recreate card widgets for current _report_items."""
+        scroll = getattr(self, "_report_scroll", None)
+        if scroll is None:
+            return
+
+        # If filter changed, re-filter from full results
+        if self._misclass_results:
+            self._report_items = self._reports_filtered_source()
+
+        for child in list(scroll.winfo_children()):
+            try:
+                child.destroy()
+            except Exception:
+                pass
+        self._report_image_refs = []
+
+        items = self._report_items or []
+        if not items:
+            empty = ctk.CTkLabel(
+                scroll,
+                text=(
+                    "No people match the current filters.\n"
+                    "Try unchecking Photos only, raising Max, or re-running Analyze."
+                ),
+                font=FONT_SM, text_color=C["dim"], justify="left",
+            )
+            empty.pack(anchor="w", padx=16, pady=24)
+            self._reports_update_metrics()
+            return
+
+        total = len(items)
+        for i, mc in enumerate(items):
+            self._reports_add_card(scroll, mc, index=i + 1, total=total)
+
+        self._reports_update_metrics()
+        if hasattr(self, "report_status"):
+            conf = sum(
+                1 for mc in items
+                if self._report_verdicts.get(self._report_item_key(mc)) == "confirmed"
+            )
+            self.report_status.configure(
+                text=(
+                    f"Showing {total:,} people · mark Confirmed or Correct · "
+                    f"{conf:,} confirmed so far · Export HTML for presentation"
+                )
+            )
+
+    def _reports_add_card(self, parent, mc, *, index: int, total: int) -> None:
+        """One presentation card: photo + name + race mismatch + verdict."""
+        rec = dict(mc.record or {})
+        key = self._report_item_key(mc)
+        verdict = self._report_verdicts.get(key, "unreviewed")
+
+        name = (
+            f"{rec.get('first_name', '') or ''} {rec.get('last_name', '') or ''}"
+        ).strip() or (rec.get("full_name") or "—")
+        state = (rec.get("state") or rec.get("source_state") or "—").strip() or "—"
+        race = (mc.expected_race or rec.get("race") or "—")
+        eth = mc.likely_ethnicity or "—"
+        conf = float(mc.confidence or 0.0)
+        photo_path = (rec.get("photo_path") or "").strip()
+        has_photo = bool(photo_path and Path(photo_path).is_file())
+
+        border = {
+            "confirmed": C["danger"],
+            "correct": C["success"],
+            "skip": C["dim"],
+            "unreviewed": C["border"],
+        }.get(verdict, C["border"])
+
+        card = ctk.CTkFrame(
+            parent,
+            fg_color=C["panel"],
+            border_color=border,
+            border_width=2 if verdict != "unreviewed" else 1,
+            corner_radius=12,
+        )
+        card.pack(fill="x", padx=8, pady=5)
+        card.grid_columnconfigure(1, weight=1)
+
+        # Photo
+        photo_wrap = ctk.CTkFrame(
+            card, fg_color=C["tree_bg"], corner_radius=8, width=112, height=140,
+        )
+        photo_wrap.grid(row=0, column=0, rowspan=2, padx=12, pady=12, sticky="nw")
+        photo_wrap.grid_propagate(False)
+        photo_lbl = ctk.CTkLabel(
+            photo_wrap, text="No photo", font=FONT_SM, text_color=C["dim"],
+        )
+        photo_lbl.place(relx=0.5, rely=0.5, anchor="center")
+        if has_photo:
+            try:
+                from PIL import Image
+
+                img = Image.open(photo_path)
+                img.thumbnail((108, 136))
+                ctk_img = ctk.CTkImage(
+                    light_image=img, dark_image=img, size=img.size
+                )
+                self._report_image_refs.append(ctk_img)
+                photo_lbl.configure(image=ctk_img, text="")
+            except Exception:
+                photo_lbl.configure(text="Photo\nerror")
+
+        # Text column
+        body = ctk.CTkFrame(card, fg_color="transparent")
+        body.grid(row=0, column=1, sticky="nsew", padx=(0, 12), pady=(12, 4))
+
+        head = ctk.CTkFrame(body, fg_color="transparent")
+        head.pack(fill="x")
+        ctk.CTkLabel(
+            head, text=name, font=FONT_TITLE, text_color=C["text"], anchor="w",
+        ).pack(side="left")
+        ctk.CTkLabel(
+            head, text=f"  #{index} / {total}", font=FONT_SM, text_color=C["dim"],
+        ).pack(side="left", padx=(8, 0))
+
+        # Race transition chips
+        chips = ctk.CTkFrame(body, fg_color="transparent")
+        chips.pack(fill="x", pady=(8, 4))
+
+        def _pill(parent, label: str, value: str, accent: bool = False):
+            f = ctk.CTkFrame(
+                parent,
+                fg_color=C["accent_dim"] if accent else C["elevated"],
+                corner_radius=8,
+                border_width=1,
+                border_color=C["border"],
+            )
+            f.pack(side="left", padx=(0, 8))
+            ctk.CTkLabel(
+                f, text=f"{label}  {value}",
+                font=FONT_SM, text_color=C["accent"] if accent else C["text"],
+            ).pack(padx=10, pady=4)
+
+        _pill(chips, "Recorded", str(race), accent=True)
+        ctk.CTkLabel(
+            chips, text="→", font=FONT_BOLD, text_color=C["muted"],
+        ).pack(side="left", padx=(0, 8))
+        _pill(chips, "Surname", str(eth))
+
+        meta_parts = [f"Confidence {conf:.3f}", f"State {state}"]
+        if rec.get("gender"):
+            meta_parts.append(str(rec.get("gender")))
+        if rec.get("date_of_birth"):
+            meta_parts.append(f"DOB {rec.get('date_of_birth')}")
+        meta = "  ·  ".join(meta_parts)
+        ctk.CTkLabel(
+            body, text=meta, font=FONT_SM, text_color=C["muted"], anchor="w",
+        ).pack(fill="x", pady=(2, 0))
+
+        matches = "; ".join(mc.matching_names[:4]) if mc.matching_names else ""
+        if matches:
+            ctk.CTkLabel(
+                body, text=f"Matched names: {matches}",
+                font=FONT_SM, text_color=C["dim"], anchor="w",
+            ).pack(fill="x", pady=(2, 0))
+
+        # Verdict row
+        actions = ctk.CTkFrame(card, fg_color="transparent")
+        actions.grid(row=1, column=1, sticky="ew", padx=(0, 12), pady=(0, 12))
+
+        status_lbl = ctk.CTkLabel(
+            actions, text=self._reports_verdict_label(verdict),
+            font=FONT_BOLD, text_color=self._reports_verdict_color(verdict),
+        )
+        status_lbl.pack(side="left", padx=(0, 12))
+
+        def _set(v: str, k=key, c=card, s=status_lbl):
+            self._report_verdicts[k] = v
+            s.configure(
+                text=self._reports_verdict_label(v),
+                text_color=self._reports_verdict_color(v),
+            )
+            try:
+                c.configure(
+                    border_color={
+                        "confirmed": C["danger"],
+                        "correct": C["success"],
+                        "skip": C["dim"],
+                    }.get(v, C["border"]),
+                    border_width=2 if v != "unreviewed" else 1,
+                )
+            except Exception:
+                pass
+            self._reports_update_metrics()
+
+        ctk.CTkButton(
+            actions, text="Confirmed misclass", width=150,
+            command=lambda: _set("confirmed"),
+            fg_color="#5c3030", hover_color="#7a4040", text_color=C["text"],
+        ).pack(side="left", padx=(0, 6))
+        ctk.CTkButton(
+            actions, text="Correct label", width=120,
+            command=lambda: _set("correct"),
+            fg_color="#2a4a38", hover_color="#356348", text_color=C["text"],
+        ).pack(side="left", padx=(0, 6))
+        ctk.CTkButton(
+            actions, text="Skip", width=70,
+            command=lambda: _set("skip"),
+            fg_color=C["elevated"], hover_color=C["border"], text_color=C["muted"],
+            border_width=1, border_color=C["border"],
+        ).pack(side="left", padx=(0, 6))
+
+        # Open helpers
+        html_path = (rec.get("report_html_path") or "").strip()
+        url = (rec.get("source_url") or "").strip()
+        if has_photo:
+            ctk.CTkButton(
+                actions, text="Photo", width=70,
+                command=lambda p=photo_path: self._open_path(Path(p)),
+                fg_color=C["elevated"], hover_color=C["border"], text_color=C["text"],
+                border_width=1, border_color=C["border"],
+            ).pack(side="right", padx=2)
+        if html_path and Path(html_path).exists():
+            ctk.CTkButton(
+                actions, text="HTML", width=70,
+                command=lambda p=html_path: self._open_path(Path(p)),
+                fg_color=C["elevated"], hover_color=C["border"], text_color=C["text"],
+                border_width=1, border_color=C["border"],
+            ).pack(side="right", padx=2)
+        if url:
+            ctk.CTkButton(
+                actions, text="URL", width=60,
+                command=lambda u=url: webbrowser.open(u),
+                fg_color=C["elevated"], hover_color=C["border"], text_color=C["text"],
+                border_width=1, border_color=C["border"],
+            ).pack(side="right", padx=2)
+
+    @staticmethod
+    def _reports_verdict_label(verdict: str) -> str:
+        return {
+            "confirmed": "● Confirmed misclass",
+            "correct": "● Correct label",
+            "skip": "● Skipped",
+            "unreviewed": "○ Unreviewed",
+        }.get(verdict, "○ Unreviewed")
+
+    @staticmethod
+    def _reports_verdict_color(verdict: str) -> str:
+        return {
+            "confirmed": C["danger"],
+            "correct": C["success"],
+            "skip": C["dim"],
+            "unreviewed": C["muted"],
+        }.get(verdict, C["muted"])
+
+    def _reports_update_metrics(self) -> None:
+        items = self._report_items or []
+        # Also count verdicts across all filtered-by-race source pool when possible
+        source = list(self._misclass_results or [])
+        if bool(getattr(self, "report_race_bw_other", None) and self.report_race_bw_other.get()):
+            keep = frozenset({"BLACK", "WHITE", "OTHER"})
+            source = [
+                mc for mc in source
+                if (mc.expected_race or "").strip().upper() in keep
+            ]
+
+        n_photo = 0
+        n_conf = n_ok = n_un = 0
+        for mc in source:
+            rec = mc.record or {}
+            p = (rec.get("photo_path") or "").strip()
+            if p and Path(p).is_file():
+                n_photo += 1
+            v = self._report_verdicts.get(self._report_item_key(mc), "unreviewed")
+            if v == "confirmed":
+                n_conf += 1
+            elif v == "correct":
+                n_ok += 1
+            elif v == "unreviewed":
+                n_un += 1
+
+        if hasattr(self, "report_m_total"):
+            self.report_m_total.configure(text=f"In list: {len(items):,}")
+            self.report_m_photo.configure(text=f"With photo (pool): {n_photo:,}")
+            self.report_m_confirmed.configure(text=f"Confirmed: {n_conf:,}")
+            self.report_m_correct.configure(text=f"Correct: {n_ok:,}")
+            self.report_m_unreviewed.configure(text=f"Unreviewed: {n_un:,}")
+
+    def _reports_iter_export_rows(self, *, verdicts: Optional[set] = None):
+        """Yield (mc, verdict, rec) for export. Default: current list items."""
+        items = self._report_items or []
+        for mc in items:
+            key = self._report_item_key(mc)
+            verdict = self._report_verdicts.get(key, "unreviewed")
+            if verdicts is not None and verdict not in verdicts:
+                continue
+            yield mc, verdict, dict(mc.record or {})
+
+    def _reports_export_csv(self):
+        if not self._report_items:
+            messagebox.showinfo("Export", "Build a report list first.")
+            return
+        path = filedialog.asksaveasfilename(
+            defaultextension=".csv",
+            filetypes=[("CSV", "*.csv")],
+            initialfile=f"misclass_report_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+        )
+        if not path:
+            return
+        n = 0
+        with open(path, "w", newline="", encoding="utf-8") as f:
+            w = csv.writer(f)
+            w.writerow([
+                "verdict", "name", "recorded_race", "likely_ethnicity", "confidence",
+                "state", "matching_names", "photo_path", "source_url", "id",
+            ])
+            for mc, verdict, rec in self._reports_iter_export_rows():
+                name = (
+                    f"{rec.get('first_name', '') or ''} {rec.get('last_name', '') or ''}"
+                ).strip() or (rec.get("full_name") or "")
+                w.writerow([
+                    verdict,
+                    name,
+                    mc.expected_race,
+                    mc.likely_ethnicity,
+                    f"{mc.confidence:.4f}",
+                    rec.get("state") or rec.get("source_state") or "",
+                    "; ".join(mc.matching_names or []),
+                    rec.get("photo_path") or "",
+                    rec.get("source_url") or "",
+                    rec.get("id") or "",
+                ])
+                n += 1
+        messagebox.showinfo("Exported", f"{n} rows → {path}")
+        self.log_queue.put(f"Reports CSV: {n} rows → {path}")
+
+    def _reports_export_html(self):
+        """Write a scrollable dark HTML gallery for presentation / sharing."""
+        if not self._report_items:
+            messagebox.showinfo("Export", "Build a report list first.")
+            return
+
+        only = messagebox.askyesnocancel(
+            "Export HTML",
+            "Export only Confirmed misclass rows?\n\n"
+            "Yes = confirmed only\n"
+            "No = everyone currently in the list\n"
+            "Cancel = abort",
+        )
+        if only is None:
+            return
+        verdict_filter = {"confirmed"} if only else None
+
+        path = filedialog.asksaveasfilename(
+            defaultextension=".html",
+            filetypes=[("HTML", "*.html")],
+            initialfile=f"misclass_report_{datetime.now().strftime('%Y%m%d_%H%M')}.html",
+        )
+        if not path:
+            return
+
+        rows = list(self._reports_iter_export_rows(verdicts=verdict_filter))
+        if not rows:
+            messagebox.showinfo("Export", "No rows to export for that selection.")
+            return
+
+        meta = getattr(self, "_misclass_meta", {}) or {}
+        eth_f = meta.get("eth_filter", "all")
+        min_c = meta.get("min_conf", "")
+        generated = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+        def _esc(s: Any) -> str:
+            t = str(s if s is not None else "")
+            return (
+                t.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace('"', "&quot;")
+            )
+
+        def _file_uri(p: str) -> str:
+            try:
+                return Path(p).resolve().as_uri()
+            except Exception:
+                return ""
+
+        cards_html: List[str] = []
+        for i, (mc, verdict, rec) in enumerate(rows, 1):
+            name = (
+                f"{rec.get('first_name', '') or ''} {rec.get('last_name', '') or ''}"
+            ).strip() or (rec.get("full_name") or "—")
+            state = rec.get("state") or rec.get("source_state") or "—"
+            photo = (rec.get("photo_path") or "").strip()
+            has_photo = photo and Path(photo).is_file()
+            img_html = (
+                f'<img src="{_esc(_file_uri(photo))}" alt="{_esc(name)}" loading="lazy">'
+                if has_photo
+                else '<div class="nophoto">No photo</div>'
+            )
+            url = (rec.get("source_url") or "").strip()
+            link = (
+                f'<a class="ext" href="{_esc(url)}" target="_blank" rel="noopener">Source</a>'
+                if url else ""
+            )
+            vclass = _esc(verdict)
+            cards_html.append(
+                f"""
+<article class="card v-{vclass}">
+  <div class="photo">{img_html}</div>
+  <div class="body">
+    <header>
+      <h2>{_esc(name)}</h2>
+      <span class="idx">#{i} / {len(rows)}</span>
+      <span class="badge">{_esc(verdict)}</span>
+    </header>
+    <div class="transition">
+      <span class="pill race">{_esc(mc.expected_race)}</span>
+      <span class="arrow">→</span>
+      <span class="pill eth">{_esc(mc.likely_ethnicity)}</span>
+    </div>
+    <p class="meta">Confidence {mc.confidence:.3f} · State {_esc(state)}</p>
+    <p class="names">Matched: {_esc('; '.join(mc.matching_names[:5]) if mc.matching_names else '—')}</p>
+    {link}
+  </div>
+</article>"""
+            )
+
+        n_conf = sum(1 for _, v, _ in rows if v == "confirmed")
+        html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Misclassification report · { _esc(generated) }</title>
+<style>
+  :root {{
+    --bg: #0c0c0e; --panel: #1a1a20; --elev: #22222a; --border: #2e2e38;
+    --text: #ececf1; --muted: #9b9ba8; --dim: #6b6b78; --accent: #e8a87c;
+    --danger: #e07a7a; --success: #7dcea0;
+  }}
+  * {{ box-sizing: border-box; }}
+  body {{
+    margin: 0; font-family: "Segoe UI", system-ui, sans-serif;
+    background: var(--bg); color: var(--text); line-height: 1.45;
+  }}
+  header.page {{
+    position: sticky; top: 0; z-index: 10;
+    background: rgba(12,12,14,.92); backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--border);
+    padding: 1rem 1.5rem 1.1rem;
+  }}
+  header.page h1 {{ margin: 0 0 .35rem; font-size: 1.35rem; font-weight: 650; }}
+  header.page p {{ margin: 0; color: var(--muted); font-size: .92rem; }}
+  main {{
+    max-width: 920px; margin: 0 auto; padding: 1.25rem 1rem 3rem;
+    display: flex; flex-direction: column; gap: .85rem;
+  }}
+  .card {{
+    display: grid; grid-template-columns: 120px 1fr; gap: 1rem;
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 14px; padding: 1rem; align-items: start;
+  }}
+  .card.v-confirmed {{ border-color: #8a4040; }}
+  .card.v-correct {{ border-color: #3a6a50; }}
+  .photo img {{
+    width: 112px; height: 140px; object-fit: cover; border-radius: 10px;
+    background: #101014; display: block;
+  }}
+  .nophoto {{
+    width: 112px; height: 140px; border-radius: 10px; background: #101014;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--dim); font-size: .85rem;
+  }}
+  .body header {{ display: flex; flex-wrap: wrap; align-items: baseline; gap: .5rem .75rem; }}
+  .body h2 {{ margin: 0; font-size: 1.2rem; font-weight: 650; }}
+  .idx {{ color: var(--dim); font-size: .85rem; }}
+  .badge {{
+    margin-left: auto; font-size: .75rem; text-transform: uppercase;
+    letter-spacing: .04em; color: var(--muted); border: 1px solid var(--border);
+    border-radius: 999px; padding: .15rem .55rem;
+  }}
+  .v-confirmed .badge {{ color: var(--danger); border-color: #8a4040; }}
+  .v-correct .badge {{ color: var(--success); border-color: #3a6a50; }}
+  .transition {{ display: flex; align-items: center; gap: .5rem; margin: .75rem 0 .4rem; flex-wrap: wrap; }}
+  .pill {{
+    background: var(--elev); border: 1px solid var(--border);
+    border-radius: 8px; padding: .3rem .7rem; font-size: .9rem;
+  }}
+  .pill.race {{ color: var(--accent); border-color: #3d2e24; background: #3d2e24; }}
+  .arrow {{ color: var(--muted); }}
+  .meta, .names {{ margin: .2rem 0; color: var(--muted); font-size: .9rem; }}
+  a.ext {{ color: var(--accent); font-size: .88rem; }}
+  @media print {{
+    header.page {{ position: static; }}
+    .card {{ break-inside: avoid; }}
+  }}
+</style>
+</head>
+<body>
+<header class="page">
+  <h1>Misclassification review</h1>
+  <p>
+    Generated { _esc(generated) } · filter { _esc(eth_f) } · min conf { _esc(min_c) }
+    · {len(rows)} people · {n_conf} confirmed
+  </p>
+</header>
+<main>
+{"".join(cards_html)}
+</main>
+</body>
+</html>
+"""
+        Path(path).write_text(html, encoding="utf-8")
+        messagebox.showinfo("Exported", f"{len(rows)} cards → {path}")
+        self.log_queue.put(f"Reports HTML: {len(rows)} cards → {path}")
+        try:
+            self._open_path(Path(path))
+        except Exception:
+            pass
 
     # -----------------------------------------------------------------------
     # NSOPW
