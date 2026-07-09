@@ -70,7 +70,7 @@ def api_request(
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--tag", default="v1.3.6")
+    ap.add_argument("--tag", default="v1.3.7")
     ap.add_argument(
         "--zip",
         type=Path,
@@ -120,13 +120,12 @@ Standalone **Windows** GUI package (no Python install required).
 4. If the app fails to start, install [VC++ Redistributable 2015–2022 x64](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist)
 
 ### Highlights ({tag})
-- **NSOPW first letters**: default full **A–Z**; optional **Indian** abbreviated firsts (`ASRPMKVNBD` / wide)
-- **Indian surname digraphs**: compact last prefixes from selected list only; abbreviated Indian mode restricts to Indian-likely letter combos (never US SSA / AA–ZZ)
-- **Yield mode**: keep all API hits by default (optional `strict_prefix` filter only if enabled)
-- **NSOPW**: live options mid-run, current search terms, ETA, faster Cancel; skip completed searches by default
-- **Indian HC list**: curated high-confidence surnames; short names exact-only (no De→De-Vries / John→Johnson)
-- **Photos / Browse / Misclassify**: SC/AL photo fixes; Indian race filters; misclass % + photo drawer
-- **Settings**: backup-on-close off by default; compact short partials recommended
+- **Scrape → DB**: auto-import scrape results into SQLite (for Search / Integrity / Misclassify)
+- **Misclassify**: scan entire DB by default; when capped, newest rows first so imports are included
+- **Duplicates**: Integrity + CLI `dedupe` — check and remove safe dups (URL / external id / name+DOB); skips CAPTCHA portal URL clusters
+- **CSV import**: fills `full_name` / `source_state`; integrity + misclass include imported rows
+- **NSOPW**: optional Indian abbreviated firsts + surname digraphs; default full A–Z; yield mode keeps API hits
+- **Live controls**, ETA, skip completed searches, Indian HC list, photo fixes
 
 ### Notes
 - Runtime data (`data/`, downloads, backups) is local-only and is **not** shipped in this package
