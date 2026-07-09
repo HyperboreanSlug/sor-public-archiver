@@ -2526,17 +2526,22 @@ class ArchiverApp(ctk.CTk):
             return
 
         try:
-            default_lim = int(self.report_max_var.get()) if hasattr(self, "report_max_var") else 50
+            enrich_lim = int(self.enrich_limit_var.get()) if hasattr(self, "enrich_limit_var") else 25
         except (TypeError, ValueError):
-            default_lim = 50
-        default_lim = max(1, min(default_lim or 50, 200))
+            enrich_lim = 25
+        if enrich_lim <= 0:
+            # 0 = no cap (still hard-cap to avoid runaway API use)
+            enrich_lim = min(len(records), 500)
+        else:
+            enrich_lim = max(1, min(enrich_lim, 500))
 
         ok = messagebox.askyesno(
             "NSOPW enrich misclassified?",
             (
                 f"Source: {source_label}\n"
                 f"People available: {len(records):,}\n"
-                f"Will process up to {default_lim} (prefer missing photos).\n\n"
+                f"Lookup limit: {enrich_lim} (separate from Reports Max / scan cap)\n"
+                f"Prefers missing photos first.\n\n"
                 "For each person:\n"
                 "  • If they have a report URL → re-fetch photo/race/crime\n"
                 "  • Else → NSOPW first+last search, attach best match, fetch report\n\n"
@@ -2590,7 +2595,7 @@ class ArchiverApp(ctk.CTk):
             try:
                 summary = builder.enrich_misclassified(
                     records,
-                    limit=default_lim,
+                    limit=enrich_lim,
                     prefer_missing_photo=True,
                     enrich_reports=True,
                     save_html=True,
@@ -2788,6 +2793,15 @@ class ArchiverApp(ctk.CTk):
             fg_color=C["elevated"], hover_color=C["border"], text_color=C["text"],
             border_width=1, border_color=C["border"],
         ).pack(side="left", padx=(0, 6))
+        if not hasattr(self, "enrich_limit_var"):
+            self.enrich_limit_var = ctk.IntVar(value=25)
+        ctk.CTkLabel(bar, text="Enrich lim", font=FONT_SM, text_color=C["muted"]).pack(
+            side="left", padx=(8, 4)
+        )
+        ctk.CTkEntry(
+            bar, textvariable=self.enrich_limit_var, width=52,
+            fg_color=C["bg"], border_color=C["border"], text_color=C["text"],
+        ).pack(side="left", padx=(0, 4))
         ctk.CTkButton(
             bar, text="NSOPW enrich", width=120, command=self._start_enrich_misclassified,
             fg_color=C["elevated"], hover_color=C["border"], text_color=C["text"],
@@ -3374,6 +3388,15 @@ class ArchiverApp(ctk.CTk):
             command=self._reports_build_list,
             fg_color=C["accent"], hover_color=C["accent_hover"], text_color=C["bg"],
         ).pack(side="left", padx=(0, 6))
+        if not hasattr(self, "enrich_limit_var"):
+            self.enrich_limit_var = ctk.IntVar(value=25)
+        ctk.CTkLabel(bar, text="Enrich lim", font=FONT_SM, text_color=C["muted"]).pack(
+            side="left", padx=(4, 4)
+        )
+        ctk.CTkEntry(
+            bar, textvariable=self.enrich_limit_var, width=52,
+            fg_color=C["bg"], border_color=C["border"], text_color=C["text"],
+        ).pack(side="left", padx=(0, 4))
         ctk.CTkButton(
             bar, text="NSOPW enrich", width=120,
             command=self._start_enrich_misclassified,
