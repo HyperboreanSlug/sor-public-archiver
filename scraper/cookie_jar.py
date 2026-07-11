@@ -333,3 +333,32 @@ class CaptchaQueue:
             self.save()
             return True
         return False
+
+    def peek_next(self) -> Optional[Dict[str, Any]]:
+        """Most recently queued item (or None)."""
+        return dict(self._items[-1]) if self._items else None
+
+    def mark_opened(self, url: str) -> None:
+        """Stamp an item after the user opens it in a browser."""
+        url = (url or "").strip()
+        if not url:
+            return
+        for item in self._items:
+            if item.get("url") == url:
+                item["opened_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                item["opened"] = True
+                self.save()
+                return
+
+    def mark_cookies_pulled(self, url: str, count: int = 0) -> None:
+        url = (url or "").strip()
+        if not url:
+            return
+        for item in self._items:
+            if item.get("url") == url:
+                item["cookies_pulled_at"] = time.strftime(
+                    "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
+                )
+                item["cookies_pulled"] = int(count or 0)
+                self.save()
+                return

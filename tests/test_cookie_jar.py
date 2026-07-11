@@ -59,6 +59,30 @@ class CookieJarTests(unittest.TestCase):
             self.assertTrue(q.remove_url("https://example.gov/r/1"))
             self.assertEqual(len(q.list_items()), 1)
 
+    def test_captcha_mark_opened_and_pulled(self):
+        with tempfile.TemporaryDirectory() as td:
+            q = CaptchaQueue(Path(td) / "q.json")
+            q.add("https://example.gov/r/1", jurisdiction="NY", reason="captcha")
+            q.mark_opened("https://example.gov/r/1")
+            item = q.peek_next()
+            self.assertTrue(item.get("opened"))
+            q.mark_cookies_pulled("https://example.gov/r/1", 3)
+            item = q.peek_next()
+            self.assertEqual(item.get("cookies_pulled"), 3)
+
+
+class BrowserCookieHostTests(unittest.TestCase):
+    def test_host_and_domain_match(self):
+        from scraper.browser_cookies import host_from_url, _domain_matches
+
+        self.assertEqual(
+            host_from_url("https://Offender.FDLE.state.fl.us/path"),
+            "offender.fdle.state.fl.us",
+        )
+        self.assertTrue(_domain_matches(".state.fl.us", "offender.fdle.state.fl.us"))
+        self.assertTrue(_domain_matches("fdle.state.fl.us", "offender.fdle.state.fl.us"))
+        self.assertFalse(_domain_matches("example.com", "offender.fdle.state.fl.us"))
+
 
 if __name__ == "__main__":
     unittest.main()
