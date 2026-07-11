@@ -407,10 +407,17 @@ class ScrapeTabMixin:
                 self._refresh_integrity()
             except Exception:
                 pass
+        # Always refresh top-bar record count (thread-safe)
         try:
-            self._refresh_header_db_path()
+            if hasattr(self, "schedule_header_refresh"):
+                self.schedule_header_refresh(0)
+            else:
+                self._refresh_header_db_path()
         except Exception:
-            pass
+            try:
+                self._refresh_header_db_path()
+            except Exception:
+                pass
         # Misclassify / Statistics are computed on demand — prompt re-run
         note = "DB updated · open Misclassify → Analyze to include new rows"
         if hasattr(self, "misclass_status"):

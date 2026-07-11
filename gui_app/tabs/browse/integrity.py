@@ -347,36 +347,8 @@ class IntegrityTabMixin:
         except Exception as e:
             messagebox.showerror("Export failed", str(e))
 
-    def _refresh_header_db_path(self):
-        """Show active SQLite path in the header."""
-        try:
-            p = Path(self.db_path)
-            if not p.is_absolute():
-                p = (Path.cwd() / p).resolve()
-            else:
-                p = p.resolve()
-            # Prefer short relative path when under project
-            try:
-                show = str(p.relative_to(Path.cwd()))
-            except ValueError:
-                show = str(p)
-            if len(show) > 52:
-                show = "…" + show[-50:]
-            n = ""
-            try:
-                from scraper.database import Database
-                db = Database(self.db_path)
-                try:
-                    n = f"  ·  {db.get_total_count():,} records"
-                finally:
-                    db.close()
-            except Exception:
-                pass
-            if hasattr(self, "header_db_label"):
-                self.header_db_label.configure(text=f"DB: {show}{n}")
-        except Exception:
-            if hasattr(self, "header_db_label"):
-                self.header_db_label.configure(text=f"DB: {self.db_path}")
+    # Header path/count: use ArchiverApp._refresh_header_db_path (shell.py)
+    # so Integrity does not override the live counter implementation.
 
     def _open_data_folder_header(self):
         path = Path("data")

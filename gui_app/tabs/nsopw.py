@@ -797,6 +797,21 @@ class NsopwTabMixin:
     def _nsopw_update_progress(self, info: Dict[str, Any]) -> None:
         """UI-thread: update determinate progress bar + stat chips + ETA."""
         try:
+            # Throttle top-bar record count while inserts land
+            import time as _time
+
+            now = _time.monotonic()
+            last = float(getattr(self, "_nsopw_header_refresh_ts", 0) or 0)
+            if now - last >= 2.0:
+                self._nsopw_header_refresh_ts = now
+                try:
+                    if hasattr(self, "schedule_header_refresh"):
+                        self.schedule_header_refresh(0)
+                    else:
+                        self._refresh_header_db_path()
+                except Exception:
+                    pass
+
             done = float(info.get("done") or info.get("plan_i") or 0)
             total = float(info.get("total") or info.get("plan_total") or 0)
             # Prefer search-cap progress when available (matches live max searches)
@@ -1133,6 +1148,16 @@ class NsopwTabMixin:
                         )
                     )
                     self.db_path = db_path
+                    # Top-bar record count + integrity after inserts
+                    try:
+                        if hasattr(self, "_after_db_data_changed"):
+                            self._after_db_data_changed()
+                        elif hasattr(self, "schedule_header_refresh"):
+                            self.schedule_header_refresh(0)
+                        else:
+                            self._refresh_header_db_path()
+                    except Exception:
+                        pass
                     messagebox.showinfo(
                         "NSOPW complete",
                         (
