@@ -20,18 +20,34 @@ _DEFAULT_RECORDED_TARGETS = frozenset({"WHITE"})
 
 
 def _race_is_target(recorded_race: str, targets: Set[str]) -> bool:
+    """True if *recorded_race* matches any selected scan target (canonical keys)."""
+    if not targets:
+        return False
     key = _canonical_race_key(recorded_race or "")
     if key in targets:
         return True
-    # Also match multi-source displays containing White without Asian/Black
+    # Multi-source displays e.g. "W [FL] | Asian"
     raw = (recorded_race or "").upper()
-    if "WHITE" in targets or "W" in targets:
-        if "WHITE" in raw or raw.strip() in ("W",):
-            # multi: "W [FL] | Asian" — still has white; scan if white present
-            # For gross scan we want pure white listings primarily
-            if "BLACK" in raw or "ASIAN" in raw or "INDIAN" in raw:
+    # Direct alias tokens in free text
+    if "WHITE" in targets and (
+        "WHITE" in raw or raw.strip() in ("W",) or "[W]" in raw.replace(" ", "")
+    ):
+        # Prefer pure White listings over multi-race strings
+        if "BLACK" in raw or "ASIAN" in raw or "INDIAN" in raw:
+            if key not in targets:
                 return False
+        else:
             return True
+    if "BLACK" in targets and ("BLACK" in raw or raw.strip() in ("B",)):
+        return True
+    if "ASIAN" in targets and "ASIAN" in raw:
+        return True
+    if "HISPANIC" in targets and ("HISPANIC" in raw or "LATINO" in raw):
+        return True
+    if "INDIAN" in targets and "INDIAN" in raw:
+        return True
+    if "OTHER" in targets and key in ("OTHER", "UNKNOWN", ""):
+        return True
     return False
 
 
@@ -174,6 +190,7 @@ def scan_gross_misclassifications(
     force_rescan: bool = False,
     persist: bool = True,
     detector: str = "",
+    on_hit: Optional[Callable[[GrossMisclassHit], None]] = None,
 ) -> List[GrossMisclassHit]:
     """
     Scan mugshots for high-confidence face ethnicity that grossly contradicts
@@ -186,6 +203,8 @@ def scan_gross_misclassifications(
     ``force_rescan=True`` (or ``skip_scanned=False``) to score them again.
 
     *persist*: write every scored result to ``deepface_scans`` (hits and non-hits).
+
+    *on_hit*: optional callback invoked for each hit as it is found (live UI).
     """
     def _log(msg: str) -> None:
         if log:
@@ -198,6 +217,14 @@ def scan_gross_misclassifications(
             return bool(cancel())
         except Exception:
             return False
+
+    def _emit(hit: GrossMisclassHit) -> None:
+        if not on_hit:
+            return
+        try:
+            on_hit(hit)
+        except Exception:
+            pass
 
     own_db = False
     if db is None:
@@ -303,17 +330,17 @@ def scan_gross_misclassifications(
                     backend=str(df.get("backend") or "deepface"),
                     face_detected=True,
                 )
-                hits.append(
-                    GrossMisclassHit(
-                        record=rec,
-                        recorded_race=format_race_label(race) if race else race,
-                        face=face,
-                        predicted_label=lab,
-                        confidence=conf,
-                        severity=str(df.get("severity") or ("high" if conf >= 0.9 else "medium")),
-                        reason=str(df.get("reason") or ""),
-                    )
+                gh = GrossMisclassHit(
+                    record=rec,
+                    recorded_race=format_race_label(race) if race else race,
+                    face=face,
+                    predicted_label=lab,
+                    confidence=conf,
+                    severity=str(df.get("severity") or ("high" if conf >= 0.9 else "medium")),
+                    reason=str(df.get("reason") or ""),
                 )
+                hits.append(gh)
+                _emit(gh)
         except Exception as e:
             _log(f"Could not load prior DeepFace hits: {e}")
 
@@ -326,7 +353,7 @@ def scan_gross_misclassifications(
                 f"({len(hits)} hits total)"
             )
             break
-        if progress and (i % 10 == 0 or i + 1 == total):
+        if progress and (i % 5 == 0 or i + 1 == total or i == 0):
             try:
                 progress(i + 1, total)
             except Exception:
@@ -351,17 +378,17 @@ def scan_gross_misclassifications(
                 f"Face scores {lab} at {conf:.0%} but registry race is "
                 f"{race_disp or race}"
             )
-            hits.append(
-                GrossMisclassHit(
-                    record=rec,
-                    recorded_race=race_disp or race,
-                    face=face,
-                    predicted_label=lab,
-                    confidence=conf,
-                    severity=severity,
-                    reason=reason,
-                )
+            gh = GrossMisclassHit(
+                record=rec,
+                recorded_race=race_disp or race,
+                face=face,
+                predicted_label=lab,
+                confidence=conf,
+                severity=severity,
+                reason=reason,
             )
+            hits.append(gh)
+            _emit(gh)
             _log(
                 f"  HIT id={rec.get('id')} "
                 f"{rec.get('first_name')} {rec.get('last_name')} "

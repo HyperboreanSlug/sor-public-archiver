@@ -148,29 +148,86 @@ class DeepfaceTabMixin:
         self.df_scan_limit.grid(row=1, column=2, sticky="ew", padx=(0, 12), pady=(0, 6))
         self.df_scan_limit.insert(0, str(sett.get("deepface_scan_limit") or "0"))
 
-        ctk.CTkLabel(grid, text="Recorded race filter", font=FONT_SM, text_color=C["muted"]).grid(
-            row=2, column=0, sticky="w", padx=(0, 8), pady=2
-        )
-        self.df_scan_recorded = ctk.CTkEntry(
-            grid, placeholder_text="WHITE",
-            fg_color=C["bg"], border_color=C["border"], text_color=C["text"],
-        )
-        self.df_scan_recorded.grid(row=3, column=0, columnspan=2, sticky="ew", padx=(0, 12), pady=(0, 6))
-        self.df_scan_recorded.insert(
-            0, str(sett.get("deepface_scan_recorded") or "WHITE")
-        )
+        # --- Selectable recorded-race filter ---
+        ctk.CTkLabel(
+            opt, text="Recorded race filter (scan records listed as…)",
+            font=FONT_SM, text_color=C["muted"], anchor="w",
+        ).pack(fill="x", padx=14, pady=(4, 2))
+        race_row = ctk.CTkFrame(opt, fg_color="transparent")
+        race_row.pack(fill="x", padx=14, pady=(0, 6))
+        # Canonical keys used by scanner._race_is_target / _canonical_race_key
+        self._DF_SCAN_RACE_OPTS = [
+            ("WHITE", "White"),
+            ("BLACK", "Black"),
+            ("ASIAN", "Asian"),
+            ("HISPANIC", "Hispanic"),
+            ("INDIAN", "Indian"),
+            ("OTHER", "Other"),
+        ]
+        saved_races = {
+            p.strip().upper()
+            for p in str(sett.get("deepface_scan_recorded") or "WHITE").replace(";", ",").split(",")
+            if p.strip()
+        }
+        if not saved_races:
+            saved_races = {"WHITE"}
+        self._df_scan_race_vars: Dict[str, ctk.BooleanVar] = {}
+        for i, (key, label) in enumerate(self._DF_SCAN_RACE_OPTS):
+            var = ctk.BooleanVar(value=(key in saved_races))
+            self._df_scan_race_vars[key] = var
+            ctk.CTkCheckBox(
+                race_row,
+                text=label,
+                variable=var,
+                font=FONT_SM,
+                text_color=C["text"],
+                fg_color=C["accent"],
+                hover_color=C["accent_hover"],
+                border_color=C["border"],
+                checkmark_color=C["bg"],
+                width=90,
+            ).pack(side="left", padx=(0, 10))
 
-        ctk.CTkLabel(grid, text="Face labels to flag", font=FONT_SM, text_color=C["muted"]).grid(
-            row=2, column=2, sticky="w", padx=(0, 8), pady=2
-        )
-        self.df_scan_faces = ctk.CTkEntry(
-            grid, placeholder_text="black,indian,asian",
-            fg_color=C["bg"], border_color=C["border"], text_color=C["text"],
-        )
-        self.df_scan_faces.grid(row=3, column=2, columnspan=2, sticky="ew", padx=(0, 0), pady=(0, 6))
-        self.df_scan_faces.insert(
-            0, str(sett.get("deepface_scan_faces") or "black,indian,asian")
-        )
+        # --- Selectable face labels to flag ---
+        ctk.CTkLabel(
+            opt, text="Face labels to flag (DeepFace prediction…)",
+            font=FONT_SM, text_color=C["muted"], anchor="w",
+        ).pack(fill="x", padx=14, pady=(4, 2))
+        face_row = ctk.CTkFrame(opt, fg_color="transparent")
+        face_row.pack(fill="x", padx=14, pady=(0, 6))
+        self._DF_SCAN_FACE_OPTS = [
+            ("black", "Black"),
+            ("indian", "Indian"),
+            ("asian", "Asian"),
+            ("hispanic", "Hispanic"),
+            ("middle_eastern", "Mid. Eastern"),
+            ("white", "White"),
+        ]
+        saved_faces = {
+            p.strip().lower()
+            for p in str(
+                sett.get("deepface_scan_faces") or "black,indian,asian"
+            ).replace(";", ",").split(",")
+            if p.strip()
+        }
+        if not saved_faces:
+            saved_faces = {"black", "indian", "asian"}
+        self._df_scan_face_vars: Dict[str, ctk.BooleanVar] = {}
+        for key, label in self._DF_SCAN_FACE_OPTS:
+            var = ctk.BooleanVar(value=(key in saved_faces))
+            self._df_scan_face_vars[key] = var
+            ctk.CTkCheckBox(
+                face_row,
+                text=label,
+                variable=var,
+                font=FONT_SM,
+                text_color=C["text"],
+                fg_color=C["accent"],
+                hover_color=C["accent_hover"],
+                border_color=C["border"],
+                checkmark_color=C["bg"],
+                width=100,
+            ).pack(side="left", padx=(0, 10))
 
         skip_row = ctk.CTkFrame(opt, fg_color="transparent")
         skip_row.pack(fill="x", padx=14, pady=(0, 4))
@@ -333,16 +390,24 @@ class DeepfaceTabMixin:
             limit = int(float(_f(self.df_scan_limit, "0") or "0"))
         except ValueError:
             limit = 0
-        recorded = [
-            p.strip()
-            for p in _f(self.df_scan_recorded, "WHITE").split(",")
-            if p.strip()
-        ] or ["WHITE"]
-        faces = [
-            p.strip()
-            for p in _f(self.df_scan_faces, "black,indian,asian").split(",")
-            if p.strip()
-        ] or ["black", "indian", "asian"]
+        recorded = []
+        for key, var in getattr(self, "_df_scan_race_vars", {}).items():
+            try:
+                if bool(var.get()):
+                    recorded.append(key)
+            except Exception:
+                pass
+        if not recorded:
+            recorded = ["WHITE"]
+        faces = []
+        for key, var in getattr(self, "_df_scan_face_vars", {}).items():
+            try:
+                if bool(var.get()):
+                    faces.append(key)
+            except Exception:
+                pass
+        if not faces:
+            faces = ["black", "indian", "asian"]
         state = _f(self.df_scan_state, "") or None
         force = False
         try:
@@ -415,6 +480,7 @@ class DeepfaceTabMixin:
 
     def _deepface_scan_clear(self) -> None:
         self._df_scan_hits = []
+        self._df_scan_hit_ids = set()
         try:
             self.df_scan_tree.delete(*self.df_scan_tree.get_children())
             self.df_scan_progress.set(0)
@@ -424,14 +490,76 @@ class DeepfaceTabMixin:
         except Exception:
             pass
 
+    def _deepface_scan_append_hit(self, hit) -> None:
+        """Insert one hit into the results tree (main thread; live updates)."""
+        if not hasattr(self, "df_scan_tree"):
+            return
+        try:
+            rec = hit.record or {}
+            try:
+                oid = int(rec["id"]) if rec.get("id") is not None else None
+            except (TypeError, ValueError):
+                oid = None
+            seen = getattr(self, "_df_scan_hit_ids", None)
+            if seen is None:
+                self._df_scan_hit_ids = set()
+                seen = self._df_scan_hit_ids
+            if oid is not None and oid in seen:
+                return
+            if oid is not None:
+                seen.add(oid)
+            name = (
+                f"{rec.get('first_name') or ''} {rec.get('last_name') or ''}"
+            ).strip()
+            self.df_scan_tree.insert(
+                "",
+                "end",
+                values=(
+                    name,
+                    rec.get("state") or "—",
+                    (hit.recorded_race or "—")[:20],
+                    hit.predicted_label,
+                    f"{float(hit.confidence or 0):.2f}",
+                    hit.severity,
+                    rec.get("id") or "",
+                ),
+            )
+            # Keep newest hits visible
+            try:
+                kids = self.df_scan_tree.get_children()
+                if kids:
+                    self.df_scan_tree.see(kids[-1])
+            except Exception:
+                pass
+            if not hasattr(self, "_df_scan_hits") or self._df_scan_hits is None:
+                self._df_scan_hits = []
+            self._df_scan_hits.append(hit)
+            n = len(self._df_scan_hits)
+            try:
+                self.df_scan_status.configure(
+                    text=f"Live · {n:,} hits",
+                    text_color=C["text"],
+                )
+            except Exception:
+                pass
+        except Exception:
+            pass
+
     def _deepface_scan_start(self) -> None:
         if getattr(self, "_df_scan_running", False):
             self._deepface_scan_log_msg("Scan already running")
             return
         self._deepface_scan_save_options()
         opts = self._deepface_scan_collect_options()
+        if not opts["recorded_races"]:
+            self._deepface_scan_log_msg("Select at least one recorded race filter")
+            return
+        if not opts["face_labels"]:
+            self._deepface_scan_log_msg("Select at least one face label to flag")
+            return
         self._df_scan_cancel = False
         self._df_scan_hits = []
+        self._df_scan_hit_ids = set()
         try:
             self.df_scan_tree.delete(*self.df_scan_tree.get_children())
             self.df_scan_progress.set(0)
@@ -470,8 +598,9 @@ class DeepfaceTabMixin:
                 try:
                     frac = (done / total) if total else 0.0
                     self.df_scan_progress.set(min(1.0, max(0.0, frac)))
+                    n = len(getattr(self, "_df_scan_hits", []) or [])
                     self.df_scan_status.configure(
-                        text=f"Scoring {done:,} / {total:,}  ·  hits {len(self._df_scan_hits)}",
+                        text=f"Scoring {done:,} / {total:,}  ·  hits {n:,}",
                         text_color=C["text"],
                     )
                 except Exception:
@@ -479,6 +608,12 @@ class DeepfaceTabMixin:
 
             try:
                 self.after(0, ui)
+            except Exception:
+                pass
+
+        def on_hit(hit) -> None:
+            try:
+                self.after(0, lambda h=hit: self._deepface_scan_append_hit(h))
             except Exception:
                 pass
 
@@ -511,7 +646,6 @@ class DeepfaceTabMixin:
                 except BackendUnavailableError as e:
                     raise RuntimeError(str(e)) from e
 
-                # Detector is read by DeepFaceBackend from settings
                 hits = scan_gross_misclassifications(
                     db_path=db_path,
                     scorer=scorer,
@@ -527,6 +661,7 @@ class DeepfaceTabMixin:
                     force_rescan=bool(opts.get("force_rescan")),
                     persist=True,
                     detector=detector,
+                    on_hit=on_hit,
                 )
             except Exception as e:
                 err = e
@@ -534,29 +669,14 @@ class DeepfaceTabMixin:
 
             def done():
                 self._deepface_scan_set_busy(False)
-                self._df_scan_hits = list(hits or [])
+                # Prefer live list; fall back to final return value
+                if hits and not getattr(self, "_df_scan_hits", None):
+                    self._df_scan_hits = list(hits)
+                elif hits:
+                    # Ensure export list is complete (deduped final set)
+                    self._df_scan_hits = list(hits)
+                n = len(getattr(self, "_df_scan_hits", []) or [])
                 try:
-                    self.df_scan_tree.delete(*self.df_scan_tree.get_children())
-                    for h in self._df_scan_hits:
-                        rec = h.record or {}
-                        name = (
-                            f"{rec.get('first_name') or ''} "
-                            f"{rec.get('last_name') or ''}"
-                        ).strip()
-                        self.df_scan_tree.insert(
-                            "",
-                            "end",
-                            values=(
-                                name,
-                                rec.get("state") or "—",
-                                (h.recorded_race or "—")[:20],
-                                h.predicted_label,
-                                f"{h.confidence:.2f}",
-                                h.severity,
-                                rec.get("id") or "",
-                            ),
-                        )
-                    n = len(self._df_scan_hits)
                     if err:
                         self.df_scan_status.configure(
                             text=f"Failed: {err}",
@@ -565,7 +685,7 @@ class DeepfaceTabMixin:
                         self.df_scan_progress.set(0)
                     elif getattr(self, "_df_scan_cancel", False):
                         self.df_scan_status.configure(
-                            text=f"Stopped — {n:,} hits so far",
+                            text=f"Stopped — {n:,} hits",
                             text_color=C["accent"],
                         )
                     else:
@@ -577,7 +697,7 @@ class DeepfaceTabMixin:
                 except Exception:
                     pass
                 self._deepface_scan_log_msg(
-                    f"Scan finished: {len(self._df_scan_hits)} hits"
+                    f"Scan finished: {n} hits"
                     + (f" (error: {err})" if err else "")
                     + " — results stored; skipped photos stay skipped next run"
                 )
