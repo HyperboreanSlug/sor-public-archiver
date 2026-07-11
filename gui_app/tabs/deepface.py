@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import csv
+import json
 import os
 import queue
 import sys
@@ -297,33 +298,128 @@ class DeepfaceTabMixin:
         )
         self.df_scan_status.pack(fill="x", padx=14, pady=(0, 12))
 
-        # Bottom: results + activity
+        # Bottom: hits list | mugshot review + confirm | activity
         bottom = ctk.CTkFrame(tab, fg_color="transparent")
         bottom.grid(row=1, column=0, sticky="nsew", padx=6, pady=(0, 6))
         bottom.grid_columnconfigure(0, weight=3)
-        bottom.grid_columnconfigure(1, weight=2)
+        bottom.grid_columnconfigure(1, weight=3)
+        bottom.grid_columnconfigure(2, weight=2)
         bottom.grid_rowconfigure(0, weight=1)
 
         res_card = _card(bottom)
         res_card.grid(row=0, column=0, sticky="nsew", padx=(2, 4), pady=2)
         res_card.grid_columnconfigure(0, weight=1)
         res_card.grid_rowconfigure(1, weight=1)
-        _section_label(res_card, "Hits").pack(anchor="w", padx=14, pady=(12, 4))
+        _section_label(res_card, "Hits (select to review)").pack(
+            anchor="w", padx=14, pady=(12, 4)
+        )
         wrap, tree = _tree_frame(res_card)
         wrap.pack(fill="both", expand=True, padx=10, pady=(0, 10))
-        cols = ("name", "state", "race", "face", "conf", "severity", "id")
+        cols = ("name", "state", "race", "face", "conf", "verdict", "id")
         tree["columns"] = cols
         tree["show"] = "headings"
-        widths = [160, 50, 90, 80, 60, 70, 60]
+        widths = [140, 45, 80, 70, 50, 90, 50]
+        labels = {
+            "name": "NAME",
+            "state": "ST",
+            "race": "LISTED",
+            "face": "FACE",
+            "conf": "CONF",
+            "verdict": "VERDICT",
+            "id": "ID",
+        }
         for c, w in zip(cols, widths):
-            tree.heading(c, text=c.upper())
-            tree.column(c, width=w, minwidth=40, stretch=(c == "name"))
+            tree.heading(c, text=labels.get(c, c.upper()))
+            tree.column(c, width=w, minwidth=36, stretch=(c == "name"))
         _stretch_columns(tree, cols, widths)
         self.df_scan_tree = tree
+        self._df_scan_hits_by_iid: Dict[str, Any] = {}
+        self._df_scan_image_refs: list = []
+        tree.bind("<<TreeviewSelect>>", self._deepface_scan_on_select)
         _bind_tree_scroll_isolation(tree, wrap)
 
+        # Review panel: mugshot + confirm/reject
+        rev_card = _card(bottom)
+        rev_card.grid(row=0, column=1, sticky="nsew", padx=4, pady=2)
+        _section_label(rev_card, "Review hit").pack(
+            anchor="w", padx=14, pady=(12, 4)
+        )
+        _muted(
+            rev_card,
+            "Confirm incorrect = face vs listed race is a real mismatch. "
+            "Confirm correct = listing is fine (not a misclass). "
+            "Verdicts sync to Browse → Reports.",
+        ).pack(anchor="w", padx=14, pady=(0, 6))
+
+        rev_body = ctk.CTkFrame(rev_card, fg_color="transparent")
+        rev_body.pack(fill="both", expand=True, padx=12, pady=(0, 8))
+        rev_body.grid_columnconfigure(1, weight=1)
+        rev_body.grid_rowconfigure(1, weight=1)
+
+        photo_wrap = ctk.CTkFrame(
+            rev_body, fg_color=C["tree_bg"], corner_radius=10, width=160, height=200,
+        )
+        photo_wrap.grid(row=0, column=0, rowspan=2, sticky="nw", padx=(0, 12), pady=4)
+        photo_wrap.grid_propagate(False)
+        self.df_scan_photo_lbl = ctk.CTkLabel(
+            photo_wrap, text="No hit\nselected", font=FONT_SM, text_color=C["dim"],
+        )
+        self.df_scan_photo_lbl.place(relx=0.5, rely=0.5, anchor="center")
+
+        self.df_scan_review_name = ctk.CTkLabel(
+            rev_body, text="—", font=FONT_TITLE, text_color=C["text"], anchor="w",
+        )
+        self.df_scan_review_name.grid(row=0, column=1, sticky="ew", pady=(4, 2))
+
+        self.df_scan_review_meta = ctk.CTkLabel(
+            rev_body,
+            text="Select a hit to show the mugshot and decide.",
+            font=FONT_SM,
+            text_color=C["muted"],
+            anchor="nw",
+            justify="left",
+            wraplength=320,
+        )
+        self.df_scan_review_meta.grid(row=1, column=1, sticky="new", pady=(0, 6))
+
+        self.df_scan_review_verdict = ctk.CTkLabel(
+            rev_body, text="", font=FONT_BOLD, text_color=C["dim"], anchor="w",
+        )
+        self.df_scan_review_verdict.grid(row=2, column=1, sticky="ew", pady=(0, 6))
+
+        btn_row = ctk.CTkFrame(rev_card, fg_color="transparent")
+        btn_row.pack(fill="x", padx=12, pady=(0, 12))
+        self.df_scan_btn_confirm = ctk.CTkButton(
+            btn_row, text="Confirmed incorrect", width=150,
+            command=lambda: self._deepface_scan_set_verdict("confirmed"),
+            fg_color="#5c3030", hover_color="#7a4040", text_color=C["text"],
+            state="disabled",
+        )
+        self.df_scan_btn_confirm.pack(side="left", padx=(0, 6))
+        self.df_scan_btn_correct = ctk.CTkButton(
+            btn_row, text="Confirmed correct", width=140,
+            command=lambda: self._deepface_scan_set_verdict("correct"),
+            fg_color="#2a4a38", hover_color="#356348", text_color=C["text"],
+            state="disabled",
+        )
+        self.df_scan_btn_correct.pack(side="left", padx=(0, 6))
+        self.df_scan_btn_skip = ctk.CTkButton(
+            btn_row, text="Skip", width=70,
+            command=lambda: self._deepface_scan_set_verdict("skip"),
+            fg_color=C["elevated"], hover_color=C["border"], text_color=C["muted"],
+            border_width=1, border_color=C["border"],
+            state="disabled",
+        )
+        self.df_scan_btn_skip.pack(side="left", padx=(0, 6))
+        ctk.CTkButton(
+            btn_row, text="Next unreviewed", width=120,
+            command=self._deepface_scan_next_unreviewed,
+            fg_color=C["elevated"], hover_color=C["border"], text_color=C["text"],
+            border_width=1, border_color=C["border"],
+        ).pack(side="right")
+
         log_card = _card(bottom)
-        log_card.grid(row=0, column=1, sticky="nsew", padx=(4, 2), pady=2)
+        log_card.grid(row=0, column=2, sticky="nsew", padx=(4, 2), pady=2)
         _section_label(log_card, "Scan activity").pack(
             anchor="w", padx=14, pady=(12, 4)
         )
@@ -339,6 +435,15 @@ class DeepfaceTabMixin:
         self.df_scan_log.pack(fill="both", expand=True, padx=12, pady=(0, 12))
         self.df_scan_log.configure(state="disabled")
         self._df_scan_log_queue: queue.Queue = queue.Queue()
+        self._df_scan_selected_iid: Optional[str] = None
+        # Share report verdict store if Browse already loaded it
+        if not hasattr(self, "_report_verdicts") or self._report_verdicts is None:
+            self._report_verdicts = {}
+        if hasattr(self, "_load_report_verdicts"):
+            try:
+                self._load_report_verdicts()
+            except Exception:
+                pass
         self.after(120, self._deepface_poll_scan_log)
 
     def _deepface_goto_setup(self) -> None:
@@ -481,12 +586,273 @@ class DeepfaceTabMixin:
     def _deepface_scan_clear(self) -> None:
         self._df_scan_hits = []
         self._df_scan_hit_ids = set()
+        self._df_scan_hits_by_iid = {}
+        self._df_scan_selected_iid = None
+        self._df_scan_image_refs = []
         try:
             self.df_scan_tree.delete(*self.df_scan_tree.get_children())
             self.df_scan_progress.set(0)
             self.df_scan_status.configure(
                 text="Results cleared", text_color=C["dim"]
             )
+            self._deepface_scan_clear_review()
+        except Exception:
+            pass
+
+    def _deepface_scan_verdict_key(self, hit) -> str:
+        rec = getattr(hit, "record", None) or {}
+        rid = rec.get("id")
+        if rid is not None and str(rid).strip() != "":
+            return f"id:{rid}"
+        name = (
+            f"{rec.get('first_name') or ''} {rec.get('last_name') or ''}"
+        ).strip()
+        return f"df:{name}|{getattr(hit, 'predicted_label', '')}"
+
+    def _deepface_scan_get_verdict(self, hit) -> str:
+        if not hasattr(self, "_report_verdicts") or self._report_verdicts is None:
+            self._report_verdicts = {}
+            if hasattr(self, "_load_report_verdicts"):
+                try:
+                    self._load_report_verdicts()
+                except Exception:
+                    pass
+        key = self._deepface_scan_verdict_key(hit)
+        v = (self._report_verdicts.get(key) or "").strip()
+        if v in ("confirmed", "correct", "skip"):
+            return v
+        # also try bare id
+        rec = getattr(hit, "record", None) or {}
+        rid = rec.get("id")
+        if rid is not None:
+            v2 = (self._report_verdicts.get(f"id:{rid}") or "").strip()
+            if v2 in ("confirmed", "correct", "skip"):
+                return v2
+        return "unreviewed"
+
+    def _deepface_scan_verdict_label(self, verdict: str) -> str:
+        return {
+            "confirmed": "Incorrect",
+            "correct": "Correct",
+            "skip": "Skip",
+            "unreviewed": "—",
+        }.get(verdict or "unreviewed", "—")
+
+    def _deepface_scan_clear_review(self) -> None:
+        try:
+            self.df_scan_photo_lbl.configure(image=None, text="No hit\nselected")
+            self.df_scan_review_name.configure(text="—")
+            self.df_scan_review_meta.configure(
+                text="Select a hit to show the mugshot and decide."
+            )
+            self.df_scan_review_verdict.configure(text="", text_color=C["dim"])
+            for name in (
+                "df_scan_btn_confirm",
+                "df_scan_btn_correct",
+                "df_scan_btn_skip",
+            ):
+                w = getattr(self, name, None)
+                if w is not None:
+                    w.configure(state="disabled")
+        except Exception:
+            pass
+        self._df_scan_selected_iid = None
+
+    def _deepface_scan_show_hit(self, iid: str, hit) -> None:
+        """Populate review pane for one hit (mugshot + actions)."""
+        self._df_scan_selected_iid = iid
+        rec = getattr(hit, "record", None) or {}
+        name = (
+            f"{rec.get('first_name') or ''} {rec.get('last_name') or ''}"
+        ).strip() or (rec.get("full_name") or "—")
+        state = rec.get("state") or rec.get("source_state") or "—"
+        race = getattr(hit, "recorded_race", None) or rec.get("race") or "—"
+        face = getattr(hit, "predicted_label", None) or "—"
+        conf = float(getattr(hit, "confidence", 0) or 0)
+        sev = getattr(hit, "severity", None) or ""
+        reason = getattr(hit, "reason", None) or ""
+        crime = ""
+        for key in ("crime", "offense_description", "offense_type"):
+            if rec.get(key):
+                crime = str(rec.get(key)).strip()
+                break
+        meta_lines = [
+            f"LISTED AS: {race}",
+            f"Face: {face} @ {conf:.0%}{(' · ' + sev) if sev else ''}",
+            f"State: {state}  ·  ID: {rec.get('id') or '—'}",
+        ]
+        if crime:
+            meta_lines.append(f"Crime: {crime[:180]}")
+        if reason:
+            meta_lines.append(reason[:200])
+        try:
+            self.df_scan_review_name.configure(text=name)
+            self.df_scan_review_meta.configure(text="\n".join(meta_lines))
+        except Exception:
+            pass
+
+        # Mugshot
+        photo_path = (rec.get("photo_path") or "").strip()
+        if not photo_path and getattr(hit, "face", None) is not None:
+            photo_path = (getattr(hit.face, "photo_path", None) or "").strip()
+        shown = False
+        if photo_path and Path(photo_path).is_file():
+            try:
+                from PIL import Image
+
+                img = Image.open(photo_path)
+                img.thumbnail((152, 192))
+                ctk_img = ctk.CTkImage(
+                    light_image=img, dark_image=img, size=img.size
+                )
+                if not hasattr(self, "_df_scan_image_refs"):
+                    self._df_scan_image_refs = []
+                self._df_scan_image_refs.append(ctk_img)
+                # keep list bounded
+                if len(self._df_scan_image_refs) > 30:
+                    self._df_scan_image_refs = self._df_scan_image_refs[-15:]
+                self.df_scan_photo_lbl.configure(image=ctk_img, text="")
+                shown = True
+            except Exception:
+                shown = False
+        if not shown:
+            try:
+                self.df_scan_photo_lbl.configure(image=None, text="No photo\non disk")
+            except Exception:
+                pass
+
+        verdict = self._deepface_scan_get_verdict(hit)
+        vcolor = {
+            "confirmed": C["danger"],
+            "correct": C["success"],
+            "skip": C["dim"],
+            "unreviewed": C["muted"],
+        }.get(verdict, C["muted"])
+        vtxt = {
+            "confirmed": "● Confirmed incorrect",
+            "correct": "● Confirmed correct",
+            "skip": "● Skipped",
+            "unreviewed": "○ Unconfirmed — choose below",
+        }.get(verdict, "○ Unconfirmed")
+        try:
+            self.df_scan_review_verdict.configure(text=vtxt, text_color=vcolor)
+            for name in (
+                "df_scan_btn_confirm",
+                "df_scan_btn_correct",
+                "df_scan_btn_skip",
+            ):
+                w = getattr(self, name, None)
+                if w is not None:
+                    w.configure(state="normal")
+        except Exception:
+            pass
+
+    def _deepface_scan_on_select(self, _event=None) -> None:
+        if not hasattr(self, "df_scan_tree"):
+            return
+        try:
+            sel = self.df_scan_tree.selection()
+            if not sel:
+                return
+            iid = sel[0]
+            hit = (getattr(self, "_df_scan_hits_by_iid", {}) or {}).get(iid)
+            if hit is None:
+                return
+            self._deepface_scan_show_hit(iid, hit)
+        except Exception:
+            pass
+
+    def _deepface_scan_set_verdict(self, verdict: str) -> None:
+        """Confirm incorrect / correct / skip for the selected hit (→ Reports)."""
+        iid = getattr(self, "_df_scan_selected_iid", None)
+        hit = (getattr(self, "_df_scan_hits_by_iid", {}) or {}).get(iid) if iid else None
+        if hit is None:
+            # try current tree selection
+            try:
+                sel = self.df_scan_tree.selection()
+                if sel:
+                    iid = sel[0]
+                    hit = self._df_scan_hits_by_iid.get(iid)
+            except Exception:
+                pass
+        if hit is None:
+            self._deepface_scan_log_msg("Select a hit first")
+            return
+        if not hasattr(self, "_report_verdicts") or self._report_verdicts is None:
+            self._report_verdicts = {}
+        key = self._deepface_scan_verdict_key(hit)
+        keys = [key]
+        rec = hit.record or {}
+        rid = rec.get("id")
+        if rid is not None:
+            keys.append(f"id:{rid}")
+        verdict = (verdict or "").strip()
+        if verdict == "unreviewed":
+            for k in keys:
+                self._report_verdicts.pop(k, None)
+        else:
+            for k in keys:
+                self._report_verdicts[k] = verdict
+        if hasattr(self, "_save_report_verdicts"):
+            try:
+                self._save_report_verdicts()
+            except Exception:
+                # fallback write
+                try:
+                    path = ROOT / "data" / "report_verdicts.json"
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text(
+                        json.dumps(self._report_verdicts, indent=2, sort_keys=True),
+                        encoding="utf-8",
+                    )
+                except Exception as e:
+                    self._deepface_scan_log_msg(f"Could not save verdict: {e}")
+                    return
+        # Update tree row
+        if iid and hasattr(self, "df_scan_tree"):
+            try:
+                vals = list(self.df_scan_tree.item(iid, "values") or [])
+                # columns: name state race face conf verdict id
+                if len(vals) >= 6:
+                    vals[5] = self._deepface_scan_verdict_label(verdict)
+                    self.df_scan_tree.item(iid, values=vals)
+            except Exception:
+                pass
+        self._deepface_scan_show_hit(iid, hit)
+        self._deepface_scan_log_msg(
+            f"Verdict {verdict} → {key} "
+            f"({(rec.get('first_name') or '')} {(rec.get('last_name') or '')})".strip()
+        )
+        # Auto-advance to next unreviewed hit
+        self.after(50, self._deepface_scan_next_unreviewed)
+
+    def _deepface_scan_next_unreviewed(self) -> None:
+        if not hasattr(self, "df_scan_tree"):
+            return
+        try:
+            kids = list(self.df_scan_tree.get_children() or [])
+            if not kids:
+                return
+            # Start after current selection
+            start = 0
+            sel = self.df_scan_tree.selection()
+            if sel:
+                try:
+                    start = kids.index(sel[0]) + 1
+                except ValueError:
+                    start = 0
+            order = kids[start:] + kids[:start]
+            for iid in order:
+                hit = (self._df_scan_hits_by_iid or {}).get(iid)
+                if hit is None:
+                    continue
+                if self._deepface_scan_get_verdict(hit) == "unreviewed":
+                    self.df_scan_tree.selection_set(iid)
+                    self.df_scan_tree.focus(iid)
+                    self.df_scan_tree.see(iid)
+                    self._deepface_scan_show_hit(iid, hit)
+                    return
+            self._deepface_scan_log_msg("No unreviewed hits left")
         except Exception:
             pass
 
@@ -511,7 +877,8 @@ class DeepfaceTabMixin:
             name = (
                 f"{rec.get('first_name') or ''} {rec.get('last_name') or ''}"
             ).strip()
-            self.df_scan_tree.insert(
+            verdict = self._deepface_scan_get_verdict(hit)
+            iid = self.df_scan_tree.insert(
                 "",
                 "end",
                 values=(
@@ -520,15 +887,16 @@ class DeepfaceTabMixin:
                     (hit.recorded_race or "—")[:20],
                     hit.predicted_label,
                     f"{float(hit.confidence or 0):.2f}",
-                    hit.severity,
+                    self._deepface_scan_verdict_label(verdict),
                     rec.get("id") or "",
                 ),
             )
+            if not hasattr(self, "_df_scan_hits_by_iid"):
+                self._df_scan_hits_by_iid = {}
+            self._df_scan_hits_by_iid[iid] = hit
             # Keep newest hits visible
             try:
-                kids = self.df_scan_tree.get_children()
-                if kids:
-                    self.df_scan_tree.see(kids[-1])
+                self.df_scan_tree.see(iid)
             except Exception:
                 pass
             if not hasattr(self, "_df_scan_hits") or self._df_scan_hits is None:
@@ -540,6 +908,19 @@ class DeepfaceTabMixin:
                     text=f"Live · {n:,} hits",
                     text_color=C["text"],
                 )
+            except Exception:
+                pass
+            # Auto-open first unreviewed hit for immediate review
+            try:
+                sel = self.df_scan_tree.selection()
+                if not sel and verdict == "unreviewed":
+                    self.df_scan_tree.selection_set(iid)
+                    self.df_scan_tree.focus(iid)
+                    self._deepface_scan_show_hit(iid, hit)
+                elif not sel:
+                    self.df_scan_tree.selection_set(iid)
+                    self.df_scan_tree.focus(iid)
+                    self._deepface_scan_show_hit(iid, hit)
             except Exception:
                 pass
         except Exception:
@@ -560,9 +941,13 @@ class DeepfaceTabMixin:
         self._df_scan_cancel = False
         self._df_scan_hits = []
         self._df_scan_hit_ids = set()
+        self._df_scan_hits_by_iid = {}
+        self._df_scan_selected_iid = None
+        self._df_scan_image_refs = []
         try:
             self.df_scan_tree.delete(*self.df_scan_tree.get_children())
             self.df_scan_progress.set(0)
+            self._deepface_scan_clear_review()
         except Exception:
             pass
         self._deepface_scan_set_busy(True)
