@@ -173,19 +173,15 @@ class DeepfaceTabMixin:
         _section_label(w_card, "Weights & face detector").pack(
             anchor="w", padx=14, pady=(12, 4)
         )
-        _muted(
-            w_card,
-            "Race scoring needs the Race model. The detector finds the face before race "
-            "is predicted. Optional models are larger downloads and not required for "
-            "mugshot race mismatch tools.",
-        ).pack(anchor="w", padx=14, pady=(0, 8))
-
         from scraper.mugshot_ethnicity.weights_catalog import (
             DETECTOR_OPTIONS,
+            DOWNLOAD_GUIDANCE,
             WEIGHT_MODELS,
             explain_detector,
             explain_weight,
         )
+
+        _muted(w_card, DOWNLOAD_GUIDANCE).pack(anchor="w", padx=14, pady=(0, 8))
 
         det_default = str(sett.get("deepface_detector") or "retinaface")
         det_labels = [d["label"] for d in DETECTOR_OPTIONS]
@@ -259,6 +255,7 @@ class DeepfaceTabMixin:
             self._df_weight_vars[mid] = var
             row = ctk.CTkFrame(parent, fg_color=C["elevated"], corner_radius=8)
             row.pack(fill="x", pady=3)
+            vram = m.get("vram") or ""
             cb = ctk.CTkCheckBox(
                 row,
                 text=f"{m['label']}  ·  {m['size']}",
@@ -280,7 +277,7 @@ class DeepfaceTabMixin:
                     pass
             ctk.CTkLabel(
                 row,
-                text=m["summary"],
+                text=f"{m['summary']}\nVRAM: {vram}" if vram else m["summary"],
                 font=FONT_SM,
                 text_color=C["dim"],
                 anchor="w",
@@ -333,18 +330,19 @@ class DeepfaceTabMixin:
             return
 
         def _wheel(event):
+            # Faster scroll: several units per notch (default 1 feels sluggish)
             delta = getattr(event, "delta", 0) or 0
             if delta:
                 steps = int(-1 * (delta / 120)) if abs(delta) >= 120 else int(-1 * delta)
                 if steps == 0:
                     steps = -1 if delta > 0 else 1
-                canvas.yview_scroll(steps, "units")
+                canvas.yview_scroll(steps * 5, "units")
             else:
                 num = getattr(event, "num", 0)
                 if num == 4:
-                    canvas.yview_scroll(-3, "units")
+                    canvas.yview_scroll(-8, "units")
                 elif num == 5:
-                    canvas.yview_scroll(3, "units")
+                    canvas.yview_scroll(8, "units")
             return "break"
 
         def _walk(w):
