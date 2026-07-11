@@ -177,23 +177,41 @@ class DeepfaceTabMixin:
             DETECTOR_OPTIONS,
             DOWNLOAD_GUIDANCE,
             WEIGHT_MODELS,
+            detector_dropdown_label,
             explain_detector,
             explain_weight,
         )
 
-        _muted(w_card, DOWNLOAD_GUIDANCE).pack(anchor="w", padx=14, pady=(0, 8))
+        guide = ctk.CTkLabel(
+            w_card,
+            text=DOWNLOAD_GUIDANCE,
+            font=FONT_SM,
+            text_color=C["muted"],
+            anchor="w",
+            justify="left",
+            wraplength=920,
+        )
+        guide.pack(fill="x", padx=14, pady=(0, 10))
 
         det_default = str(sett.get("deepface_detector") or "retinaface")
-        det_labels = [d["label"] for d in DETECTOR_OPTIONS]
-        det_id_by_label = {d["label"]: d["id"] for d in DETECTOR_OPTIONS}
-        label_by_det_id = {d["id"]: d["label"] for d in DETECTOR_OPTIONS}
+        # Dropdown shows name + VRAM so the face-detector option itself reports usage
+        det_labels = [detector_dropdown_label(d) for d in DETECTOR_OPTIONS]
+        det_id_by_label = {
+            detector_dropdown_label(d): d["id"] for d in DETECTOR_OPTIONS
+        }
+        label_by_det_id = {
+            d["id"]: detector_dropdown_label(d) for d in DETECTOR_OPTIONS
+        }
         self._df_det_id_by_label = det_id_by_label
         self._df_label_by_det_id = label_by_det_id
 
         det_row = ctk.CTkFrame(w_card, fg_color="transparent")
         det_row.pack(fill="x", padx=14, pady=(0, 6))
         ctk.CTkLabel(
-            det_row, text="Face detector", font=FONT_SM, text_color=C["muted"]
+            det_row,
+            text="Face detector (one only · VRAM shown)",
+            font=FONT_SM,
+            text_color=C["muted"],
         ).pack(side="left", padx=(0, 8))
         self.df_detector_var = ctk.StringVar(
             value=label_by_det_id.get(det_default, det_labels[0])
@@ -202,7 +220,7 @@ class DeepfaceTabMixin:
             det_row,
             variable=self.df_detector_var,
             values=det_labels,
-            width=280,
+            width=420,
             fg_color=C["bg"],
             border_color=C["border"],
             button_color=C["elevated"],
@@ -224,10 +242,15 @@ class DeepfaceTabMixin:
 
         ctk.CTkLabel(
             w_card,
-            text="Model weights to download (check then click Download selected weights)",
+            text=(
+                "Model weights (check boxes, then Download selected weights). "
+                "Race alone is enough for ethnicity tools."
+            ),
             font=FONT_SM,
             text_color=C["muted"],
             anchor="w",
+            wraplength=920,
+            justify="left",
         ).pack(fill="x", padx=14, pady=(4, 4))
 
         saved_models = {
@@ -255,10 +278,11 @@ class DeepfaceTabMixin:
             self._df_weight_vars[mid] = var
             row = ctk.CTkFrame(parent, fg_color=C["elevated"], corner_radius=8)
             row.pack(fill="x", pady=3)
-            vram = m.get("vram") or ""
+            vram = m.get("vram_short") or m.get("vram") or ""
+            size = m.get("size") or ""
             cb = ctk.CTkCheckBox(
                 row,
-                text=f"{m['label']}  ·  {m['size']}",
+                text=f"{m['label']}  ·  {size}" + (f"  ·  {vram}" if vram else ""),
                 variable=var,
                 font=FONT_SM,
                 text_color=C["text"],
@@ -275,9 +299,14 @@ class DeepfaceTabMixin:
                     cb.configure(state="disabled")
                 except Exception:
                     pass
+            cat = m.get("category") or ""
+            cat_note = {
+                "attribute": "Attribute model",
+                "recognition": "Identity model (not race)",
+            }.get(cat, cat)
             ctk.CTkLabel(
                 row,
-                text=f"{m['summary']}\nVRAM: {vram}" if vram else m["summary"],
+                text=f"{m['summary']}\n{cat_note} · disk {size} · load {vram}",
                 font=FONT_SM,
                 text_color=C["dim"],
                 anchor="w",
@@ -323,26 +352,48 @@ class DeepfaceTabMixin:
         self.after(200, lambda: self._deepface_bind_scroll_children(tab, root))
 
     def _deepface_bind_scroll_children(self, tab, scroll_frame) -> None:
-        """Ensure mouse-wheel scrolls the tab when hovering cards/checkboxes."""
+        """Fast mouse-wheel scrolling over the full DeepFace tab content."""
         try:
             canvas = scroll_frame._parent_canvas  # type: ignore[attr-defined]
         except Exception:
             return
 
+        # Fraction of the visible page to move per wheel notch (~18% feels snappy)
+        PAGE_FRAC = 0.18
+
+        def _scroll_by_notches(notches: int) -> None:
+            if notches == 0:
+                return
+            try:
+                first, last = canvas.yview()
+            except Exception:
+                canvas.yview_scroll(notches * 12, "units")
+                return
+            page = max(last - first, 0.05)
+            # Move ~PAGE_FRAC of the visible page per notch (not tiny Tk "units")
+            step = notches * max(PAGE_FRAC * page, 0.08)
+            try:
+                canvas.yview_moveto(max(0.0, min(1.0, first + step)))
+            except Exception:
+                canvas.yview_scroll(notches * 12, "units")
+
         def _wheel(event):
-            # Faster scroll: several units per notch (default 1 feels sluggish)
             delta = getattr(event, "delta", 0) or 0
             if delta:
-                steps = int(-1 * (delta / 120)) if abs(delta) >= 120 else int(-1 * delta)
-                if steps == 0:
-                    steps = -1 if delta > 0 else 1
-                canvas.yview_scroll(steps * 5, "units")
+                # Windows: multiples of 120; high-res trackpads may send smaller values
+                if abs(delta) >= 120:
+                    notches = int(-delta / 120)
+                else:
+                    notches = -1 if delta > 0 else 1
+                if notches == 0:
+                    notches = -1 if delta > 0 else 1
+                _scroll_by_notches(notches)
             else:
                 num = getattr(event, "num", 0)
                 if num == 4:
-                    canvas.yview_scroll(-8, "units")
+                    _scroll_by_notches(-1)
                 elif num == 5:
-                    canvas.yview_scroll(8, "units")
+                    _scroll_by_notches(1)
             return "break"
 
         def _walk(w):
@@ -353,9 +404,10 @@ class DeepfaceTabMixin:
             except Exception:
                 pass
             try:
-                w.bind("<MouseWheel>", _wheel, add="+")
-                w.bind("<Button-4>", _wheel, add="+")
-                w.bind("<Button-5>", _wheel, add="+")
+                # Replace prior bindings so we don't stack slow + fast handlers
+                w.bind("<MouseWheel>", _wheel)
+                w.bind("<Button-4>", _wheel)
+                w.bind("<Button-5>", _wheel)
             except Exception:
                 pass
             try:
@@ -367,6 +419,21 @@ class DeepfaceTabMixin:
         try:
             _walk(tab)
             _walk(scroll_frame)
+            # Also re-wire the scroll frame's own canvas/parent (wire_wide_scroll is slow)
+            for w in (
+                tab,
+                getattr(scroll_frame, "_parent_frame", None),
+                canvas,
+                scroll_frame,
+            ):
+                if w is None:
+                    continue
+                try:
+                    w.bind("<MouseWheel>", _wheel)
+                    w.bind("<Button-4>", _wheel)
+                    w.bind("<Button-5>", _wheel)
+                except Exception:
+                    pass
         except Exception:
             pass
 
