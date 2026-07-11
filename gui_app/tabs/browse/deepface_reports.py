@@ -200,27 +200,42 @@ class DeepfaceReportsTabMixin:
         rev_body.pack(fill="both", expand=True, padx=12, pady=(0, 8))
         rev_body.grid_columnconfigure(0, weight=1)
 
-        # Must stay pure CTk (tk.Label nested in CTk often never paints images)
+        # Photo host: fixed-size tk.Canvas (most reliable image surface under CTk)
+        self._DFR_PHOTO_W = 360
+        self._DFR_PHOTO_H = 300
         photo_wrap = ctk.CTkFrame(
             rev_body,
             fg_color=C["tree_bg"],
             corner_radius=10,
-            height=320,
+            width=self._DFR_PHOTO_W + 16,
+            height=self._DFR_PHOTO_H + 16,
             border_width=1,
             border_color=C["border"],
         )
         photo_wrap.pack(fill="x", pady=(0, 8))
         photo_wrap.pack_propagate(False)
         self.dfr_photo_wrap = photo_wrap
-        self.dfr_photo = ctk.CTkLabel(
+        # Canvas is a real Tk drawing surface — CTkLabel/CTkImage stays blank here
+        self.dfr_photo_canvas = tk.Canvas(
             photo_wrap,
-            text="Select a hit",
-            font=FONT_SM,
-            text_color=C["dim"],
-            fg_color=C["tree_bg"],
+            width=self._DFR_PHOTO_W,
+            height=self._DFR_PHOTO_H,
+            bg=C["tree_bg"],
+            highlightthickness=0,
+            bd=0,
         )
-        self.dfr_photo.place(relx=0.5, rely=0.5, anchor="center")
-        self._dfr_photo_img = None  # active CTkImage — keep ref
+        self.dfr_photo_canvas.place(relx=0.5, rely=0.5, anchor="center")
+        self.dfr_photo_canvas.create_text(
+            self._DFR_PHOTO_W // 2,
+            self._DFR_PHOTO_H // 2,
+            text="Select a hit",
+            fill=C["dim"],
+            font=("Segoe UI", 11),
+            tags=("placeholder",),
+        )
+        self._dfr_photo_tk = None
+        # Keep alias so older clear code doesn't break
+        self.dfr_photo = self.dfr_photo_canvas
 
         self.dfr_name = ctk.CTkLabel(
             rev_body, text="—", font=FONT_TITLE, text_color=C["text"], anchor="w",
@@ -487,49 +502,77 @@ class DeepfaceReportsTabMixin:
 
     def _dfr_set_photo_placeholder(self, text: str = "Select a hit") -> None:
         try:
-            self._dfr_photo_img = None
-            self.dfr_photo.configure(image=None, text=text)
-            self.dfr_photo.place(relx=0.5, rely=0.5, anchor="center")
+            self._dfr_photo_tk = None
+            cv = getattr(self, "dfr_photo_canvas", None)
+            if cv is None:
+                return
+            cv.delete("all")
+            cv.create_text(
+                int(cv.cget("width") or 360) // 2,
+                int(cv.cget("height") or 300) // 2,
+                text=text,
+                fill=C["dim"],
+                font=("Segoe UI", 11),
+                tags=("placeholder",),
+                width=int(cv.cget("width") or 360) - 20,
+                justify="center",
+            )
         except Exception:
             pass
 
     def _dfr_set_photo_image(self, path: Path) -> tuple[bool, str]:
-        """Load mugshot into the review CTkLabel. Returns (ok, message)."""
+        """Paint mugshot onto the review Canvas. Returns (ok, message)."""
         try:
-            from PIL import Image
+            from PIL import Image, ImageTk
         except Exception as e:
             return False, f"PIL missing: {e}"
 
+        cv = getattr(self, "dfr_photo_canvas", None)
+        if cv is None:
+            return False, "photo canvas missing"
+
         try:
             with Image.open(path) as raw:
-                img = raw.convert("RGB")  # grayscale "L" → RGB required by CTkImage
-            # Target display size (always readable in the 320px-tall box)
-            max_w, max_h = 340, 300
-            img.thumbnail((max_w, max_h))
+                img = raw.convert("RGB")
+            max_w = int(getattr(self, "_DFR_PHOTO_W", 360) or 360)
+            max_h = int(getattr(self, "_DFR_PHOTO_H", 300) or 300)
+            img.thumbnail((max_w - 8, max_h - 8))
             w, h = img.size
-            if w < 160 or h < 160:
-                scale = max(160 / max(w, 1), 160 / max(h, 1))
-                w = min(max_w, max(1, int(w * scale)))
-                h = min(max_h, max(1, int(h * scale)))
+            if w < 140 or h < 140:
+                scale = max(140 / max(w, 1), 140 / max(h, 1))
+                w = min(max_w - 8, max(1, int(w * scale)))
+                h = min(max_h - 8, max(1, int(h * scale)))
                 try:
                     resample = Image.Resampling.BILINEAR
                 except AttributeError:
                     resample = Image.BILINEAR  # type: ignore[attr-defined]
                 img = img.resize((w, h), resample)
-            # Copy pixels so PIL file handle is fully released
             img = img.copy()
-            ctk_img = ctk.CTkImage(light_image=img, dark_image=img, size=(w, h))
-            # Keep strong refs (list + attribute) — GC clears blank images otherwise
-            self._dfr_photo_img = ctk_img
+
+            # master must be the live Tk root (CTk window)
+            try:
+                master = cv.winfo_toplevel()
+            except Exception:
+                master = cv
+            photo = ImageTk.PhotoImage(img, master=master)
+            # Strong refs — Tk drops the bitmap if PhotoImage is GC'd
+            self._dfr_photo_tk = photo
             if not hasattr(self, "_dfr_image_refs") or self._dfr_image_refs is None:
                 self._dfr_image_refs = []
-            self._dfr_image_refs.append(ctk_img)
-            if len(self._dfr_image_refs) > 24:
-                self._dfr_image_refs = self._dfr_image_refs[-12:]
-            self.dfr_photo.configure(image=ctk_img, text="")
-            self.dfr_photo.place(relx=0.5, rely=0.5, anchor="center")
+            self._dfr_image_refs.append(photo)
+
+            cv.delete("all")
+            cv.create_image(
+                max_w // 2,
+                max_h // 2,
+                image=photo,
+                anchor="center",
+                tags=("mugshot",),
+            )
+            # Keep a ref on the canvas too (Tk idiom)
+            cv.image = photo  # type: ignore[attr-defined]
             try:
-                self.dfr_photo_wrap.update_idletasks()
+                cv.update_idletasks()
             except Exception:
                 pass
             return True, f"{path.name} ({w}x{h})"
