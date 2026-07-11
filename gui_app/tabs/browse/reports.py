@@ -1107,7 +1107,9 @@ class ReportsTabMixin:
         rec = dict(mc.record or {})
         verdict = self._verdict_for_mc(mc)
         first = (rec.get("first_name") or "").strip()
+        middle = (rec.get("middle_name") or "").strip()
         last = (rec.get("last_name") or "").strip()
+        # List: first + last; grid builds display name with middle initial
         name = (
             " ".join(p for p in (first, last) if p)
             or (rec.get("full_name") or "—")
@@ -1131,7 +1133,8 @@ class ReportsTabMixin:
         if grid:
             return self._reports_add_grid_tile(
                 parent, mc, rec,
-                name=name, state=state, race=race, eth=eth, conf=conf,
+                first=first, middle=middle, last=last,
+                state=state, race=race, conf=conf,
                 crime=crime, df=df, photo_path=photo_path, has_photo=has_photo,
                 verdict=verdict, border=border, index=index,
             )
@@ -1308,16 +1311,96 @@ class ReportsTabMixin:
         ).pack(side="right")
         return card
 
+    @staticmethod
+    def _reports_grid_display_name(
+        first: str, middle: str, last: str, full_name: str = "", *, max_len: int = 28
+    ) -> str:
+        """Full legal name for grid: First M. Last; shorten middle to fit."""
+        first = (first or "").strip()
+        middle = (middle or "").strip()
+        last = (last or "").strip()
+        if not first and not last:
+            base = (full_name or "—").strip() or "—"
+            return base if len(base) <= max_len else base[: max_len - 1] + "…"
+
+        def _join(mid: str) -> str:
+            parts = [p for p in (first, mid, last) if p]
+            return " ".join(parts)
+
+        # Prefer full middle name if it fits
+        full_mid = _join(middle)
+        if len(full_mid) <= max_len:
+            return full_mid
+        # Middle initial
+        if middle:
+            initial = middle[0].upper() + "."
+            with_init = _join(initial)
+            if len(with_init) <= max_len:
+                return with_init
+        # Drop middle
+        no_mid = _join("")
+        if len(no_mid) <= max_len:
+            return no_mid
+        # Truncate last segment carefully — keep first + start of last
+        if first and last:
+            room = max_len - len(first) - 2  # space + …
+            if room > 2:
+                return f"{first} {last[:room]}…"
+            return (first[: max_len - 1] + "…") if len(first) > max_len else first
+        return (no_mid[: max_len - 1] + "…") if len(no_mid) > max_len else no_mid
+
+    @staticmethod
+    def _reports_abbreviate_crime(crime: str, *, max_len: int = 42) -> str:
+        """Short crime line for grid tiles — drop boilerplate, compress words."""
+        s = (crime or "").strip()
+        if not s:
+            return ""
+        # Normalize whitespace
+        s = " ".join(s.split())
+        # Drop common statute prefixes / noise
+        for prefix in (
+            "Convicted of ",
+            "Conviction: ",
+            "Offense: ",
+            "Crime: ",
+            "Charge: ",
+            "Charges: ",
+        ):
+            if s.lower().startswith(prefix.lower()):
+                s = s[len(prefix) :].strip()
+        # Collapse long statutory citations slightly
+        import re
+
+        s = re.sub(r"\bSection\s+", "§", s, flags=re.I)
+        s = re.sub(r"\bsubsection\s+", "sub§", s, flags=re.I)
+        s = re.sub(r"\bCount\s+(\d+)\b", r"Ct.\1", s, flags=re.I)
+        # Prefer text before first semicolon / pipe if long
+        if len(s) > max_len:
+            for sep in (";", "|", " - ", " — "):
+                if sep in s:
+                    head = s.split(sep, 1)[0].strip()
+                    if len(head) >= 12:
+                        s = head
+                        break
+        if len(s) <= max_len:
+            return s
+        # Word-boundary trim
+        cut = s[: max_len - 1]
+        if " " in cut:
+            cut = cut.rsplit(" ", 1)[0]
+        return cut.rstrip(" ,;:") + "…"
+
     def _reports_add_grid_tile(
         self,
         parent,
         mc,
         rec,
         *,
-        name: str,
+        first: str,
+        middle: str,
+        last: str,
         state: str,
         race: str,
-        eth: str,
         conf: float,
         crime: str,
         df: dict,
@@ -1327,7 +1410,7 @@ class ReportsTabMixin:
         border: str,
         index: int,
     ):
-        """Dense tile for grid view."""
+        """Dense tile for grid view (no surname-ethnicity line)."""
         card = ctk.CTkFrame(
             parent,
             fg_color=C["panel"],
@@ -1335,12 +1418,12 @@ class ReportsTabMixin:
             border_width=1,
             corner_radius=8,
             width=168,
-            height=260,
+            height=268,
         )
         card.grid_propagate(False)
 
         photo_wrap = ctk.CTkFrame(
-            card, fg_color=C["tree_bg"], corner_radius=6, height=130,
+            card, fg_color=C["tree_bg"], corner_radius=6, height=120,
         )
         photo_wrap.pack(fill="x", padx=6, pady=(6, 4))
         photo_wrap.pack_propagate(False)
@@ -1349,16 +1432,26 @@ class ReportsTabMixin:
         )
         photo_lbl.place(relx=0.5, rely=0.5, anchor="center")
         if has_photo:
-            thumb = self._reports_load_thumb(photo_path, (150, 128))
+            thumb = self._reports_load_thumb(photo_path, (150, 118))
             if thumb is not None:
                 photo_lbl.configure(image=thumb, text="")
 
+        # Full name (middle abbreviated as needed) — wrap up to 2 lines
+        display_name = self._reports_grid_display_name(
+            first,
+            middle,
+            last,
+            str(rec.get("full_name") or ""),
+            max_len=34,
+        )
         ctk.CTkLabel(
             card,
-            text=(name[:22] + ("…" if len(name) > 22 else "")),
+            text=display_name,
             font=FONT_BOLD,
             text_color=C["text"],
             anchor="w",
+            justify="left",
+            wraplength=150,
         ).pack(fill="x", padx=8)
         ctk.CTkLabel(
             card,
@@ -1367,25 +1460,33 @@ class ReportsTabMixin:
             text_color=C["danger"],
             anchor="w",
         ).pack(fill="x", padx=8)
+        # Face / conf / state only — no surname ethnicity
         face_bit = ""
         if df:
             flab = df.get("predicted_label") or df.get("top_label") or ""
+            fconf = df.get("top_confidence")
             if flab:
-                face_bit = f" · face {flab}"
+                try:
+                    face_bit = f" · face {flab}@{float(fconf):.0%}"
+                except (TypeError, ValueError):
+                    face_bit = f" · face {flab}"
         ctk.CTkLabel(
             card,
-            text=f"vs {eth} · {conf:.2f} · {state}{face_bit}",
+            text=f"{conf:.2f} · {state}{face_bit}",
             font=FONT_SM,
             text_color=C["muted"],
             anchor="w",
         ).pack(fill="x", padx=8)
-        if crime:
+        crime_short = self._reports_abbreviate_crime(crime, max_len=38)
+        if crime_short:
             ctk.CTkLabel(
                 card,
-                text=(crime[:40] + ("…" if len(crime) > 40 else "")),
+                text=crime_short,
                 font=FONT_SM,
                 text_color=C["dim"],
                 anchor="w",
+                justify="left",
+                wraplength=150,
             ).pack(fill="x", padx=8)
 
         status_lbl = ctk.CTkLabel(
