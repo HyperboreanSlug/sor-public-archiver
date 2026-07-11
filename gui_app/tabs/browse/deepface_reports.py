@@ -200,14 +200,16 @@ class DeepfaceReportsTabMixin:
         rev_body.grid_columnconfigure(0, weight=1)
 
         photo_wrap = ctk.CTkFrame(
-            rev_body, fg_color=C["tree_bg"], corner_radius=10, height=240,
+            rev_body, fg_color=C["tree_bg"], corner_radius=10, height=280,
         )
         photo_wrap.pack(fill="x", pady=(0, 8))
         photo_wrap.pack_propagate(False)
+        self.dfr_photo_wrap = photo_wrap
         self.dfr_photo = ctk.CTkLabel(
             photo_wrap, text="Select a hit", font=FONT_SM, text_color=C["dim"],
         )
-        self.dfr_photo.place(relx=0.5, rely=0.5, anchor="center")
+        # pack (not place) so CTkImage lays out reliably inside the frame
+        self.dfr_photo.pack(expand=True, fill="both", padx=4, pady=4)
 
         self.dfr_name = ctk.CTkLabel(
             rev_body, text="—", font=FONT_TITLE, text_color=C["text"], anchor="w",
@@ -445,6 +447,33 @@ class DeepfaceReportsTabMixin:
     # ------------------------------------------------------------------
     # Review
     # ------------------------------------------------------------------
+    @staticmethod
+    def _dfr_resolve_photo_path(raw: Optional[str]) -> Optional[Path]:
+        """Resolve relative mugshot paths against project ROOT and cwd."""
+        s = (raw or "").strip()
+        if not s:
+            return None
+        candidates = [
+            Path(s),
+            Path(s.replace("/", "\\")),
+            Path(s.replace("\\", "/")),
+            ROOT / s,
+            ROOT / s.replace("\\", "/"),
+            Path.cwd() / s,
+            Path.cwd() / s.replace("\\", "/"),
+        ]
+        # Also try under data/ if path is just a filename
+        name = Path(s).name
+        if name and name != s:
+            candidates.append(ROOT / "data" / "report_pages" / name)
+        for p in candidates:
+            try:
+                if p.is_file() and p.stat().st_size > 0:
+                    return p.resolve()
+            except OSError:
+                continue
+        return None
+
     def _dfr_clear_review(self) -> None:
         try:
             self.dfr_photo.configure(image=None, text="Select a hit")
@@ -500,31 +529,62 @@ class DeepfaceReportsTabMixin:
             lines.append(f"Crime: {crime[:200]}")
         if reason:
             lines.append(str(reason)[:220])
+
+        photo_raw = (rec.get("photo_path") or "").strip()
+        photo_path = self._dfr_resolve_photo_path(photo_raw)
+        if photo_path:
+            lines.append(f"Photo: {photo_path.name}")
+        elif photo_raw:
+            lines.append(f"Photo missing: {photo_raw}")
+        else:
+            lines.append("Photo: (no path on record)")
+
         try:
             self.dfr_name.configure(text=name)
             self.dfr_meta.configure(text="\n".join(lines))
         except Exception:
             pass
 
-        photo = (rec.get("photo_path") or "").strip()
         shown = False
-        if photo and Path(photo).is_file():
+        err_txt = "No photo on disk"
+        if photo_path is not None:
             try:
                 from PIL import Image
 
-                img = Image.open(photo)
-                img.thumbnail((340, 320))
-                ctk_img = ctk.CTkImage(light_image=img, dark_image=img, size=img.size)
+                img = Image.open(photo_path)
+                # Convert palette/RGBA quirks so CTkImage always works
+                if img.mode not in ("RGB", "RGBA"):
+                    img = img.convert("RGB")
+                # Fit into review pane; force a readable display size
+                max_w, max_h = 360, 270
+                img.thumbnail((max_w, max_h))
+                disp_w, disp_h = img.size
+                # Upscale tiny registry thumbs so the box isn't empty-looking
+                if disp_w < 120 or disp_h < 120:
+                    scale = max(120 / max(disp_w, 1), 120 / max(disp_h, 1))
+                    disp_w = min(max_w, int(disp_w * scale))
+                    disp_h = min(max_h, int(disp_h * scale))
+                    try:
+                        resample = Image.Resampling.BILINEAR
+                    except AttributeError:
+                        resample = Image.BILINEAR  # type: ignore[attr-defined]
+                    img = img.resize((disp_w, disp_h), resample)
+                ctk_img = ctk.CTkImage(
+                    light_image=img, dark_image=img, size=(disp_w, disp_h)
+                )
+                if not hasattr(self, "_dfr_image_refs") or self._dfr_image_refs is None:
+                    self._dfr_image_refs = []
                 self._dfr_image_refs.append(ctk_img)
                 if len(self._dfr_image_refs) > 20:
                     self._dfr_image_refs = self._dfr_image_refs[-12:]
                 self.dfr_photo.configure(image=ctk_img, text="")
                 shown = True
-            except Exception:
+            except Exception as e:
+                err_txt = f"Photo error:\n{type(e).__name__}"
                 shown = False
         if not shown:
             try:
-                self.dfr_photo.configure(image=None, text="No photo on disk")
+                self.dfr_photo.configure(image=None, text=err_txt)
             except Exception:
                 pass
 
