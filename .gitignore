@@ -59,6 +59,11 @@ SOR_Archives/
 *.db
 *.sqlite
 *.sqlite3
+# Local scrubbed copies used when publishing (release assets live on GitHub Releases)
+releases/*.db
+releases/*.db.zip
+releases/*_scrubbed.db
+!releases/MANIFEST.json
 
 # Logs and local notes
 *.log

@@ -27,6 +27,12 @@ DEFAULTS: Dict[str, Any] = {
     # DeepFace (local mugshot race model) — controlled on DeepFace tab
     "deepface_auto_setup": True,
     "deepface_auto_warm": True,
+    # Public database sync from GitHub Releases (no local user PII in archives)
+    "db_sync_enabled": False,
+    "db_sync_prompted": False,
+    "db_sync_on_startup": True,
+    "db_sync_repo": "HyperboreanSlug/sor-public-archiver",
+    "db_sync_tag": "database-latest",
 }
 
 
@@ -69,6 +75,17 @@ def normalize_settings(s: Dict[str, Any]) -> Dict[str, Any]:
     out["nsopw_compact_prefixes"] = bool(out.get("nsopw_compact_prefixes", True))
     out["deepface_auto_setup"] = bool(out.get("deepface_auto_setup", True))
     out["deepface_auto_warm"] = bool(out.get("deepface_auto_warm", True))
+    out["db_sync_enabled"] = bool(out.get("db_sync_enabled", False))
+    out["db_sync_prompted"] = bool(out.get("db_sync_prompted", False))
+    out["db_sync_on_startup"] = bool(out.get("db_sync_on_startup", True))
+    out["db_sync_repo"] = (
+        str(out.get("db_sync_repo") or DEFAULTS["db_sync_repo"]).strip()
+        or DEFAULTS["db_sync_repo"]
+    )
+    out["db_sync_tag"] = (
+        str(out.get("db_sync_tag") or DEFAULTS["db_sync_tag"]).strip()
+        or DEFAULTS["db_sync_tag"]
+    )
 
     try:
         mb = int(out.get("max_backups", 10))

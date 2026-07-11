@@ -18,23 +18,23 @@ from gui_app.theme import (
     FONT_SM,
     FONT_TITLE,
 )
-from gui_app.widgets import _card, _muted, _section_label, _wire_wide_scroll
+from gui_app.widgets import _card, _muted, _section_label
 from gui_app.paths import ROOT
 
 
 class DeepfaceTabMixin:
     def _build_deepface(self, tab):
+        """Full-area DeepFace status / options / activity (fills the tab)."""
         tab.configure(fg_color=C["surface"])
-        tab.grid_columnconfigure(0, weight=1)
-        tab.grid_rowconfigure(1, weight=1)
+        # Outer fills entire tab client area
+        root = ctk.CTkFrame(tab, fg_color=C["surface"], corner_radius=0)
+        root.pack(fill="both", expand=True, padx=10, pady=10)
+        root.grid_columnconfigure(0, weight=1)
+        root.grid_rowconfigure(2, weight=1)
 
-        scroll = ctk.CTkScrollableFrame(tab, fg_color=C["surface"])
-        scroll.grid(row=0, column=0, sticky="nsew", padx=8, pady=(8, 4))
-        _wire_wide_scroll(tab, scroll)
-
-        # --- Status ---
-        status_card = _card(scroll)
-        status_card.pack(fill="x", padx=4, pady=(4, 8))
+        # --- Status (top, full width) ---
+        status_card = _card(root)
+        status_card.grid(row=0, column=0, sticky="ew", pady=(0, 8))
         _section_label(status_card, "DeepFace status").pack(
             anchor="w", padx=14, pady=(12, 4)
         )
@@ -61,7 +61,7 @@ class DeepfaceTabMixin:
             font=FONT_MONO,
             text_color=C["dim"],
             anchor="w",
-            wraplength=720,
+            wraplength=900,
             justify="left",
         )
         self.df_status_python.pack(fill="x", padx=14, pady=(2, 4))
@@ -91,9 +91,9 @@ class DeepfaceTabMixin:
             border_width=1, border_color=C["border"],
         ).pack(side="left")
 
-        # --- Options ---
-        opt_card = _card(scroll)
-        opt_card.pack(fill="x", padx=4, pady=(0, 8))
+        # --- Options (full width) ---
+        opt_card = _card(root)
+        opt_card.grid(row=1, column=0, sticky="ew", pady=(0, 8))
         _section_label(opt_card, "Setup options").pack(
             anchor="w", padx=14, pady=(12, 4)
         )
@@ -136,7 +136,7 @@ class DeepfaceTabMixin:
         ).pack(anchor="w", padx=14, pady=(0, 10))
 
         act = ctk.CTkFrame(opt_card, fg_color="transparent")
-        act.pack(fill="x", padx=14, pady=(0, 12))
+        act.pack(fill="x", padx=14, pady=(0, 8))
         self.df_install_btn = ctk.CTkButton(
             act, text="Install / repair now", width=150,
             command=lambda: self._deepface_run_setup(warm=True),
@@ -162,15 +162,16 @@ class DeepfaceTabMixin:
         )
         self.df_job_status.pack(fill="x", padx=14, pady=(0, 12))
 
-        # --- Activity log for this tab ---
-        log_card = _card(scroll)
-        log_card.pack(fill="both", expand=True, padx=4, pady=(0, 8))
-        _section_label(log_card, "Setup activity").pack(
-            anchor="w", padx=14, pady=(12, 4)
+        # --- Activity log fills all remaining height ---
+        log_card = _card(root)
+        log_card.grid(row=2, column=0, sticky="nsew")
+        log_card.grid_columnconfigure(0, weight=1)
+        log_card.grid_rowconfigure(1, weight=1)
+        _section_label(log_card, "Setup activity").grid(
+            row=0, column=0, sticky="w", padx=14, pady=(12, 4)
         )
         self.df_log = ctk.CTkTextbox(
             log_card,
-            height=180,
             font=FONT_MONO,
             fg_color=C["bg"],
             text_color=C["muted"],
@@ -178,7 +179,7 @@ class DeepfaceTabMixin:
             border_width=1,
             corner_radius=8,
         )
-        self.df_log.pack(fill="both", expand=True, padx=12, pady=(0, 12))
+        self.df_log.grid(row=1, column=0, sticky="nsew", padx=12, pady=(0, 12))
         self.df_log.configure(state="disabled")
         self._df_log_queue: queue.Queue = queue.Queue()
         self._df_setup_running = False

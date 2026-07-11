@@ -90,6 +90,87 @@ class SettingsTabMixin:
             border_color=C["border"],
         ).pack(side="left")
 
+        # --- Public database sync (GitHub Releases) ---
+        sync_card = _card(scroll)
+        sync_card.pack(fill="x", padx=4, pady=(0, 8))
+        _section_label(sync_card, "Public database (GitHub)").pack(
+            anchor="w", padx=14, pady=(12, 4)
+        )
+        _muted(
+            sync_card,
+            "Optional: download the shared public offenders archive from GitHub Releases. "
+            "Archives use project-relative paths only (no local user-profile paths). "
+            "When enabled, the app checks for updates on every open.",
+        ).pack(anchor="w", padx=14, pady=(0, 8))
+
+        self.settings_db_sync_enabled = ctk.BooleanVar(
+            value=bool(self.app_settings.get("db_sync_enabled", False))
+        )
+        self.settings_db_sync_on_startup = ctk.BooleanVar(
+            value=bool(self.app_settings.get("db_sync_on_startup", True))
+        )
+        ctk.CTkCheckBox(
+            sync_card,
+            text="Download / update database from GitHub",
+            variable=self.settings_db_sync_enabled,
+            font=FONT_SM,
+            text_color=C["text"],
+            fg_color=C["accent"],
+            hover_color=C["accent_hover"],
+            checkmark_color=C["bg"],
+            border_color=C["border"],
+            command=self._settings_on_db_sync_toggle,
+        ).pack(anchor="w", padx=14, pady=(0, 4))
+        ctk.CTkCheckBox(
+            sync_card,
+            text="Check for database updates on every app open (when enabled above)",
+            variable=self.settings_db_sync_on_startup,
+            font=FONT_SM,
+            text_color=C["text"],
+            fg_color=C["accent"],
+            hover_color=C["accent_hover"],
+            checkmark_color=C["bg"],
+            border_color=C["border"],
+        ).pack(anchor="w", padx=14, pady=(0, 8))
+
+        sync_act = ctk.CTkFrame(sync_card, fg_color="transparent")
+        sync_act.pack(fill="x", padx=14, pady=(0, 8))
+        self.settings_db_sync_btn = ctk.CTkButton(
+            sync_act,
+            text="Refresh database now",
+            width=160,
+            height=34,
+            command=self._settings_db_sync_now,
+            fg_color=C["accent"],
+            hover_color=C["accent_hover"],
+            text_color=C["bg"],
+        )
+        self.settings_db_sync_btn.pack(side="left", padx=(0, 8))
+        self.settings_db_sync_status = ctk.CTkLabel(
+            sync_act, text="", font=FONT_SM, text_color=C["muted"], anchor="w"
+        )
+        self.settings_db_sync_status.pack(side="left", fill="x", expand=True)
+
+        self.settings_db_sync_repo = ctk.StringVar(
+            value=str(
+                self.app_settings.get("db_sync_repo")
+                or "HyperboreanSlug/sor-public-archiver"
+            )
+        )
+        repo_row = ctk.CTkFrame(sync_card, fg_color="transparent")
+        repo_row.pack(fill="x", padx=14, pady=(0, 12))
+        ctk.CTkLabel(
+            repo_row, text="GitHub repo", font=FONT_SM, text_color=C["muted"]
+        ).pack(side="left", padx=(0, 8))
+        ctk.CTkEntry(
+            repo_row,
+            textvariable=self.settings_db_sync_repo,
+            fg_color=C["bg"],
+            border_color=C["border"],
+            text_color=C["text"],
+            width=320,
+        ).pack(side="left", fill="x", expand=True)
+
         # --- Backups ---
         bak_card = _card(scroll)
         bak_card.pack(fill="x", padx=4, pady=(0, 8))
@@ -499,7 +580,7 @@ class SettingsTabMixin:
             mcl = int(str(self.settings_min_combined.get()).strip() or "3")
         except ValueError:
             mcl = 3
-        return {
+        out: Dict[str, Any] = {
             "db_path": (self.settings_db_path.get() or "data/offenders.db").strip(),
             "backup_on_close": bool(self.settings_backup_on_close.get()),
             "backup_dir": (self.settings_backup_dir.get() or "data/backups").strip(),
@@ -507,6 +588,36 @@ class SettingsTabMixin:
             "nsopw_compact_prefixes": bool(self.settings_compact_prefixes.get()),
             "nsopw_min_combined_len": mcl,
         }
+        # Preserve deepface + sync keys if widgets not built
+        sett = getattr(self, "app_settings", {}) or {}
+        for k in (
+            "deepface_auto_setup",
+            "deepface_auto_warm",
+            "db_sync_prompted",
+            "db_sync_tag",
+        ):
+            if k in sett:
+                out[k] = sett[k]
+        if hasattr(self, "df_auto_setup"):
+            out["deepface_auto_setup"] = bool(self.df_auto_setup.get())
+        if hasattr(self, "df_auto_warm"):
+            out["deepface_auto_warm"] = bool(self.df_auto_warm.get())
+        if hasattr(self, "settings_db_sync_enabled"):
+            out["db_sync_enabled"] = bool(self.settings_db_sync_enabled.get())
+            out["db_sync_on_startup"] = bool(self.settings_db_sync_on_startup.get())
+            out["db_sync_repo"] = (
+                self.settings_db_sync_repo.get() or sett.get("db_sync_repo") or ""
+            ).strip()
+            # Enabling sync implies the user was prompted / chose
+            if out["db_sync_enabled"]:
+                out["db_sync_prompted"] = True
+        else:
+            out["db_sync_enabled"] = bool(sett.get("db_sync_enabled", False))
+            out["db_sync_on_startup"] = bool(sett.get("db_sync_on_startup", True))
+            out["db_sync_repo"] = str(
+                sett.get("db_sync_repo") or "HyperboreanSlug/sor-public-archiver"
+            )
+        return out
 
     def _settings_apply_to_app(self, settings: Dict[str, Any]) -> None:
         from scraper.app_settings import normalize_settings
@@ -521,6 +632,104 @@ class SettingsTabMixin:
                 self._nsopw_update_surname_count()
             except Exception:
                 pass
+
+    def _settings_on_db_sync_toggle(self) -> None:
+        """Persist enable flag immediately when checkbox changes."""
+        try:
+            from scraper.app_settings import load_settings, save_settings, normalize_settings
+
+            raw = load_settings()
+            raw["db_sync_enabled"] = bool(self.settings_db_sync_enabled.get())
+            raw["db_sync_on_startup"] = bool(self.settings_db_sync_on_startup.get())
+            if raw["db_sync_enabled"]:
+                raw["db_sync_prompted"] = True
+            save_settings(raw)
+            self.app_settings = normalize_settings(raw)
+        except Exception:
+            pass
+
+    def _settings_db_sync_now(self) -> None:
+        """Manual Refresh database now (GitHub Releases)."""
+        if getattr(self, "_db_sync_running", False):
+            return
+        self._db_sync_running = True
+        try:
+            self.settings_db_sync_btn.configure(state="disabled")
+            self.settings_db_sync_status.configure(text="Downloading…")
+        except Exception:
+            pass
+
+        repo = (
+            (self.settings_db_sync_repo.get() if hasattr(self, "settings_db_sync_repo") else "")
+            or (self.app_settings or {}).get("db_sync_repo")
+            or "HyperboreanSlug/sor-public-archiver"
+        ).strip()
+        tag = str((self.app_settings or {}).get("db_sync_tag") or "database-latest")
+        db_path = Path(self.db_path)
+
+        def worker():
+            from scraper.db_sync import download_and_install_db
+
+            result = download_and_install_db(
+                db_path,
+                repo=repo,
+                tag=tag,
+                force=True,
+                log=lambda m: self.log_queue.put(f"DB sync: {m}"),
+            )
+
+            def done():
+                self._db_sync_running = False
+                try:
+                    self.settings_db_sync_btn.configure(state="normal")
+                except Exception:
+                    pass
+                try:
+                    col = C["success"] if result.ok else C["danger"]
+                    self.settings_db_sync_status.configure(
+                        text=result.message, text_color=col
+                    )
+                except Exception:
+                    pass
+                if result.ok:
+                    try:
+                        from scraper.app_settings import (
+                            load_settings,
+                            save_settings,
+                            normalize_settings,
+                        )
+
+                        raw = load_settings()
+                        raw["db_sync_enabled"] = True
+                        raw["db_sync_prompted"] = True
+                        raw["db_sync_on_startup"] = bool(
+                            self.settings_db_sync_on_startup.get()
+                        )
+                        raw["db_sync_repo"] = repo
+                        save_settings(raw)
+                        self.app_settings = normalize_settings(raw)
+                        self.settings_db_sync_enabled.set(True)
+                    except Exception:
+                        pass
+                    try:
+                        self._after_db_data_changed()
+                    except Exception:
+                        try:
+                            self._refresh_header_db_path()
+                        except Exception:
+                            pass
+                else:
+                    try:
+                        messagebox.showerror("Database refresh", result.message)
+                    except Exception:
+                        pass
+
+            try:
+                self.after(0, done)
+            except Exception:
+                pass
+
+        threading.Thread(target=worker, name="db-sync", daemon=True).start()
 
     def _settings_save(self) -> None:
         from scraper.app_settings import save_settings

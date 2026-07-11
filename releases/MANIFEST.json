@@ -1,0 +1,9 @@
+{
+  "asset": "offenders.db.zip",
+  "db_name": "offenders.db",
+  "sha256": "4e4e5f32c80940384ec6142af6e11184bcd50446fb14e97419ef5cac484a96a8",
+  "size_bytes": 33964556,
+  "created_at_utc": "2026-07-11T01:32:58Z",
+  "record_count": 168866,
+  "notes": "Public U.S. sex offender registry archive. Paths are project-relative. No local user profile paths."
+}
