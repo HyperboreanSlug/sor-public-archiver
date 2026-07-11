@@ -39,6 +39,7 @@ gui_app/                   # Desktop UI (CustomTkinter), lazy tabs
     │   └── reports.py
     ├── nsopw.py
     ├── scrape.py
+    ├── deepface.py        # DeepFace install / status / options
     └── settings.py
 
 scraper/
@@ -162,7 +163,8 @@ from scraper.reports import ReportFetcher
 | Browse Search UI | `gui_app/tabs/browse/search.py`, `shared/detail_drawer.py`, `scraper/searcher.py` | NSOPW, Scrape |
 | Integrity / dedupe UI | `gui_app/tabs/browse/integrity.py`, `scraper/database/dedupe.py`, `queries.py` | builder |
 | Misclassify UI | `gui_app/tabs/browse/misclassify.py`, `searcher.py`, `ethnic_names.py` | reports |
-| Mugshot ethnicity | `scraper/mugshot_ethnicity/*`, `cli.py` mugshot-verify/scan | gui (until wired) |
+| Mugshot ethnicity | `scraper/mugshot_ethnicity/*`, `cli.py` mugshot-verify/scan | — |
+| DeepFace tab | `gui_app/tabs/deepface.py`, `scraper/mugshot_ethnicity/setup.py` | — |
 | Statistics | `gui_app/tabs/browse/statistics.py`, `widgets.py` (charts) | — |
 | Reports / verdicts | `gui_app/tabs/browse/reports.py` | scrape |
 | NSOPW UI | `gui_app/tabs/nsopw.py` | database dedupe |

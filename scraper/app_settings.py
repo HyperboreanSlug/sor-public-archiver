@@ -24,6 +24,9 @@ DEFAULTS: Dict[str, Any] = {
     # e.g. M+AH covers Ahmed/Ahmad; API extras (aliases) are still scraped.
     "nsopw_compact_prefixes": True,
     "nsopw_min_combined_len": 3,
+    # DeepFace (local mugshot race model) — controlled on DeepFace tab
+    "deepface_auto_setup": True,
+    "deepface_auto_warm": True,
 }
 
 
@@ -64,6 +67,8 @@ def normalize_settings(s: Dict[str, Any]) -> Dict[str, Any]:
     )
     out["backup_on_close"] = bool(out.get("backup_on_close", False))
     out["nsopw_compact_prefixes"] = bool(out.get("nsopw_compact_prefixes", True))
+    out["deepface_auto_setup"] = bool(out.get("deepface_auto_setup", True))
+    out["deepface_auto_warm"] = bool(out.get("deepface_auto_warm", True))
 
     try:
         mb = int(out.get("max_backups", 10))

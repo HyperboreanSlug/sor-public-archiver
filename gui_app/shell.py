@@ -60,6 +60,7 @@ from gui_app.tabs.browse.search import SearchTabMixin
 from gui_app.tabs.browse.statistics import StatisticsTabMixin
 from gui_app.tabs.nsopw import NsopwTabMixin
 from gui_app.tabs.scrape import ScrapeTabMixin
+from gui_app.tabs.deepface import DeepfaceTabMixin
 from gui_app.tabs.settings import SettingsTabMixin
 
 
@@ -73,6 +74,7 @@ class ArchiverApp(
     ReportsTabMixin,
     NsopwTabMixin,
     ScrapeTabMixin,
+    DeepfaceTabMixin,
     SettingsTabMixin,
     ctk.CTk,
 ):
@@ -192,6 +194,7 @@ class ArchiverApp(
         self._main_lazy.register("Browse", lambda p: self._build_browse(p) or True)
         self._main_lazy.register("NSOPW", lambda p: self._build_nsopw(p) or True)
         self._main_lazy.register("Scrape", lambda p: self._build_scrape(p) or True)
+        self._main_lazy.register("DeepFace", lambda p: self._build_deepface(p) or True)
         self._main_lazy.register("Settings", lambda p: self._build_settings(p) or True)
 
         try:
@@ -233,6 +236,11 @@ class ArchiverApp(
         if name == "Settings" and hasattr(self, "_settings_refresh_status"):
             try:
                 self._settings_refresh_status()
+            except Exception:
+                pass
+        if name == "DeepFace" and hasattr(self, "_deepface_refresh_status"):
+            try:
+                self._deepface_refresh_status()
             except Exception:
                 pass
         if want and not self._log_visible:

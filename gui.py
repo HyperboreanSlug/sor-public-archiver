@@ -14,6 +14,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import Optional
 
 # ---------------------------------------------------------------------------
 # Bootstrap: path + cwd (double-click often starts in System32 / user home)
@@ -83,8 +84,15 @@ def _ensure_dependencies() -> None:
 _ensure_dependencies()
 
 
-def _start_deepface_setup_background() -> None:
-    """Install DeepFace + race weights in a daemon thread (never blocks GUI launch)."""
+def _start_deepface_setup_background(app_settings: Optional[dict] = None) -> None:
+    """Install DeepFace + race weights in a daemon thread (never blocks GUI launch).
+
+    Honors Settings / DeepFace tab flags: deepface_auto_setup, deepface_auto_warm.
+    """
+    sett = app_settings or {}
+    if not bool(sett.get("deepface_auto_setup", True)):
+        return
+
     def _log(msg: str) -> None:
         try:
             with open(_ROOT / "deepface_setup.log", "a", encoding="utf-8") as f:
@@ -94,6 +102,8 @@ def _start_deepface_setup_background() -> None:
         except OSError:
             pass
 
+    warm = bool(sett.get("deepface_auto_warm", True))
+
     def _run() -> None:
         try:
             # Delay so first paint / mainloop are not competing with pip/TF
@@ -102,7 +112,7 @@ def _start_deepface_setup_background() -> None:
             time.sleep(3)
             from scraper.mugshot_ethnicity.setup import ensure_deepface
 
-            ensure_deepface(auto_install=True, warm=True, log=_log)
+            ensure_deepface(auto_install=True, warm=warm, log=_log)
         except Exception as e:
             _log(f"Background DeepFace setup error: {e}")
 
@@ -124,8 +134,9 @@ def main() -> None:
         )
         raise SystemExit(1) from e
     app = ArchiverApp()
-    # After UI exists: install DeepFace in background (does not block VBS/bat)
-    _start_deepface_setup_background()
+    # Background install only if enabled on DeepFace tab / settings
+    sett = getattr(app, "app_settings", None) or {}
+    _start_deepface_setup_background(sett if isinstance(sett, dict) else {})
     app.mainloop()
 
 
