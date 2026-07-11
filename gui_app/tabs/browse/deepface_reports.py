@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import customtkinter as ctk
+import tkinter as tk
 from tkinter import messagebox
 
 from gui_app.theme import (
@@ -199,17 +200,22 @@ class DeepfaceReportsTabMixin:
         rev_body.pack(fill="both", expand=True, padx=12, pady=(0, 8))
         rev_body.grid_columnconfigure(0, weight=1)
 
-        photo_wrap = ctk.CTkFrame(
-            rev_body, fg_color=C["tree_bg"], corner_radius=10, height=280,
-        )
+        # Use a plain tk.Frame + PhotoImage — CTkLabel/CTkImage often stays blank
+        # for nested frames and grayscale registry thumbs.
+        photo_wrap = tk.Frame(rev_body, bg=C["tree_bg"], height=300)
         photo_wrap.pack(fill="x", pady=(0, 8))
         photo_wrap.pack_propagate(False)
         self.dfr_photo_wrap = photo_wrap
-        self.dfr_photo = ctk.CTkLabel(
-            photo_wrap, text="Select a hit", font=FONT_SM, text_color=C["dim"],
+        self.dfr_photo = tk.Label(
+            photo_wrap,
+            text="Select a hit",
+            bg=C["tree_bg"],
+            fg=C["dim"],
+            font=("Segoe UI", 11),
+            compound="center",
         )
-        # pack (not place) so CTkImage lays out reliably inside the frame
-        self.dfr_photo.pack(expand=True, fill="both", padx=4, pady=4)
+        self.dfr_photo.pack(expand=True, fill="both")
+        self._dfr_photo_tk = None  # active PhotoImage ref (must keep alive)
 
         self.dfr_name = ctk.CTkLabel(
             rev_body, text="—", font=FONT_TITLE, text_color=C["text"], anchor="w",
@@ -419,8 +425,8 @@ class DeepfaceReportsTabMixin:
                 ),
             )
             self._dfr_hits_by_iid[iid] = mc
-        # Auto-select first unreviewed
-        self.after(30, self._dfr_next_unreviewed)
+        # Always show something: first unreviewed, else first row
+        self.after(40, self._dfr_select_initial)
 
     def _dfr_update_metrics(self) -> None:
         all_hits = list(getattr(self, "_dfr_all_hits", None) or [])
@@ -474,9 +480,51 @@ class DeepfaceReportsTabMixin:
                 continue
         return None
 
+    def _dfr_set_photo_placeholder(self, text: str = "Select a hit") -> None:
+        try:
+            self._dfr_photo_tk = None
+            self.dfr_photo.configure(image="", text=text)
+        except Exception:
+            pass
+
+    def _dfr_set_photo_image(self, path: Path) -> tuple[bool, str]:
+        """Load mugshot into the review tk.Label. Returns (ok, message)."""
+        try:
+            from PIL import Image, ImageTk
+        except Exception as e:
+            return False, f"PIL missing: {e}"
+
+        try:
+            img = Image.open(path)
+            if img.mode not in ("RGB", "RGBA"):
+                img = img.convert("RGB")
+            elif img.mode == "RGBA":
+                # Flatten alpha onto dark background
+                bg = Image.new("RGB", img.size, (16, 16, 20))
+                bg.paste(img, mask=img.split()[-1])
+                img = bg
+            max_w, max_h = 380, 280
+            img.thumbnail((max_w, max_h))
+            w, h = img.size
+            if w < 140 or h < 140:
+                scale = max(140 / max(w, 1), 140 / max(h, 1))
+                w = min(max_w, int(w * scale))
+                h = min(max_h, int(h * scale))
+                try:
+                    resample = Image.Resampling.BILINEAR
+                except AttributeError:
+                    resample = Image.BILINEAR  # type: ignore[attr-defined]
+                img = img.resize((w, h), resample)
+            # PhotoImage must be kept on self or GC clears the image
+            self._dfr_photo_tk = ImageTk.PhotoImage(img)
+            self.dfr_photo.configure(image=self._dfr_photo_tk, text="")
+            return True, str(path)
+        except Exception as e:
+            return False, f"{type(e).__name__}: {e}"
+
     def _dfr_clear_review(self) -> None:
         try:
-            self.dfr_photo.configure(image=None, text="Select a hit")
+            self._dfr_set_photo_placeholder("Select a hit")
             self.dfr_name.configure(text="—")
             self.dfr_meta.configure(text="")
             self.dfr_verdict_lbl.configure(text="", text_color=C["dim"])
@@ -498,6 +546,32 @@ class DeepfaceReportsTabMixin:
         except Exception:
             pass
 
+    def _dfr_select_initial(self) -> None:
+        """Pick first unreviewed hit, else first row — always show a photo if possible."""
+        if not hasattr(self, "dfr_tree"):
+            return
+        kids = list(self.dfr_tree.get_children() or [])
+        if not kids:
+            self._dfr_clear_review()
+            return
+        pick = None
+        for iid in kids:
+            mc = self._dfr_hits_by_iid.get(iid)
+            if mc is not None and self._dfr_get_verdict(mc) == "unreviewed":
+                pick = iid
+                break
+        if pick is None:
+            pick = kids[0]
+        try:
+            self.dfr_tree.selection_set(pick)
+            self.dfr_tree.focus(pick)
+            self.dfr_tree.see(pick)
+        except Exception:
+            pass
+        mc = self._dfr_hits_by_iid.get(pick)
+        if mc is not None:
+            self._dfr_show(pick, mc)
+
     def _dfr_show(self, iid: str, mc) -> None:
         self._dfr_selected_iid = iid
         rec = dict(mc.record or {})
@@ -518,6 +592,10 @@ class DeepfaceReportsTabMixin:
             if rec.get(key):
                 crime = str(rec.get(key)).strip()
                 break
+
+        photo_raw = (rec.get("photo_path") or "").strip()
+        photo_path = self._dfr_resolve_photo_path(photo_raw)
+
         lines = [
             f"LISTED AS: {race}",
             f"Face: {face} @ {conf:.0%}{(' · ' + sev) if sev else ''}",
@@ -529,11 +607,8 @@ class DeepfaceReportsTabMixin:
             lines.append(f"Crime: {crime[:200]}")
         if reason:
             lines.append(str(reason)[:220])
-
-        photo_raw = (rec.get("photo_path") or "").strip()
-        photo_path = self._dfr_resolve_photo_path(photo_raw)
         if photo_path:
-            lines.append(f"Photo: {photo_path.name}")
+            lines.append(f"Photo: {photo_path}")
         elif photo_raw:
             lines.append(f"Photo missing: {photo_raw}")
         else:
@@ -545,48 +620,14 @@ class DeepfaceReportsTabMixin:
         except Exception:
             pass
 
-        shown = False
-        err_txt = "No photo on disk"
         if photo_path is not None:
-            try:
-                from PIL import Image
-
-                img = Image.open(photo_path)
-                # Convert palette/RGBA quirks so CTkImage always works
-                if img.mode not in ("RGB", "RGBA"):
-                    img = img.convert("RGB")
-                # Fit into review pane; force a readable display size
-                max_w, max_h = 360, 270
-                img.thumbnail((max_w, max_h))
-                disp_w, disp_h = img.size
-                # Upscale tiny registry thumbs so the box isn't empty-looking
-                if disp_w < 120 or disp_h < 120:
-                    scale = max(120 / max(disp_w, 1), 120 / max(disp_h, 1))
-                    disp_w = min(max_w, int(disp_w * scale))
-                    disp_h = min(max_h, int(disp_h * scale))
-                    try:
-                        resample = Image.Resampling.BILINEAR
-                    except AttributeError:
-                        resample = Image.BILINEAR  # type: ignore[attr-defined]
-                    img = img.resize((disp_w, disp_h), resample)
-                ctk_img = ctk.CTkImage(
-                    light_image=img, dark_image=img, size=(disp_w, disp_h)
-                )
-                if not hasattr(self, "_dfr_image_refs") or self._dfr_image_refs is None:
-                    self._dfr_image_refs = []
-                self._dfr_image_refs.append(ctk_img)
-                if len(self._dfr_image_refs) > 20:
-                    self._dfr_image_refs = self._dfr_image_refs[-12:]
-                self.dfr_photo.configure(image=ctk_img, text="")
-                shown = True
-            except Exception as e:
-                err_txt = f"Photo error:\n{type(e).__name__}"
-                shown = False
-        if not shown:
-            try:
-                self.dfr_photo.configure(image=None, text=err_txt)
-            except Exception:
-                pass
+            ok, msg = self._dfr_set_photo_image(photo_path)
+            if not ok:
+                self._dfr_set_photo_placeholder(f"Photo error\n{msg[:80]}")
+        else:
+            self._dfr_set_photo_placeholder(
+                "No photo on disk" + (f"\n{photo_raw[:60]}" if photo_raw else "")
+            )
 
         v = self._dfr_get_verdict(mc)
         vtxt = {
