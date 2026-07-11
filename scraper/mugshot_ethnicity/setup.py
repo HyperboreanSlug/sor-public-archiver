@@ -13,7 +13,7 @@ import subprocess
 import sys
 import threading
 from pathlib import Path
-from typing import Callable, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 # Package roots (repo root = parents[2] from this file)
 _ROOT = Path(__file__).resolve().parents[2]
@@ -170,69 +170,122 @@ def ensure_deepface(
         return True
 
 
+def _build_one_model(DeepFace: Any, model_id: str, log: Optional[Callable[[str], None]]) -> bool:
+    """Download/build a single DeepFace model by name."""
+    _log(log, f"Downloading / building weights: {model_id} …")
+    try:
+        if hasattr(DeepFace, "build_model"):
+            try:
+                DeepFace.build_model(model_id)
+                _log(log, f"  OK: {model_id}")
+                return True
+            except TypeError:
+                DeepFace.build_model(model_name=model_id)
+                _log(log, f"  OK: {model_id}")
+                return True
+        _log(log, f"  build_model unavailable for {model_id}")
+        return False
+    except Exception as e:
+        _log(log, f"  FAIL {model_id}: {e}")
+        return False
+
+
+def download_selected_weights(
+    model_ids: Optional[List[str]] = None,
+    *,
+    detector_backend: str = "retinaface",
+    log: Optional[Callable[[str], None]] = None,
+) -> Dict[str, bool]:
+    """
+    Download selected DeepFace model weights into ``~/.deepface/weights/``.
+
+    Always attempts Race if list is empty. Detectors are exercised via a tiny
+    analyze() call so their weights are also fetched when needed.
+    """
+    from scraper.mugshot_ethnicity.weights_catalog import default_selected_weights
+
+    if not deepface_available():
+        _log(log, "DeepFace not installed — cannot download weights")
+        return {}
+
+    models = list(model_ids or default_selected_weights())
+    if "Race" not in models:
+        models.insert(0, "Race")
+
+    os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
+    from deepface import DeepFace
+
+    results: Dict[str, bool] = {}
+    for mid in models:
+        results[mid] = _build_one_model(DeepFace, mid, log)
+
+    # Trigger detector weight download (RetinaFace etc.) with a dummy image
+    det = (detector_backend or "opencv").strip() or "opencv"
+    if det != "opencv":
+        _log(log, f"Warming detector backend: {det} …")
+        try:
+            import numpy as np
+            from PIL import Image
+            import tempfile
+
+            arr = np.zeros((96, 96, 3), dtype=np.uint8)
+            arr[:] = (180, 140, 120)
+            with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as f:
+                Image.fromarray(arr).save(f.name, format="JPEG")
+                path = f.name
+            try:
+                DeepFace.analyze(
+                    img_path=path,
+                    actions=["race"],
+                    enforce_detection=False,
+                    detector_backend=det,
+                    silent=True,
+                )
+                results[f"detector:{det}"] = True
+                _log(log, f"  OK detector: {det}")
+            finally:
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
+        except Exception as e:
+            results[f"detector:{det}"] = False
+            _log(log, f"  Detector warm note ({det}): {e}")
+
+    ok_n = sum(1 for v in results.values() if v)
+    _log(log, f"Weight download finished: {ok_n}/{len(results)} succeeded")
+    return results
+
+
 def warm_deepface_models(
     *,
     log: Optional[Callable[[str], None]] = None,
+    model_ids: Optional[List[str]] = None,
+    detector_backend: str = "retinaface",
 ) -> bool:
     """
-    Download / load the race attribute model into local cache.
+    Download / load selected models into local cache (default: Race).
 
     First run may take a few minutes; later runs are fast.
     """
     global _warm_attempted
-    if _warm_attempted:
-        return True
     if not deepface_available():
         return False
-    _warm_attempted = True
-    try:
-        # Quiet TF logs
-        os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
-        from deepface import DeepFace
-
-        _log(log, "Warming DeepFace race model (first run downloads weights)…")
-        # Prefer build_model when available
-        built = False
-        if hasattr(DeepFace, "build_model"):
-            try:
-                DeepFace.build_model("Race")
-                built = True
-            except Exception:
-                try:
-                    DeepFace.build_model(model_name="Race")
-                    built = True
-                except Exception as e:
-                    _log(log, f"build_model(Race) note: {e}")
-        if not built:
-            # Fallback: tiny analyze on a generated solid image triggers download
-            try:
-                import numpy as np
-                from PIL import Image
-                import tempfile
-
-                arr = np.zeros((64, 64, 3), dtype=np.uint8)
-                arr[:] = (180, 140, 120)
-                with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as f:
-                    Image.fromarray(arr).save(f.name, format="JPEG")
-                    path = f.name
-                try:
-                    DeepFace.analyze(
-                        img_path=path,
-                        actions=["race"],
-                        enforce_detection=False,
-                        detector_backend="opencv",
-                        silent=True,
-                    )
-                finally:
-                    try:
-                        os.unlink(path)
-                    except OSError:
-                        pass
-            except Exception as e:
-                _log(log, f"DeepFace warm-up analyze skipped: {e}")
-                return False
-        _log(log, "DeepFace race model ready (local weights cached)")
+    # Allow re-warm when explicit model list provided
+    if _warm_attempted and not model_ids:
         return True
+    if not model_ids:
+        _warm_attempted = True
+    try:
+        results = download_selected_weights(
+            model_ids or ["Race"],
+            detector_backend=detector_backend,
+            log=log,
+        )
+        ok = bool(results.get("Race") or any(results.values()))
+        if ok:
+            _log(log, "DeepFace weights ready under ~/.deepface/weights/")
+        return ok
     except Exception as e:
         _log(log, f"DeepFace warm-up failed: {e}")
         return False

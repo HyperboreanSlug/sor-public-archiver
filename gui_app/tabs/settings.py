@@ -593,6 +593,8 @@ class SettingsTabMixin:
         for k in (
             "deepface_auto_setup",
             "deepface_auto_warm",
+            "deepface_detector",
+            "deepface_weight_models",
             "db_sync_prompted",
             "db_sync_tag",
         ):
@@ -602,6 +604,14 @@ class SettingsTabMixin:
             out["deepface_auto_setup"] = bool(self.df_auto_setup.get())
         if hasattr(self, "df_auto_warm"):
             out["deepface_auto_warm"] = bool(self.df_auto_warm.get())
+        if hasattr(self, "_deepface_selected_detector_id"):
+            try:
+                out["deepface_detector"] = self._deepface_selected_detector_id()
+                out["deepface_weight_models"] = ",".join(
+                    self._deepface_selected_weight_ids()
+                )
+            except Exception:
+                pass
         if hasattr(self, "settings_db_sync_enabled"):
             out["db_sync_enabled"] = bool(self.settings_db_sync_enabled.get())
             out["db_sync_on_startup"] = bool(self.settings_db_sync_on_startup.get())

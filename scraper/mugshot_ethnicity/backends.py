@@ -111,13 +111,21 @@ class DeepFaceBackend(EthnicityBackend):
 
     def __init__(
         self,
-        detector_backend: str = "retinaface",
+        detector_backend: Optional[str] = None,
         *,
         enforce_detection: bool = False,
     ):
         # enforce_detection=False: still score when face box is weak (common on
         # low-res registry thumbs); confidence will reflect model uncertainty.
-        self.detector_backend = detector_backend or "retinaface"
+        det = (detector_backend or "").strip()
+        if not det:
+            try:
+                from scraper.app_settings import load_settings
+
+                det = str(load_settings().get("deepface_detector") or "retinaface")
+            except Exception:
+                det = "retinaface"
+        self.detector_backend = det or "retinaface"
         self.enforce_detection = bool(enforce_detection)
         self._detectors_tried: List[str] = []
 

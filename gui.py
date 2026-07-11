@@ -103,6 +103,12 @@ def _start_deepface_setup_background(app_settings: Optional[dict] = None) -> Non
             pass
 
     warm = bool(sett.get("deepface_auto_warm", True))
+    models = [
+        p.strip()
+        for p in str(sett.get("deepface_weight_models") or "Race").split(",")
+        if p.strip()
+    ]
+    detector = str(sett.get("deepface_detector") or "retinaface")
 
     def _run() -> None:
         try:
@@ -110,9 +116,19 @@ def _start_deepface_setup_background(app_settings: Optional[dict] = None) -> Non
             import time
 
             time.sleep(3)
-            from scraper.mugshot_ethnicity.setup import ensure_deepface
+            from scraper.mugshot_ethnicity.setup import (
+                ensure_deepface,
+                download_selected_weights,
+                deepface_available,
+            )
 
-            ensure_deepface(auto_install=True, warm=warm, log=_log)
+            ok = ensure_deepface(auto_install=True, warm=False, log=_log)
+            if ok and warm and deepface_available():
+                download_selected_weights(
+                    models or ["Race"],
+                    detector_backend=detector,
+                    log=_log,
+                )
         except Exception as e:
             _log(f"Background DeepFace setup error: {e}")
 

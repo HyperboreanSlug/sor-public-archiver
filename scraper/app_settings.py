@@ -27,6 +27,10 @@ DEFAULTS: Dict[str, Any] = {
     # DeepFace (local mugshot race model) — controlled on DeepFace tab
     "deepface_auto_setup": True,
     "deepface_auto_warm": True,
+    "deepface_detector": "retinaface",
+    # Comma-separated DeepFace.build_model names (Race required for mugshots)
+    "deepface_weight_models": "Race",
+
     # Public database sync from GitHub Releases (no local user PII in archives)
     "db_sync_enabled": False,
     "db_sync_prompted": False,
@@ -75,6 +79,16 @@ def normalize_settings(s: Dict[str, Any]) -> Dict[str, Any]:
     out["nsopw_compact_prefixes"] = bool(out.get("nsopw_compact_prefixes", True))
     out["deepface_auto_setup"] = bool(out.get("deepface_auto_setup", True))
     out["deepface_auto_warm"] = bool(out.get("deepface_auto_warm", True))
+    det = str(out.get("deepface_detector") or "retinaface").strip().lower()
+    allowed_det = {
+        "retinaface", "opencv", "ssd", "mtcnn", "yunet", "mediapipe", "centerface",
+    }
+    out["deepface_detector"] = det if det in allowed_det else "retinaface"
+    wm = str(out.get("deepface_weight_models") or "Race").strip()
+    parts = [p.strip() for p in wm.replace(";", ",").split(",") if p.strip()]
+    if "Race" not in parts:
+        parts.insert(0, "Race")
+    out["deepface_weight_models"] = ",".join(parts)
     out["db_sync_enabled"] = bool(out.get("db_sync_enabled", False))
     out["db_sync_prompted"] = bool(out.get("db_sync_prompted", False))
     out["db_sync_on_startup"] = bool(out.get("db_sync_on_startup", True))

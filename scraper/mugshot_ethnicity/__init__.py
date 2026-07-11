@@ -30,10 +30,12 @@ from scraper.mugshot_ethnicity.scorer import (
 )
 from scraper.mugshot_ethnicity.setup import (
     deepface_available,
+    download_selected_weights,
     ensure_deepface,
     ensure_deepface_background,
     warm_deepface_models,
 )
+
 from scraper.mugshot_ethnicity.verify import verify_record, verify_misclassifications
 from scraper.mugshot_ethnicity.scanner import scan_gross_misclassifications
 
@@ -45,6 +47,7 @@ __all__ = [
     "MugshotEthnicityScorer",
     "get_available_backends",
     "deepface_available",
+    "download_selected_weights",
     "ensure_deepface",
     "ensure_deepface_background",
     "warm_deepface_models",

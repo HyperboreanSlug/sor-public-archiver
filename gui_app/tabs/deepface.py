@@ -30,7 +30,7 @@ class DeepfaceTabMixin:
         root = ctk.CTkFrame(tab, fg_color=C["surface"], corner_radius=0)
         root.pack(fill="both", expand=True, padx=10, pady=10)
         root.grid_columnconfigure(0, weight=1)
-        root.grid_rowconfigure(2, weight=1)
+        root.grid_rowconfigure(3, weight=1)
 
         # --- Status (top, full width) ---
         status_card = _card(root)
@@ -124,7 +124,7 @@ class DeepfaceTabMixin:
         ).pack(anchor="w", padx=14, pady=4)
         ctk.CTkCheckBox(
             opt_card,
-            text="Warm race model after install (download weights once)",
+            text="Warm selected weights after install (download once to ~/.deepface/weights)",
             variable=self.df_auto_warm,
             font=FONT_SM,
             text_color=C["text"],
@@ -138,20 +138,20 @@ class DeepfaceTabMixin:
         act = ctk.CTkFrame(opt_card, fg_color="transparent")
         act.pack(fill="x", padx=14, pady=(0, 8))
         self.df_install_btn = ctk.CTkButton(
-            act, text="Install / repair now", width=150,
+            act, text="Install / repair packages", width=160,
             command=lambda: self._deepface_run_setup(warm=True),
             fg_color=C["accent"], hover_color=C["accent_hover"], text_color=C["bg"],
         )
         self.df_install_btn.pack(side="left", padx=(0, 8))
         self.df_warm_btn = ctk.CTkButton(
-            act, text="Warm model only", width=130,
-            command=lambda: self._deepface_run_setup(warm=True, install=False),
+            act, text="Download selected weights", width=170,
+            command=self._deepface_download_selected_weights,
             fg_color=C["elevated"], hover_color=C["border"], text_color=C["text"],
             border_width=1, border_color=C["border"],
         )
         self.df_warm_btn.pack(side="left", padx=(0, 8))
         ctk.CTkButton(
-            act, text="Install packages only", width=150,
+            act, text="Packages only (no weights)", width=160,
             command=lambda: self._deepface_run_setup(warm=False),
             fg_color=C["elevated"], hover_color=C["border"], text_color=C["text"],
             border_width=1, border_color=C["border"],
@@ -162,9 +162,141 @@ class DeepfaceTabMixin:
         )
         self.df_job_status.pack(fill="x", padx=14, pady=(0, 12))
 
+        # --- Weights / detector selection ---
+        w_card = _card(root)
+        w_card.grid(row=2, column=0, sticky="ew", pady=(0, 8))
+        _section_label(w_card, "Weights & face detector").pack(
+            anchor="w", padx=14, pady=(12, 4)
+        )
+        _muted(
+            w_card,
+            "Race scoring needs the Race model. The detector finds the face before race "
+            "is predicted. Optional models are larger downloads and not required for "
+            "mugshot race mismatch tools.",
+        ).pack(anchor="w", padx=14, pady=(0, 8))
+
+        from scraper.mugshot_ethnicity.weights_catalog import (
+            DETECTOR_OPTIONS,
+            WEIGHT_MODELS,
+            explain_detector,
+            explain_weight,
+        )
+
+        det_default = str(sett.get("deepface_detector") or "retinaface")
+        det_labels = [d["label"] for d in DETECTOR_OPTIONS]
+        det_id_by_label = {d["label"]: d["id"] for d in DETECTOR_OPTIONS}
+        label_by_det_id = {d["id"]: d["label"] for d in DETECTOR_OPTIONS}
+        self._df_det_id_by_label = det_id_by_label
+        self._df_label_by_det_id = label_by_det_id
+
+        det_row = ctk.CTkFrame(w_card, fg_color="transparent")
+        det_row.pack(fill="x", padx=14, pady=(0, 6))
+        ctk.CTkLabel(
+            det_row, text="Face detector", font=FONT_SM, text_color=C["muted"]
+        ).pack(side="left", padx=(0, 8))
+        self.df_detector_var = ctk.StringVar(
+            value=label_by_det_id.get(det_default, det_labels[0])
+        )
+        ctk.CTkComboBox(
+            det_row,
+            variable=self.df_detector_var,
+            values=det_labels,
+            width=280,
+            fg_color=C["bg"],
+            border_color=C["border"],
+            button_color=C["elevated"],
+            text_color=C["text"],
+            dropdown_fg_color=C["panel"],
+            command=self._deepface_on_detector_change,
+        ).pack(side="left")
+
+        self.df_detector_help = ctk.CTkLabel(
+            w_card,
+            text=explain_detector(det_default),
+            font=FONT_SM,
+            text_color=C["dim"],
+            anchor="w",
+            justify="left",
+            wraplength=920,
+        )
+        self.df_detector_help.pack(fill="x", padx=14, pady=(0, 10))
+
+        ctk.CTkLabel(
+            w_card,
+            text="Model weights to download (check then click Download selected weights)",
+            font=FONT_SM,
+            text_color=C["muted"],
+            anchor="w",
+        ).pack(fill="x", padx=14, pady=(4, 4))
+
+        saved_models = {
+            p.strip()
+            for p in str(sett.get("deepface_weight_models") or "Race").split(",")
+            if p.strip()
+        }
+        if "Race" not in saved_models:
+            saved_models.add("Race")
+
+        self._df_weight_vars: Dict[str, ctk.BooleanVar] = {}
+        weights_frame = ctk.CTkFrame(w_card, fg_color="transparent")
+        weights_frame.pack(fill="x", padx=10, pady=(0, 6))
+
+        # Two columns of checkboxes
+        left_col = ctk.CTkFrame(weights_frame, fg_color="transparent")
+        right_col = ctk.CTkFrame(weights_frame, fg_color="transparent")
+        left_col.pack(side="left", fill="both", expand=True, padx=(4, 8))
+        right_col.pack(side="left", fill="both", expand=True, padx=(8, 4))
+
+        for i, m in enumerate(WEIGHT_MODELS):
+            parent = left_col if i % 2 == 0 else right_col
+            mid = m["id"]
+            var = ctk.BooleanVar(value=(mid in saved_models) or bool(m.get("required")))
+            self._df_weight_vars[mid] = var
+            row = ctk.CTkFrame(parent, fg_color=C["elevated"], corner_radius=8)
+            row.pack(fill="x", pady=3)
+            cb = ctk.CTkCheckBox(
+                row,
+                text=f"{m['label']}  ·  {m['size']}",
+                variable=var,
+                font=FONT_SM,
+                text_color=C["text"],
+                fg_color=C["accent"],
+                hover_color=C["accent_hover"],
+                border_color=C["border"],
+                checkmark_color=C["bg"],
+                command=lambda mid=mid: self._deepface_on_weight_toggle(mid),
+            )
+            cb.pack(anchor="w", padx=10, pady=(8, 2))
+            if m.get("required"):
+                # Race cannot be unchecked
+                try:
+                    cb.configure(state="disabled")
+                except Exception:
+                    pass
+            ctk.CTkLabel(
+                row,
+                text=m["summary"],
+                font=FONT_SM,
+                text_color=C["dim"],
+                anchor="w",
+                wraplength=420,
+                justify="left",
+            ).pack(fill="x", padx=14, pady=(0, 8))
+
+        self.df_weight_help = ctk.CTkLabel(
+            w_card,
+            text=explain_weight("Race"),
+            font=FONT_SM,
+            text_color=C["muted"],
+            anchor="nw",
+            justify="left",
+            wraplength=920,
+        )
+        self.df_weight_help.pack(fill="x", padx=14, pady=(4, 12))
+
         # --- Activity log fills all remaining height ---
         log_card = _card(root)
-        log_card.grid(row=2, column=0, sticky="nsew")
+        log_card.grid(row=3, column=0, sticky="nsew")
         log_card.grid_columnconfigure(0, weight=1)
         log_card.grid_rowconfigure(1, weight=1)
         _section_label(log_card, "Setup activity").grid(
@@ -271,6 +403,50 @@ class DeepfaceTabMixin:
                 text="Note: SOR_SKIP_DEEPFACE_INSTALL is set — auto-install disabled in env"
             )
 
+    def _deepface_selected_weight_ids(self) -> List[str]:
+        ids = ["Race"]
+        for mid, var in getattr(self, "_df_weight_vars", {}).items():
+            try:
+                if bool(var.get()) and mid not in ids:
+                    ids.append(mid)
+            except Exception:
+                pass
+        return ids
+
+    def _deepface_selected_detector_id(self) -> str:
+        label = ""
+        try:
+            label = (self.df_detector_var.get() or "").strip()
+        except Exception:
+            pass
+        return (getattr(self, "_df_det_id_by_label", {}) or {}).get(label, "retinaface")
+
+    def _deepface_on_detector_change(self, _choice: str = "") -> None:
+        from scraper.mugshot_ethnicity.weights_catalog import explain_detector
+
+        det = self._deepface_selected_detector_id()
+        try:
+            self.df_detector_help.configure(text=explain_detector(det))
+        except Exception:
+            pass
+        self._deepface_save_options()
+
+    def _deepface_on_weight_toggle(self, model_id: str = "") -> None:
+        from scraper.mugshot_ethnicity.weights_catalog import explain_weight
+
+        mid = model_id or "Race"
+        # Race always on
+        if mid == "Race" and mid in getattr(self, "_df_weight_vars", {}):
+            try:
+                self._df_weight_vars["Race"].set(True)
+            except Exception:
+                pass
+        try:
+            self.df_weight_help.configure(text=explain_weight(mid))
+        except Exception:
+            pass
+        self._deepface_save_options()
+
     def _deepface_save_options(self) -> None:
         try:
             from scraper.app_settings import load_settings, save_settings, normalize_settings
@@ -278,11 +454,15 @@ class DeepfaceTabMixin:
             raw = load_settings()
             raw["deepface_auto_setup"] = bool(self.df_auto_setup.get())
             raw["deepface_auto_warm"] = bool(self.df_auto_warm.get())
+            raw["deepface_detector"] = self._deepface_selected_detector_id()
+            raw["deepface_weight_models"] = ",".join(self._deepface_selected_weight_ids())
             save_settings(raw)
             self.app_settings = normalize_settings(raw)
             self._deepface_append_log(
-                f"Saved options: auto_setup={raw['deepface_auto_setup']} "
-                f"auto_warm={raw['deepface_auto_warm']}"
+                f"Saved: auto_setup={raw['deepface_auto_setup']} "
+                f"auto_warm={raw['deepface_auto_warm']} "
+                f"detector={raw['deepface_detector']} "
+                f"weights={raw['deepface_weight_models']}"
             )
         except Exception as e:
             self._deepface_append_log(f"Could not save options: {e}")
@@ -302,13 +482,27 @@ class DeepfaceTabMixin:
                 text="Working… (see activity log)" if busy else ""
             )
 
-    def _deepface_run_setup(self, *, warm: bool = True, install: bool = True) -> None:
+    def _deepface_download_selected_weights(self) -> None:
+        """Download checked model weights + selected detector into local cache."""
+        self._deepface_save_options()
+        self._deepface_run_setup(warm=True, install=False, weights_only=True)
+
+    def _deepface_run_setup(
+        self,
+        *,
+        warm: bool = True,
+        install: bool = True,
+        weights_only: bool = False,
+    ) -> None:
         if getattr(self, "_df_setup_running", False):
             self._deepface_append_log("Setup already running")
             return
         self._deepface_set_busy(True)
+        models = self._deepface_selected_weight_ids()
+        detector = self._deepface_selected_detector_id()
         self._deepface_append_log(
-            f"Starting setup (install={install}, warm={warm})…"
+            f"Starting setup (install={install}, warm={warm}, "
+            f"detector={detector}, models={models})…"
         )
 
         def worker():
@@ -317,24 +511,37 @@ class DeepfaceTabMixin:
                 from scraper.mugshot_ethnicity.setup import (
                     ensure_deepface,
                     warm_deepface_models,
+                    download_selected_weights,
                     deepface_available,
                 )
 
                 if install:
                     ok = ensure_deepface(
                         auto_install=True,
-                        warm=warm,
+                        warm=False,  # download selected models next
                         log=self._deepface_append_log,
                         force_reinstall=False,
                     )
-                elif warm:
+                    if ok and warm:
+                        results = download_selected_weights(
+                            models,
+                            detector_backend=detector,
+                            log=self._deepface_append_log,
+                        )
+                        ok = bool(results.get("Race") or any(results.values()))
+                elif warm or weights_only:
                     if not deepface_available():
                         self._deepface_append_log(
-                            "DeepFace not installed — use Install / repair now"
+                            "DeepFace not installed — use Install / repair packages first"
                         )
                         ok = False
                     else:
-                        ok = warm_deepface_models(log=self._deepface_append_log)
+                        results = download_selected_weights(
+                            models,
+                            detector_backend=detector,
+                            log=self._deepface_append_log,
+                        )
+                        ok = bool(results.get("Race") or any(results.values()))
                 else:
                     ok = deepface_available()
             except Exception as e:
