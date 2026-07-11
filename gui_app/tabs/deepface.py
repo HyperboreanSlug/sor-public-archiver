@@ -18,23 +18,28 @@ from gui_app.theme import (
     FONT_SM,
     FONT_TITLE,
 )
-from gui_app.widgets import _card, _muted, _section_label
+from gui_app.widgets import _card, _muted, _section_label, _wire_wide_scroll
 from gui_app.paths import ROOT
 
 
 class DeepfaceTabMixin:
     def _build_deepface(self, tab):
-        """Full-area DeepFace status / options / activity (fills the tab)."""
+        """Full-area DeepFace status / options / activity (scrollable)."""
         tab.configure(fg_color=C["surface"])
-        # Outer fills entire tab client area
-        root = ctk.CTkFrame(tab, fg_color=C["surface"], corner_radius=0)
-        root.pack(fill="both", expand=True, padx=10, pady=10)
-        root.grid_columnconfigure(0, weight=1)
-        root.grid_rowconfigure(3, weight=1)
+        # Scrollable host fills the tab; mouse-wheel works over full area
+        root = ctk.CTkScrollableFrame(
+            tab,
+            fg_color=C["surface"],
+            corner_radius=0,
+            border_width=0,
+        )
+        root.pack(fill="both", expand=True, padx=8, pady=8)
+        _wire_wide_scroll(tab, root)
+        self._df_scroll = root
 
         # --- Status (top, full width) ---
         status_card = _card(root)
-        status_card.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        status_card.pack(fill="x", padx=4, pady=(4, 8))
         _section_label(status_card, "DeepFace status").pack(
             anchor="w", padx=14, pady=(12, 4)
         )
@@ -93,7 +98,7 @@ class DeepfaceTabMixin:
 
         # --- Options (full width) ---
         opt_card = _card(root)
-        opt_card.grid(row=1, column=0, sticky="ew", pady=(0, 8))
+        opt_card.pack(fill="x", padx=4, pady=(0, 8))
         _section_label(opt_card, "Setup options").pack(
             anchor="w", padx=14, pady=(12, 4)
         )
@@ -164,7 +169,7 @@ class DeepfaceTabMixin:
 
         # --- Weights / detector selection ---
         w_card = _card(root)
-        w_card.grid(row=2, column=0, sticky="ew", pady=(0, 8))
+        w_card.pack(fill="x", padx=4, pady=(0, 8))
         _section_label(w_card, "Weights & face detector").pack(
             anchor="w", padx=14, pady=(12, 4)
         )
@@ -294,16 +299,15 @@ class DeepfaceTabMixin:
         )
         self.df_weight_help.pack(fill="x", padx=14, pady=(4, 12))
 
-        # --- Activity log fills all remaining height ---
+        # --- Activity log (scrolls with page; tall enough to read) ---
         log_card = _card(root)
-        log_card.grid(row=3, column=0, sticky="nsew")
-        log_card.grid_columnconfigure(0, weight=1)
-        log_card.grid_rowconfigure(1, weight=1)
-        _section_label(log_card, "Setup activity").grid(
-            row=0, column=0, sticky="w", padx=14, pady=(12, 4)
+        log_card.pack(fill="x", padx=4, pady=(0, 8))
+        _section_label(log_card, "Setup activity").pack(
+            anchor="w", padx=14, pady=(12, 4)
         )
         self.df_log = ctk.CTkTextbox(
             log_card,
+            height=220,
             font=FONT_MONO,
             fg_color=C["bg"],
             text_color=C["muted"],
@@ -311,13 +315,62 @@ class DeepfaceTabMixin:
             border_width=1,
             corner_radius=8,
         )
-        self.df_log.grid(row=1, column=0, sticky="nsew", padx=12, pady=(0, 12))
+        self.df_log.pack(fill="x", expand=False, padx=12, pady=(0, 12))
         self.df_log.configure(state="disabled")
         self._df_log_queue: queue.Queue = queue.Queue()
         self._df_setup_running = False
 
         self.after(80, self._deepface_refresh_status)
         self.after(150, self._deepface_poll_log)
+        # Re-bind wheel after children exist (wheel is delivered to widget under cursor)
+        self.after(200, lambda: self._deepface_bind_scroll_children(tab, root))
+
+    def _deepface_bind_scroll_children(self, tab, scroll_frame) -> None:
+        """Ensure mouse-wheel scrolls the tab when hovering cards/checkboxes."""
+        try:
+            canvas = scroll_frame._parent_canvas  # type: ignore[attr-defined]
+        except Exception:
+            return
+
+        def _wheel(event):
+            delta = getattr(event, "delta", 0) or 0
+            if delta:
+                steps = int(-1 * (delta / 120)) if abs(delta) >= 120 else int(-1 * delta)
+                if steps == 0:
+                    steps = -1 if delta > 0 else 1
+                canvas.yview_scroll(steps, "units")
+            else:
+                num = getattr(event, "num", 0)
+                if num == 4:
+                    canvas.yview_scroll(-3, "units")
+                elif num == 5:
+                    canvas.yview_scroll(3, "units")
+            return "break"
+
+        def _walk(w):
+            try:
+                # Don't steal wheel from the activity textbox (it scrolls itself)
+                if w is getattr(self, "df_log", None):
+                    return
+            except Exception:
+                pass
+            try:
+                w.bind("<MouseWheel>", _wheel, add="+")
+                w.bind("<Button-4>", _wheel, add="+")
+                w.bind("<Button-5>", _wheel, add="+")
+            except Exception:
+                pass
+            try:
+                for child in w.winfo_children():
+                    _walk(child)
+            except Exception:
+                pass
+
+        try:
+            _walk(tab)
+            _walk(scroll_frame)
+        except Exception:
+            pass
 
     def _deepface_append_log(self, msg: str) -> None:
         try:
