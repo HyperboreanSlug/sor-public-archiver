@@ -941,7 +941,8 @@ class ReportsTabMixin:
                 w = max(int(scroll.winfo_width() or 900), 600)
             except Exception:
                 w = 900
-            n_cols = max(3, min(6, w // 180))
+            # Wider tiles for larger mugshots
+            n_cols = max(2, min(5, w // 210))
             for c in range(n_cols):
                 host.grid_columnconfigure(c, weight=1, uniform="rg")
             for i, mc in enumerate(items):
@@ -1139,31 +1140,31 @@ class ReportsTabMixin:
                 verdict=verdict, border=border, index=index,
             )
 
-        # ---- Compact list row ----
+        # ---- Compact list row (larger mugshot) ----
         card = ctk.CTkFrame(
             parent,
             fg_color=C["panel"],
             border_color=border,
             border_width=1,
             corner_radius=8,
-            height=96,
+            height=148,
         )
-        card.pack(fill="x", padx=6, pady=2)
+        card.pack(fill="x", padx=6, pady=3)
         card.pack_propagate(False)
         card.grid_columnconfigure(1, weight=1)
 
-        # Small photo
+        # Mugshot
         photo_wrap = ctk.CTkFrame(
-            card, fg_color=C["tree_bg"], corner_radius=6, width=72, height=84,
+            card, fg_color=C["tree_bg"], corner_radius=6, width=112, height=136,
         )
-        photo_wrap.grid(row=0, column=0, padx=(8, 8), pady=6, sticky="nw")
+        photo_wrap.grid(row=0, column=0, padx=(8, 10), pady=6, sticky="nw")
         photo_wrap.grid_propagate(False)
         photo_lbl = ctk.CTkLabel(
             photo_wrap, text="—", font=FONT_SM, text_color=C["dim"],
         )
         photo_lbl.place(relx=0.5, rely=0.5, anchor="center")
         if has_photo:
-            thumb = self._reports_load_thumb(photo_path, (70, 82))
+            thumb = self._reports_load_thumb(photo_path, (110, 134))
             if thumb is not None:
                 photo_lbl.configure(image=thumb, text="")
 
@@ -1417,13 +1418,13 @@ class ReportsTabMixin:
             border_color=border,
             border_width=1,
             corner_radius=8,
-            width=168,
-            height=268,
+            width=200,
+            height=340,
         )
         card.grid_propagate(False)
 
         photo_wrap = ctk.CTkFrame(
-            card, fg_color=C["tree_bg"], corner_radius=6, height=120,
+            card, fg_color=C["tree_bg"], corner_radius=6, height=180,
         )
         photo_wrap.pack(fill="x", padx=6, pady=(6, 4))
         photo_wrap.pack_propagate(False)
@@ -1432,7 +1433,7 @@ class ReportsTabMixin:
         )
         photo_lbl.place(relx=0.5, rely=0.5, anchor="center")
         if has_photo:
-            thumb = self._reports_load_thumb(photo_path, (150, 118))
+            thumb = self._reports_load_thumb(photo_path, (188, 176))
             if thumb is not None:
                 photo_lbl.configure(image=thumb, text="")
 
@@ -1442,7 +1443,7 @@ class ReportsTabMixin:
             middle,
             last,
             str(rec.get("full_name") or ""),
-            max_len=34,
+            max_len=36,
         )
         ctk.CTkLabel(
             card,
@@ -1451,7 +1452,7 @@ class ReportsTabMixin:
             text_color=C["text"],
             anchor="w",
             justify="left",
-            wraplength=150,
+            wraplength=180,
         ).pack(fill="x", padx=8)
         ctk.CTkLabel(
             card,
@@ -1477,7 +1478,7 @@ class ReportsTabMixin:
             text_color=C["muted"],
             anchor="w",
         ).pack(fill="x", padx=8)
-        crime_short = self._reports_abbreviate_crime(crime, max_len=38)
+        crime_short = self._reports_abbreviate_crime(crime, max_len=42)
         if crime_short:
             ctk.CTkLabel(
                 card,
@@ -1486,7 +1487,7 @@ class ReportsTabMixin:
                 text_color=C["dim"],
                 anchor="w",
                 justify="left",
-                wraplength=150,
+                wraplength=180,
             ).pack(fill="x", padx=8)
 
         status_lbl = ctk.CTkLabel(
