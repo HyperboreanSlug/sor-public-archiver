@@ -138,6 +138,10 @@ class DeepFaceBackend(EthnicityBackend):
 
     def analyze(self, photo_path: str) -> FaceEthnicityScore:
         try:
+            # Before any TF/keras import — required for RetinaFace on TF 2.16+
+            from scraper.mugshot_ethnicity.setup import configure_tf_keras_env
+
+            configure_tf_keras_env()
             from deepface import DeepFace
         except Exception as e:
             return FaceEthnicityScore(
@@ -150,7 +154,8 @@ class DeepFaceBackend(EthnicityBackend):
             )
 
         detectors = [self.detector_backend]
-        for alt in ("retinaface", "opencv", "ssd", "mtcnn"):
+        # Prefer SSD/YuNet over broken OpenCV Haar (headless wheels lack cascades)
+        for alt in ("retinaface", "ssd", "yunet", "opencv", "mtcnn"):
             if alt not in detectors:
                 detectors.append(alt)
 

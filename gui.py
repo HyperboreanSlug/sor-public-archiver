@@ -27,6 +27,11 @@ try:
 except OSError:
     pass
 
+# RetinaFace needs legacy Keras before any tensorflow/keras import
+os.environ.setdefault("TF_USE_LEGACY_KERAS", "1")
+os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
+os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
+
 
 def _fatal(msg: str) -> None:
     """Show an error even when launched with pythonw (no console)."""

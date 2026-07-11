@@ -9,6 +9,7 @@ Hardening:
   * cross-process file lock so two GUIs cannot fight over WinError 32
   * retries on file-lock / permission pip failures
   * detects numpy ABI mismatches and force-repairs the vision stack
+  * sets TF_USE_LEGACY_KERAS so RetinaFace works with TF 2.16+/Keras 3
 """
 from __future__ import annotations
 
@@ -33,7 +34,7 @@ _FALLBACK_PACKAGES = [
     "deepface>=0.0.93",
     "tensorflow>=2.15.0",
     "tf-keras>=2.15.0",
-    "opencv-python-headless>=4.8.0",
+    "opencv-python>=4.8.0",
     "pillow>=10.0.0",
 ]
 
@@ -47,9 +48,30 @@ _REPAIR_PACKAGES = [
     "tensorflow>=2.15.0",
     "tf-keras>=2.15.0",
     "deepface>=0.0.93",
-    "opencv-python-headless>=4.8.0",
+    "opencv-python>=4.8.0",
     "pillow>=10.0.0",
 ]
+
+
+def configure_tf_keras_env() -> None:
+    """Must run before any tensorflow/keras import.
+
+    RetinaFace (retina-face package) builds a Functional model with tf.keras /
+    tf_keras. Standalone Keras 3 leaves symbolic KerasTensors that cannot be
+    fed to TF ops — classic error:
+
+        A KerasTensor cannot be used as input to a TensorFlow function
+
+    TF_USE_LEGACY_KERAS=1 forces TensorFlow to use tf_keras (Keras 2 API).
+    """
+    os.environ.setdefault("TF_USE_LEGACY_KERAS", "1")
+    os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
+    # Avoid oneDNN noise / rare numeric issues on CPU
+    os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
+
+
+# Apply as soon as this module loads (safe if already set)
+configure_tf_keras_env()
 
 _install_lock = threading.Lock()
 _install_attempted = False
@@ -543,49 +565,102 @@ def download_selected_weights(
     if "Race" not in models:
         models.insert(0, "Race")
 
-    os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
+    configure_tf_keras_env()
     from deepface import DeepFace
 
     results: Dict[str, bool] = {}
     for mid in models:
         results[mid] = _build_one_model(DeepFace, mid, log)
 
-    # Trigger detector weight download (RetinaFace etc.) with a dummy image
-    det = (detector_backend or "opencv").strip() or "opencv"
-    if det != "opencv":
-        _log(log, f"Warming detector backend: {det} …")
-        try:
-            import numpy as np
-            from PIL import Image
-            import tempfile
-
-            arr = np.zeros((96, 96, 3), dtype=np.uint8)
-            arr[:] = (180, 140, 120)
-            with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as f:
-                Image.fromarray(arr).save(f.name, format="JPEG")
-                path = f.name
-            try:
-                DeepFace.analyze(
-                    img_path=path,
-                    actions=["race"],
-                    enforce_detection=False,
-                    detector_backend=det,
-                    silent=True,
-                )
-                results[f"detector:{det}"] = True
-                _log(log, f"  OK detector: {det}")
-            finally:
-                try:
-                    os.unlink(path)
-                except OSError:
-                    pass
-        except Exception as e:
-            results[f"detector:{det}"] = False
-            _log(log, f"  Detector warm note ({det}): {e}")
+    # Warm selected detector: download weights + one analyze pass
+    det = (detector_backend or "opencv").strip().lower() or "opencv"
+    results[f"detector:{det}"] = _warm_detector(DeepFace, det, log=log)
 
     ok_n = sum(1 for v in results.values() if v)
     _log(log, f"Weight download finished: {ok_n}/{len(results)} succeeded")
     return results
+
+
+def _short_err(exc: BaseException, limit: int = 220) -> str:
+    msg = str(exc).replace("\n", " ").strip()
+    if len(msg) > limit:
+        return msg[: limit - 1] + "…"
+    return msg
+
+
+def _warm_detector(
+    DeepFace: Any,
+    det: str,
+    *,
+    log: Optional[Callable[[str], None]] = None,
+) -> bool:
+    """Download detector weights and smoke-test with a tiny image.
+
+    RetinaFace requires TF_USE_LEGACY_KERAS (set by configure_tf_keras_env).
+    """
+    configure_tf_keras_env()
+    det = (det or "opencv").strip().lower() or "opencv"
+    _log(log, f"Warming detector backend: {det} …")
+
+    # 1) Prefer explicit build_model (downloads weights without full analyze)
+    if det != "opencv":
+        try:
+            if hasattr(DeepFace, "build_model"):
+                try:
+                    DeepFace.build_model(det, task="face_detector")
+                except TypeError:
+                    DeepFace.build_model(det)
+            _log(log, f"  OK detector weights: {det}")
+        except Exception as e:
+            _log(log, f"  Detector build note ({det}): {_short_err(e)}")
+            # Still try analyze — some backends only load on first use
+
+    # 2) Smoke-test analyze (proves end-to-end path for race tools)
+    try:
+        import tempfile
+
+        import numpy as np
+        from PIL import Image
+
+        # Slightly larger than 96px — some detectors reject tiny inputs
+        arr = np.zeros((160, 160, 3), dtype=np.uint8)
+        arr[:] = (180, 140, 120)
+        # Draw a simple face-like blob so Haar/SSD have something to find
+        arr[40:120, 40:120] = (210, 180, 160)
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as f:
+            Image.fromarray(arr).save(f.name, format="JPEG")
+            path = f.name
+        try:
+            DeepFace.analyze(
+                img_path=path,
+                actions=["race"],
+                enforce_detection=False,
+                detector_backend=det,
+                silent=True,
+            )
+            _log(log, f"  OK detector analyze: {det}")
+            return True
+        finally:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+    except Exception as e:
+        msg = _short_err(e)
+        # Keras 3 / RetinaFace mismatch — give a clear fix hint
+        if "KerasTensor" in str(e) or "legacy" in msg.lower():
+            _log(
+                log,
+                f"  Detector warm failed ({det}): Keras 3 incompatibility. "
+                "Restart the app so TF_USE_LEGACY_KERAS=1 is set before TensorFlow loads. "
+                f"Detail: {msg}",
+            )
+        else:
+            _log(log, f"  Detector warm note ({det}): {msg}")
+        # Race weights alone are still usable with another detector
+        if det != "opencv":
+            _log(log, "  Tip: try detector “OpenCV Haar” or “SSD” if RetinaFace keeps failing.")
+        return False
 
 
 def warm_deepface_models(

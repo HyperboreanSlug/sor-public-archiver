@@ -13,8 +13,10 @@ numpy>=1.26.0,<2.3
 deepface>=0.0.93
 tensorflow>=2.15.0
 tf-keras>=2.15.0
-opencv-python-headless>=4.8.0
+# Full opencv (not headless): ships Haar cascade XMLs DeepFace's opencv detector needs
+opencv-python>=4.8.0
 pillow>=10.0.0
+# RetinaFace works with TF 2.16+ only when TF_USE_LEGACY_KERAS=1 (set by the app).
 
 # Optional fallback (not required if deepface works):
 # torch>=2.0.0

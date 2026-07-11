@@ -3,6 +3,11 @@ setlocal EnableExtensions
 cd /d "%~dp0"
 title SOR Public Archiver
 
+REM RetinaFace + TF 2.16+/Keras 3: use legacy tf_keras API
+set "TF_USE_LEGACY_KERAS=1"
+set "TF_CPP_MIN_LOG_LEVEL=2"
+set "TF_ENABLE_ONEDNN_OPTS=0"
+
 REM Fast launcher: install core deps only, start GUI, exit.
 REM DeepFace / vision models install in the background inside gui.py
 REM (must NOT block here -- Launch SOR Archiver.vbs waits for this bat).
