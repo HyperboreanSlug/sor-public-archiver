@@ -75,3 +75,16 @@ custom_keywords.txt
 # Local secrets
 secrets.*
 credentials.*
+*.token
+*.pem
+*.p12
+*.pfx
+github_token*
+.gh-token
+.gh_token
+tokens/
+secrets/
+# Never commit release DB binaries (public copies go to GitHub Releases only)
+releases/offenders.db.zip
+releases/offenders_scrubbed.db
+releases/*.db.bak*
