@@ -35,6 +35,7 @@ class EthnicNameDatabase:
         self.hispanic_first_names: Set[str] = set()
         self.anglo_western_first_names: Set[str] = set()
         self.slavic_first_names: Set[str] = set()
+        self.african_american_first_names: Set[str] = set()
         self.african_american_surnames: Set[str] = set()
         self.native_american_surnames: Set[str] = set()
         self.european_surnames: Dict[str, Set[str]] = {}
@@ -132,6 +133,11 @@ class EthnicNameDatabase:
             for n in (data.get("slavic_first_names") or [])
             if n and str(n).strip()
         }
+        self.african_american_first_names = {
+            n.strip()
+            for n in (data.get("african_american_first_names") or [])
+            if n and str(n).strip()
+        }
 
         self.african_american_surnames = set(data.get("african_american_surnames", []))
         self.native_american_surnames = set(data.get("native_american_surnames", []))
@@ -171,6 +177,9 @@ class EthnicNameDatabase:
         self.hispanic_first_names = {"Alberto", "Carlos", "Maria", "Jose"}
         self.anglo_western_first_names = {"Amy", "John", "Robert", "Emily", "Andrey"}
         self.slavic_first_names = {"Andrei", "Ivan", "Dmitri", "Sergei"}
+        self.african_american_first_names = {
+            "DeShawn", "DeAndre", "Jamal", "Tyrone", "Lakisha", "Latoya",
+        }
         self.indian_ambiguous_surnames = {"Gill", "Perera", "Silva"}
 
     def _build_lookup_sets(self) -> None:
@@ -213,6 +222,7 @@ class EthnicNameDatabase:
         self._hispanic_first_lc = _fold_set(self.hispanic_first_names)
         self._anglo_first_lc = _fold_set(self.anglo_western_first_names)
         self._slavic_first_lc = _fold_set(self.slavic_first_names)
+        self._aa_first_lc = _fold_set(self.african_american_first_names)
         self._asian_lc = {
             group: {n.lower() for n in names}
             for group, names in self.asian_surnames.items()
@@ -251,7 +261,7 @@ class EthnicNameDatabase:
 
     def _first_name_signal(self, first_name: Optional[str]) -> str:
         """
-        Return one of: indian | hispanic | anglo | slavic | unknown
+        Return one of: indian | african_american | hispanic | anglo | slavic | unknown
 
         Note: *Andrey* is treated as Western/white; *Andrei* as Slavic.
         Neither boosts Indian surname confidence.
@@ -264,6 +274,9 @@ class EthnicNameDatabase:
         # only when explicitly in indian list
         if fn in self._indian_first_lc:
             return "indian"
+        # Distinctive African-American given names (DeShawn, Jamal, Lakisha…)
+        if fn in self._aa_first_lc:
+            return "african_american"
         # Slavic before Hispanic so Ivan/Andrei stay Slavic (not Spanish-default)
         if fn in self._slavic_first_lc:
             return "slavic"
@@ -308,6 +321,8 @@ class EthnicNameDatabase:
             return "unknown"
         if "indian" in signals:
             return "indian"
+        if "african_american" in signals:
+            return "african_american"
         if "slavic" in signals:
             return "slavic"
         if "hispanic" in signals:
@@ -442,7 +457,13 @@ class EthnicNameDatabase:
             elif ethnicity.startswith("Asian"):
                 score = 1.0
             elif ethnicity == "African American":
-                score = 0.9
+                score = 0.95
+                if fn_signal == "african_american":
+                    score += 0.5  # DeShawn Washington, Jamal Jefferson
+                elif fn_signal in ("anglo", "slavic"):
+                    score -= 0.35  # John Washington — anglo given name dampens
+                elif fn_signal == "hispanic":
+                    score -= 0.2
             elif ethnicity in ("Jewish", "Portuguese", "Arabic"):
                 score = 0.85
                 if ethnicity == "Portuguese" and fn_signal == "hispanic":
@@ -615,11 +636,20 @@ class EthnicNameDatabase:
             base = 0.85 if not multi_family else 0.7
         elif best_match.startswith("Asian"):
             base = 0.85 if not multi_family else 0.7
+        elif best_match == "African American":
+            base = 0.85 if not multi_family else 0.7
         else:
             base = 0.8 if len(matches) == 1 else 0.65
 
         # First-name adjustment
-        if first_name_signal == "indian":
+        if best_match == "African American":
+            if first_name_signal == "african_american":
+                base = min(1.0, base + 0.12)  # DeShawn Washington
+            elif first_name_signal in ("anglo", "slavic"):
+                base = min(base, 0.45)  # John Washington
+            elif first_name_signal == "hispanic":
+                base = min(base, 0.5)
+        elif first_name_signal == "indian":
             if best_match.startswith("Indian"):
                 base = min(1.0, base + (0.4 if is_ambiguous else 0.12))
             elif best_match in ("Hispanic", "Portuguese"):
