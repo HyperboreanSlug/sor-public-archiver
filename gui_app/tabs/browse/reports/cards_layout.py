@@ -322,19 +322,19 @@ class ReportsCardsLayoutMixin:
 
 
     def _reports_load_thumb(self, photo_path: str, max_size: tuple) -> Optional[Any]:
-        """Load CTkImage fitted to *max_size* (no crop, keep aspect); keep refs for GC."""
+        """Load CTkImage that *fills* the tile photo box (cover, no black bars)."""
         try:
             from PIL import Image
 
-            from gui_app.shared.export_card_photo import contain_photo
+            from gui_app.shared.export_card_photo import cover_photo
 
             img = Image.open(photo_path)
             if getattr(img, "n_frames", 1) > 1:
                 img.seek(0)
             img = img.convert("RGB")
             box = (max(1, int(max_size[0])), max(1, int(max_size[1])))
-            # Letterbox into the tile box — same rules as export cards / HTML contain
-            fitted = contain_photo(img, box)
+            # Fill the available area — letterbox looked like a black box / ~50% photo
+            fitted = cover_photo(img, box)
             ctk_img = ctk.CTkImage(
                 light_image=fitted, dark_image=fitted, size=box
             )

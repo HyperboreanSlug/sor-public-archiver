@@ -75,7 +75,10 @@ def load_mugshot(record: Mapping[str, Any], box: Tuple[int, int]) -> Image.Image
 
 
 def contain_photo(img: Image.Image, box: Tuple[int, int]) -> Image.Image:
-    """Scale photo to fit entirely inside *box* (no crop/zoom); pad with card bg."""
+    """Scale photo to fit entirely inside *box* (no crop/zoom); pad with card bg.
+
+    Used for **export** name cards so the full mugshot is visible.
+    """
     tw, th = int(box[0]), int(box[1])
     if tw < 1 or th < 1:
         return img
@@ -90,6 +93,20 @@ def contain_photo(img: Image.Image, box: Tuple[int, int]) -> Image.Image:
     else:
         out.paste(fitted.convert("RGB"), (x, y))
     return out
+
+
+def cover_photo(img: Image.Image, box: Tuple[int, int]) -> Image.Image:
+    """Scale/crop photo to *fill* the box (no letterbox bars). For Reports UI tiles."""
+    tw, th = int(box[0]), int(box[1])
+    if tw < 1 or th < 1:
+        return img
+    # Face-biased crop (slightly above center) matches mugshot framing
+    return ImageOps.fit(
+        img.convert("RGB") if img.mode != "RGB" else img,
+        (tw, th),
+        method=Image.Resampling.LANCZOS,
+        centering=(0.5, 0.35),
+    )
 
 
 def is_backdrop(r: int, g: int, b: int) -> bool:

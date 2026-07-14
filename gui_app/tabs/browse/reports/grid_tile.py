@@ -146,10 +146,10 @@ class ReportsGridTileMixin:
         border: str,
         index: int,
     ):
-        """Grid tile: max photo, min chrome; checkbox + Export (single card)."""
-        # Fixed height: one action row (select + verdict + one-shot Export)
-        _W, _H = 180, 328
-        _PHOTO_H = 200
+        """Grid tile: max photo fills box; checkbox + Export (single card)."""
+        # Photo takes most of the tile; chrome stays compact under it
+        _W, _H = 180, 340
+        _PHOTO_H = 220
         card = ctk.CTkFrame(
             parent,
             fg_color=C["panel"],
@@ -162,18 +162,18 @@ class ReportsGridTileMixin:
         card.grid_propagate(False)
         card.pack_propagate(False)
 
-        # Photo first — almost full width, minimal padding
+        # Photo fills full tile width and allotted height (cover, no letterbox)
         photo_wrap = ctk.CTkFrame(
             card, fg_color=C["tree_bg"], corner_radius=0, height=_PHOTO_H,
         )
-        photo_wrap.pack(fill="x", padx=1, pady=(1, 0))
+        photo_wrap.pack(fill="x", padx=0, pady=0)
         photo_wrap.pack_propagate(False)
         photo_lbl = ctk.CTkLabel(
             photo_wrap, text="—", font=FONT_SM, text_color=C["dim"],
         )
-        photo_lbl.place(relx=0.5, rely=0.5, anchor="center")
+        photo_lbl.place(relx=0, rely=0, relwidth=1, relheight=1)
         if has_photo:
-            thumb = self._reports_load_thumb(photo_path, (_W - 4, _PHOTO_H - 2))
+            thumb = self._reports_load_thumb(photo_path, (_W, _PHOTO_H))
             if thumb is not None:
                 photo_lbl.configure(image=thumb, text="")
 
