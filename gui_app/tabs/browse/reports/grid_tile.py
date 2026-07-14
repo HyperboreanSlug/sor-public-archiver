@@ -91,19 +91,39 @@ class ReportsGridTileMixin:
 
     @staticmethod
     def _reports_summarize_crime(crime: str, *, max_len: int = 140) -> str:
-        """Short human summary for Reports cards/HTML (never the full statute dump)."""
+        """Short human crime labels only — never statute dumps or registry junk."""
         try:
             from scraper.crime_summary import summarize_crime
 
-            return summarize_crime(crime, max_len=max_len)
+            out = summarize_crime(crime, max_len=max_len)
         except Exception:
-            s = " ".join((crime or "").split())
+            out = ""
+        if out:
+            s = " ".join(str(out).split())
             if len(s) <= max_len:
                 return s
             cut = s[: max_len - 1]
             if " " in cut:
                 cut = cut.rsplit(" ", 1)[0]
-            return cut.rstrip(" ,;:") + "…"
+            return cut.rstrip(" ,;:·") + "…"
+        s = " ".join((crime or "").split())
+        # Drop common non-crime noise if summarize failed
+        for pat in (
+            r"(?i)^scars,?\s*marks\s+and\s+tattoos\s*[—\-:]+\s*",
+            r"(?i)no\s+photograph\s+available[^.]*\.?",
+        ):
+            import re
+
+            s = re.sub(pat, " ", s)
+        s = " ".join(s.split())
+        if not s:
+            return ""
+        if len(s) <= max_len:
+            return s
+        cut = s[: max_len - 1]
+        if " " in cut:
+            cut = cut.rsplit(" ", 1)[0]
+        return cut.rstrip(" ,;:") + "…"
 
 
     def _reports_add_grid_tile(
@@ -157,7 +177,7 @@ class ReportsGridTileMixin:
             if thumb is not None:
                 photo_lbl.configure(image=thumb, text="")
 
-        # Text chrome packed tight under photo
+        # Name + LISTED; crime summarized (no locations); conf · state restored
         display_name = self._reports_grid_display_name(
             first,
             middle,
@@ -176,7 +196,6 @@ class ReportsGridTileMixin:
             height=16,
         ).pack(fill="x", padx=3, pady=(1, 0))
 
-        # Single solid label — nested Frame+place often draws blank/clipped in CTk
         race_u = str(race or "—").strip().upper() or "—"
         ctk.CTkLabel(
             card,
@@ -185,38 +204,30 @@ class ReportsGridTileMixin:
             text_color="#ffffff",
             fg_color="#7a1f1f",
             corner_radius=4,
-            height=26,
+            height=24,
             anchor="center",
         ).pack(fill="x", padx=2, pady=(2, 1))
 
-        crime_short = self._reports_summarize_crime(crime, max_len=78)
-        crime_line = f"Crime: {crime_short}" if crime_short else "Crime: —"
-        ctk.CTkLabel(
+        # Crime only (summarized; locations stripped in crime_summary)
+        crime_short = self._reports_summarize_crime(crime, max_len=72)
+        crime_lbl = ctk.CTkLabel(
             card,
-            text=crime_line,
+            text=crime_short or "—",
             font=("Segoe UI", 10),
             text_color=C["text"] if crime_short else C["dim"],
             anchor="nw",
             justify="left",
             wraplength=_W - 10,
-            height=26,
-        ).pack(fill="x", padx=3, pady=(1, 0))
+            height=36,
+        )
+        crime_lbl.pack(fill="x", padx=3, pady=(1, 0))
 
-        face_bit = ""
-        if df:
-            flab = df.get("predicted_label") or df.get("top_label") or ""
-            fconf = df.get("top_confidence")
-            if flab:
-                try:
-                    face_bit = f" · {flab}@{float(fconf):.0%}"
-                except (TypeError, ValueError):
-                    face_bit = f" · {flab}"
         meta_row = ctk.CTkFrame(card, fg_color="transparent", height=14)
         meta_row.pack(fill="x", padx=3, pady=(0, 0))
         meta_row.pack_propagate(False)
         ctk.CTkLabel(
             meta_row,
-            text=f"{conf:.2f} · {state}{face_bit}",
+            text=f"{conf:.2f} · {state}",
             font=("Segoe UI", 9),
             text_color=C["muted"],
             anchor="w",
@@ -230,7 +241,7 @@ class ReportsGridTileMixin:
         )
         status_lbl.pack(side="right")
 
-        # Bottom: [select] · Incorrect · Correct · Export(card) · Skip
+        # Bottom: [select] · ✗ · ✓ · Export · Skip · Open (online listing)
         actions = ctk.CTkFrame(card, fg_color="transparent", height=24)
         actions.pack(fill="x", padx=2, pady=(1, 2), side="bottom")
         actions.pack_propagate(False)
@@ -310,9 +321,15 @@ class ReportsGridTileMixin:
         )
         export_btn.pack(side="left", padx=(0, 2))
         ctk.CTkButton(
-            actions, text="Skip", width=32, height=20,
+            actions, text="Skip", width=30, height=20,
             command=lambda: _set("skip"),
             fg_color=C["elevated"], hover_color=C["border"], text_color=C["muted"],
+            border_width=1, border_color=C["border"], font=("Segoe UI", 9),
+        ).pack(side="left", padx=(0, 2))
+        ctk.CTkButton(
+            actions, text="Open", width=36, height=20,
+            command=lambda m=mc: self._reports_open_online_listing(m),
+            fg_color=C["elevated"], hover_color=C["border"], text_color=C["text"],
             border_width=1, border_color=C["border"], font=("Segoe UI", 9),
         ).pack(side="left")
 

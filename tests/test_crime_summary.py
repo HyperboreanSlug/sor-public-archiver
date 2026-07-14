@@ -41,6 +41,24 @@ class CrimeSummaryTests(unittest.TestCase):
         self.assertEqual(summarize_crime(""), "")
         self.assertEqual(summarize_crime(None), "")
 
+    def test_strips_city_state_and_county(self):
+        raw = (
+            "SEX BAT/ WPN. OR FORCE; F.S. 794.011(3); Miami-Dade, FL; "
+            "Guilty/convict; Sexual Battery"
+        )
+        out = summarize_crime(raw)
+        self.assertIn("Sexual battery", out)
+        self.assertNotIn("Miami", out)
+        self.assertNotIn("FL", out)
+        self.assertNotIn("Guilty", out)
+
+    def test_strips_address_trail(self):
+        raw = "Sexual battery; residence at 123 Main St, Springfield, IL 62701"
+        out = summarize_crime(raw, max_len=80)
+        self.assertIn("Sexual battery", out)
+        self.assertNotIn("Main St", out)
+        self.assertNotIn("Springfield", out)
+
 
 if __name__ == "__main__":
     unittest.main()

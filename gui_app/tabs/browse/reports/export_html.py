@@ -154,29 +154,16 @@ class ReportsExportHtmlMixin:
             vclass = _esc(verdict)
             race_disp = _format_race_display(mc.expected_race) or (mc.expected_race or "—")
             race = _esc(str(race_disp).upper())
-            eth = _esc(mc.likely_ethnicity)
-            conf = f"{float(mc.confidence or 0):.2f}"
             crime = self._reports_crime_text(rec)
-            # Reports HTML always uses summarized crime; full text only in Misclassify
+            # Description = crime only (summarized to fit); no conf/state/face dump
             crime_short = self._reports_summarize_crime(
-                crime, max_len=140 if compact else 180
+                crime, max_len=90 if compact else 160
             )
             crime_html = (
-                f'<p class="crime" title="{_esc(crime)}">'
-                f'<span class="crime-label">Crime</span> {_esc(crime_short)}</p>'
+                f'<p class="crime" title="{_esc(crime_short)}">{_esc(crime_short)}</p>'
                 if crime_short
-                else '<p class="crime"><span class="crime-label">Crime</span> —</p>'
+                else '<p class="crime">—</p>'
             )
-            df = rec.get("_deepface") or {}
-            face_bit = ""
-            if df:
-                flab = df.get("predicted_label") or df.get("top_label") or ""
-                fconf = df.get("top_confidence")
-                if flab:
-                    try:
-                        face_bit = f" · face {flab}@{float(fconf):.0%}"
-                    except (TypeError, ValueError):
-                        face_bit = f" · face {flab}"
             badge = _esc(self._reports_verdict_label_short(verdict))
             if compact:
                 cards_html.append(
@@ -190,7 +177,6 @@ class ReportsExportHtmlMixin:
       <span class="listed-race">{race}</span>
     </div>
     {crime_html}
-    <p class="meta">{_esc(state)} · {conf}{ _esc(face_bit) } · #{i}</p>
     <p class="badge-line">{badge}</p>
     {link}
   </div>
@@ -212,9 +198,6 @@ class ReportsExportHtmlMixin:
       <span class="listed-race">{race}</span>
     </div>
     {crime_html}
-    <p class="vs-eth">vs surname ethnicity: <strong>{eth}</strong></p>
-    <p class="meta">Confidence {conf} · State {_esc(state)}{(' · Middle: ' + _esc(middle)) if middle else ''}{_esc(face_bit)}</p>
-    <p class="names">Matched: {_esc('; '.join(mc.matching_names[:5]) if mc.matching_names else '—')}</p>
     {link}
   </div>
 </article>"""

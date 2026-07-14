@@ -68,6 +68,25 @@ _COURT_JUNK = re.compile(
     r")$"
 )
 
+# Location / address noise that should never appear in report crime lines
+_LOCATION_TRAIL = re.compile(
+    r"(?ix)"
+    r"(?:"
+    r",?\s*(?:in\s+)?(?:the\s+)?(?:city|county|state)\s+of\s+.+$"
+    r"|,?\s*(?:resides?|residence|address|located)\s*(?:at|in|:)\s*.+$"
+    r"|,?\s*\d{1,6}\s+[A-Za-z0-9.\- ]{2,40}\s+"
+    r"(?:st|street|ave|avenue|blvd|rd|road|dr|drive|ln|lane|ct|court|way|hwy)\b.+$"
+    r")$"
+)
+_CITY_STATE = re.compile(
+    r"(?ix)\b[A-Za-z][A-Za-z.\-']+(?:\s+[A-Za-z][A-Za-z.\-']+){0,3}"
+    r",\s*[A-Z]{2}\b(?:\s+\d{5}(?:-\d{4})?)?"
+)
+_COUNTY_LOC = re.compile(
+    r"(?ix)\b[A-Za-z][A-Za-z.\-']+(?:\s+[A-Za-z][A-Za-z.\-']+)?\s+"
+    r"County(?:,\s*[A-Z]{2})?\b"
+)
+
 # Known short registry codes → readable labels (first match wins)
 _CODE_MAP = [
     (re.compile(r"(?i)SEX\s*BAT\s*/?\s*WPN\.?\s*OR\s*FORCE"), "Sexual battery (weapon/force)"),
@@ -113,6 +132,19 @@ def _strip_statute_cites(s: str) -> str:
     t = re.sub(r"\b\d{5,}\b", " ", t)  # case / booking numbers
     t = re.sub(r"\s{2,}", " ", t)
     return _norm(t)
+
+
+def _strip_location_junk(s: str) -> str:
+    """Remove city/state, county, address trails from offense text."""
+    t = s or ""
+    t = _LOCATION_TRAIL.sub(" ", t)
+    t = _CITY_STATE.sub(" ", t)
+    t = _COUNTY_LOC.sub(" ", t)
+    t = re.sub(r"(?i)\b(?:guilty/?convict(?:ed)?|adjudication\s+withheld)\b", " ", t)
+    t = re.sub(r"(?i)\b(?:at\s+)?(?:last\s+)?known\s+(?:address|location)\b.*$", " ", t)
+    t = re.sub(r"\s*[|;]\s*", " · ", t)
+    t = re.sub(r"(?:\s*·\s*)+", " · ", t)
+    return _norm(t.strip(" ·;,"))
 
 
 def _title_offense(s: str) -> str:
@@ -206,8 +238,7 @@ def _extract_from_clause(clause: str) -> Optional[str]:
 
     # Drop court/location trailing junk for remaining short phrases
     c2 = _COURT_JUNK.sub("", c).strip(" ;,")
-    c2 = re.sub(r"(?i)\b[A-Z][a-z]+,\s*[A-Z]{2}\b", " ", c2)  # City, ST
-    c2 = _norm(c2)
+    c2 = _strip_location_junk(c2)
     if not c2 or len(c2) < 4:
         return None
     if _DROP_CLAUSE.match(c2) or _STATUTE_ONLY.match(c2):
@@ -216,13 +247,16 @@ def _extract_from_clause(clause: str) -> Optional[str]:
     if len(c2) > 90:
         # Try first clause-like fragment
         c2 = re.split(r"\s+where\s+|\s+by\s+offender\s+", c2, maxsplit=1)[0]
-        c2 = _norm(c2)
+        c2 = _strip_location_junk(_norm(c2))
         if len(c2) > 80:
             return None
     # Skip pure person names / address-like leftovers
     if re.match(r"^[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3}$", c2) and not re.search(
         r"(?i)sexual|lewd|rape|child|assault|battery", c2
     ):
+        return None
+    # Skip leftover pure locations
+    if _CITY_STATE.fullmatch(c2) or _COUNTY_LOC.fullmatch(c2):
         return None
     return _title_offense(c2)
 
@@ -272,13 +306,13 @@ def summarize_crime(text: Optional[str], *, max_len: int = 140) -> str:
 
     # If nothing parsed, fall back to first non-junk fragment stripped
     if not labels:
-        cleaned = _strip_statute_cites(_strip_dates(raw))
+        cleaned = _strip_location_junk(_strip_statute_cites(_strip_dates(raw)))
         cleaned = re.sub(
             r"(?i)commission of or attempt, solicit, or conspire to commit",
             "",
             cleaned,
         )
-        cleaned = _norm(cleaned)
+        cleaned = _strip_location_junk(_norm(cleaned))
         if cleaned and len(cleaned) <= max_len:
             return cleaned
         if cleaned:
@@ -290,12 +324,16 @@ def summarize_crime(text: Optional[str], *, max_len: int = 140) -> str:
 
     labels = _dedupe_preserve(labels)
 
-    # Never show lewd/lascivious in report summaries
+    # Never show lewd/lascivious or pure location scraps in report summaries
     labels = [
         x
         for x in labels
         if not re.search(r"(?i)\blewd\b|\blascivious\b", x)
+        and not _CITY_STATE.fullmatch(x)
+        and not _COUNTY_LOC.fullmatch(x)
     ]
+    labels = [_strip_location_junk(x) for x in labels]
+    labels = [x for x in labels if x and len(x) >= 3]
 
     # Prefer "Sexual battery (…)" over bare "Sexual battery" when both appear
     has_sb_qual = any(

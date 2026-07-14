@@ -78,7 +78,7 @@ class ReportsBuildMixin:
         self.report_m_correct = self.report_stats_bar
         self.report_m_unreviewed = self.report_stats_bar
 
-        flow = _FlowRow(top, padx=3, pady=1)
+        flow = _FlowRow(top, padx=4, pady=2)
         self._reports_toolbar_flow = flow
         h = flow.host
 
@@ -86,12 +86,12 @@ class ReportsBuildMixin:
             chip = flow.chip()
             ctk.CTkLabel(
                 chip, text=text, font=FONT_SM, text_color=C["muted"]
-            ).pack(side="left", padx=(2, 3), pady=1)
+            ).pack(side="left", padx=(2, 4), pady=2)
             return chip
 
         flow.add(
             ctk.CTkButton(
-                h, text="Analyze & build", width=120, height=28,
+                h, text="Analyze & build", width=128, height=28,
                 command=self._reports_build_list,
                 fg_color=C["accent"], hover_color=C["accent_hover"], text_color=C["bg"],
             )
@@ -148,7 +148,7 @@ class ReportsBuildMixin:
         ctk.CTkComboBox(
             listed,
             variable=self.report_listed_filter,
-            width=100,
+            width=110,
             values=["All", "White", "Black", "Other"],
             fg_color=C["bg"],
             border_color=C["border"],
@@ -164,7 +164,7 @@ class ReportsBuildMixin:
         ctk.CTkComboBox(
             actual,
             variable=self.report_actual_filter,
-            width=150,
+            width=168,
             values=[
                 "All", "Hispanic", "Indian", "Asian", "African American",
                 "Arabic", "European", "Jewish", "Portuguese",
@@ -186,7 +186,7 @@ class ReportsBuildMixin:
         psize = _lbl_chip("Page size")
         self.report_max_var = ctk.IntVar(value=48)
         page_size_entry = ctk.CTkEntry(
-            psize, textvariable=self.report_max_var, width=48,
+            psize, textvariable=self.report_max_var, width=52,
             fg_color=C["bg"], border_color=C["border"], text_color=C["text"],
         )
         page_size_entry.pack(side="left", padx=(0, 2), pady=2)
@@ -197,8 +197,9 @@ class ReportsBuildMixin:
 
         show = _lbl_chip("Show")
         self.report_verdict_filter = ctk.StringVar(value="Unconfirmed")
+        # Wide enough for "Confirmed incorrect" — never clip menu labels
         ctk.CTkComboBox(
-            show, variable=self.report_verdict_filter, width=170,
+            show, variable=self.report_verdict_filter, width=196,
             values=[
                 "Unconfirmed", "Confirmed incorrect", "Confirmed correct", "All",
             ],
@@ -210,14 +211,14 @@ class ReportsBuildMixin:
 
         flow.add(
             ctk.CTkButton(
-                h, text="Confirm unchecked", width=130,
+                h, text="Confirm unchecked", width=148, height=28,
                 command=self._reports_confirm_unchecked,
                 fg_color="#5c3030", hover_color="#7a4040", text_color=C["text"],
             )
         )
         flow.add(
             ctk.CTkButton(
-                h, text="Open HTML", width=100,
+                h, text="Open HTML", width=108, height=28,
                 command=self._reports_open_html,
                 fg_color=C["elevated"], hover_color=C["border"], text_color=C["text"],
                 border_width=1, border_color=C["border"],
@@ -225,7 +226,7 @@ class ReportsBuildMixin:
         )
         flow.add(
             ctk.CTkButton(
-                h, text="Export CSV", width=90,
+                h, text="Export CSV", width=100, height=28,
                 command=self._reports_export_csv,
                 fg_color=C["elevated"], hover_color=C["border"], text_color=C["text"],
                 border_width=1, border_color=C["border"],
@@ -260,7 +261,7 @@ class ReportsBuildMixin:
             self._reports_export_selected_init()
 
         # Pagination only (stats live on the top strip)
-        line2 = _FlowRow(top, padx=3, pady=0)
+        line2 = _FlowRow(top, padx=4, pady=2)
         self._report_page = 0
         self._report_pool: list = []
         line2.add(

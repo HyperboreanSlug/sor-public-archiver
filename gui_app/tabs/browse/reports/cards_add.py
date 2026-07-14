@@ -155,34 +155,38 @@ class ReportsCardsAddMixin:
         )
         status_lbl.pack(side="right")
 
-        # LISTED AS + eth + conf + state (one line)
-        listed = f"LISTED {str(race).upper()}"
-        face_bit = ""
-        if df:
-            flab = df.get("predicted_label") or df.get("top_label") or ""
-            fconf = df.get("top_confidence")
-            try:
-                face_bit = f"  ·  face {flab}@{float(fconf):.0%}" if flab else ""
-            except (TypeError, ValueError):
-                face_bit = f"  ·  face {flab}" if flab else ""
+        # Listed race banner
         ctk.CTkLabel(
             body,
-            text=f"{listed}  ·  vs {eth}  ·  {conf:.2f}  ·  {state}{face_bit}",
+            text=f"LISTED {str(race).upper()}",
             font=FONT_SM,
-            text_color=C["muted"],
-            anchor="w",
-        ).pack(fill="x")
+            text_color="#ffffff",
+            fg_color="#7a1f1f",
+            corner_radius=4,
+            anchor="center",
+            height=22,
+        ).pack(fill="x", pady=(2, 2))
 
-        # Reports: summarized crime only (full text lives in Misclassify detail)
-        crime_sum = self._reports_summarize_crime(crime, max_len=120)
+        # Crime summarized (no locations / statute dumps)
+        crime_sum = self._reports_summarize_crime(crime, max_len=140)
         ctk.CTkLabel(
             body,
-            text=f"Crime: {crime_sum}" if crime_sum else "Crime: —",
+            text=crime_sum or "—",
             font=FONT_SM,
             text_color=C["text"] if crime_sum else C["dim"],
             anchor="w",
             justify="left",
             wraplength=520,
+            height=36,
+        ).pack(fill="x")
+
+        # Confidence · state (restored)
+        ctk.CTkLabel(
+            body,
+            text=f"{conf:.2f} · {state}",
+            font=FONT_SM,
+            text_color=C["muted"],
+            anchor="w",
         ).pack(fill="x")
 
         actions = ctk.CTkFrame(body, fg_color="transparent")
@@ -248,6 +252,12 @@ class ReportsCardsAddMixin:
             actions, text="Skip", width=50, height=26,
             command=lambda: _set("skip"),
             fg_color=C["elevated"], hover_color=C["border"], text_color=C["muted"],
+            border_width=1, border_color=C["border"], font=FONT_SM,
+        ).pack(side="left", padx=(0, 4))
+        ctk.CTkButton(
+            actions, text="Open", width=52, height=26,
+            command=lambda m=mc: self._reports_open_online_listing(m),
+            fg_color=C["elevated"], hover_color=C["border"], text_color=C["text"],
             border_width=1, border_color=C["border"], font=FONT_SM,
         ).pack(side="left", padx=(0, 4))
 

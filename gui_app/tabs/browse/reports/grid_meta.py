@@ -50,18 +50,35 @@ from gui_app.widgets import (
 
 
 class ReportsGridMetaMixin:
+    def _reports_resolve_online_url(self, mc) -> str:
+        """Live registry listing URL when available."""
+        rec = (getattr(mc, "record", None) or {}) if mc is not None else {}
+        raw_url = (rec.get("source_url") or "").strip()
+        try:
+            from scraper.public_links import openable_url_for_record
+
+            return (openable_url_for_record(rec) or raw_url or "").strip()
+        except Exception:
+            return raw_url
+
+    def _reports_open_online_listing(self, mc) -> None:
+        """Open the online (live) registry listing in the browser."""
+        url = self._reports_resolve_online_url(mc)
+        if url:
+            try:
+                webbrowser.open(url)
+            except Exception as e:
+                messagebox.showerror("Open listing", str(e))
+            return
+        # No live URL — fall back to archived HTML / photo
+        self._reports_open_record_links(mc)
+
     def _reports_open_record_links(self, mc) -> None:
         """Open archived HTML, else live registry URL, else mugshot (NSOPW-style)."""
         rec = (getattr(mc, "record", None) or {}) if mc is not None else {}
         html_raw = (rec.get("report_html_path") or "").strip()
         photo_raw = (rec.get("photo_path") or "").strip()
-        raw_url = (rec.get("source_url") or "").strip()
-        try:
-            from scraper.public_links import openable_url_for_record
-
-            url = openable_url_for_record(rec) or raw_url
-        except Exception:
-            url = raw_url
+        url = self._reports_resolve_online_url(mc)
 
         def _resolve(raw: str) -> Optional[Path]:
             if not raw:
@@ -93,6 +110,11 @@ class ReportsGridMetaMixin:
         photo_path = _resolve(photo_raw)
         if photo_path is not None and hasattr(self, "_open_path"):
             self._open_path(photo_path)
+        else:
+            messagebox.showinfo(
+                "Open listing",
+                "No online URL or archived page for this record.",
+            )
 
 
     @staticmethod
@@ -107,49 +129,60 @@ class ReportsGridMetaMixin:
 
     @staticmethod
     def _reports_crime_text(rec: Optional[Dict[str, Any]]) -> str:
-        """Best available crime / offense text for report cards and exports."""
+        """Best available crime / offense text for report cards and exports.
+
+        Prefers real offense labels over bare statute codes / registry junk.
+        """
         if not rec:
             return ""
-        keys = (
+        # Prefer descriptive offense fields; statute last (often a code dump)
+        primary_keys = (
             "crime",
             "offense_description",
-            "offense_type",
+            "conviction_offense",
             "offense",
             "offenses",
             "charges",
             "charge",
-            "conviction_offense",
-            "statute",
-            "statute_description",
+            "offense_type",
         )
-        for key in keys:
-            raw = rec.get(key)
-            if raw is None:
-                continue
-            s = str(raw).strip()
-            if s and s.lower() not in ("none", "null", "n/a", "na", "-"):
-                return s
-        # Nested blobs sometimes hold the only offense text
+        fallback_keys = ("statute_description", "statute")
+
+        def _ok(s: str) -> bool:
+            t = (s or "").strip()
+            if not t or t.lower() in ("none", "null", "n/a", "na", "-", "—"):
+                return False
+            # Pure code fragments (e.g. "s. 800.04(5)(c)1") without words
+            if re.fullmatch(r"[\d\s\.\(\)§sS,\-/]+", t):
+                return False
+            return True
+
+        def _from(mapping: Dict[str, Any], keys: tuple) -> str:
+            for key in keys:
+                raw = mapping.get(key)
+                if raw is None:
+                    continue
+                s = str(raw).strip()
+                if _ok(s):
+                    return s
+            return ""
+
+        hit = _from(dict(rec), primary_keys) or _from(dict(rec), fallback_keys)
+        if hit:
+            return hit
         for blob_key in ("raw_data_json", "sources_json", "raw_data"):
             blob = rec.get(blob_key)
             if not blob:
                 continue
             try:
-                if isinstance(blob, str):
-                    data = json.loads(blob)
-                else:
-                    data = blob
+                data = json.loads(blob) if isinstance(blob, str) else blob
             except Exception:
                 continue
             if not isinstance(data, dict):
                 continue
-            for key in keys:
-                raw = data.get(key)
-                if raw is None:
-                    continue
-                s = str(raw).strip()
-                if s and s.lower() not in ("none", "null", "n/a", "na", "-"):
-                    return s
+            hit = _from(data, primary_keys) or _from(data, fallback_keys)
+            if hit:
+                return hit
         return ""
 
 
