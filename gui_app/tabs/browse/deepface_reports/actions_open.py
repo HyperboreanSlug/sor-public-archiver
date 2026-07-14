@@ -1,0 +1,120 @@
+"""DfrOpenMixin."""
+from __future__ import annotations
+
+import csv
+import json
+import os
+import queue
+import re
+import subprocess
+import sys
+import threading
+import traceback
+import webbrowser
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Set, Tuple
+
+import tkinter as tk
+from tkinter import filedialog, messagebox, ttk
+
+import customtkinter as ctk
+
+from gui_app.paths import ROOT
+from gui_app.theme import (
+    C,
+    FONT_BOLD,
+    FONT_MONO,
+    FONT_SECTION,
+    FONT_SM,
+    FONT_TITLE,
+    FONT_UI,
+)
+from gui_app.widgets import (
+    _bind_tree_scroll_isolation,
+    _card,
+    _enable_tree_column_sort,
+    _format_race_display,
+    _format_state_display,
+    _hpaned,
+    _misclass_race_bucket,
+    _muted,
+    _render_bar_chart,
+    _render_pie_chart,
+    _section_label,
+    _stretch_columns,
+    _tree_frame,
+    _vpaned,
+    _wire_wide_scroll,
+)
+
+
+class DfrOpenMixin:
+    def _dfr_open_html(self) -> None:
+        path = getattr(self, "_dfr_html_path", None)
+        if path is None or not path.is_file():
+            return
+        if hasattr(self, "_open_path"):
+            self._open_path(path)
+        else:
+            try:
+                if os.name == "nt":
+                    os.startfile(str(path))  # type: ignore[attr-defined]
+                else:
+                    webbrowser.open(path.as_uri())
+            except Exception as e:
+                messagebox.showerror("Open HTML", str(e))
+
+
+    def _dfr_open_url(self) -> None:
+        url = (getattr(self, "_dfr_source_url", None) or "").strip()
+        if not url:
+            return
+        try:
+            webbrowser.open(url)
+        except Exception as e:
+            messagebox.showerror("Open URL", str(e))
+
+
+    def _dfr_open_photo(self) -> None:
+        path = getattr(self, "_dfr_photo_open_path", None)
+        if path is None or not path.is_file():
+            return
+        if hasattr(self, "_open_path"):
+            self._open_path(path)
+        else:
+            try:
+                if os.name == "nt":
+                    os.startfile(str(path))  # type: ignore[attr-defined]
+                else:
+                    webbrowser.open(path.as_uri())
+            except Exception as e:
+                messagebox.showerror("Open photo", str(e))
+
+
+    def _dfr_copy_detail(self) -> None:
+        text = (getattr(self, "_dfr_meta_text", None) or "").strip()
+        name = ""
+        try:
+            name = (self.dfr_name.cget("text") or "").strip()
+        except Exception:
+            pass
+        if name and name != "—" and not text.startswith(name):
+            text = f"{name}\n{text}" if text else name
+        if not text:
+            return
+        if hasattr(self, "_copy_to_clipboard"):
+            self._copy_to_clipboard(text, toast="DeepFace detail copied")
+            if hasattr(self, "dfr_status"):
+                try:
+                    self.dfr_status.configure(text="Copied detail to clipboard")
+                except Exception:
+                    pass
+        else:
+            try:
+                self.clipboard_clear()
+                self.clipboard_append(text)
+            except Exception as e:
+                messagebox.showerror("Copy", str(e))
+
+

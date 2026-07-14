@@ -87,6 +87,13 @@ tokens/
 secrets/
 # Never commit release DB binaries (public copies go to GitHub Releases only)
 releases/offenders.db.zip
-releases/offenders.photos.*.zip
 releases/offenders_scrubbed.db
 releases/*.db.bak*
+# Local / migration artifacts (never ship)
+_legacy*/
+*_monolith_backup.py
+gui_monolith_backup.py
+_compare_*.txt
+_t_*.py
+deepface_setup.log
+*.db-*

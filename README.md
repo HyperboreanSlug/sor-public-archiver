@@ -1,15 +1,23 @@
-# Public SOR Data Archiver
+# Public SOR Data Archiver (2.0)
 
 Tools for archiving and searching **publicly available** U.S. sex offender registry data.
 
 > **Legal / ethical note:** This project only targets data that jurisdictions already publish for public safety. Respect each site’s terms of use, rate limits, and robots rules. Do not mass-scrape NSOPW or other services that prohibit automated access. Scraped/exported files can contain sensitive personal data — keep them private and never commit them to git.
 
+**2.0** rebuilds the desktop UI on the modular **mapa** chassis (lazy tabs, split widgets, export cards) while keeping full **sorpa** domain features (NSOPW, report archive, cookies/CAPTCHA, multi-source provenance). See [SOURCE.md](SOURCE.md) and [MODULES.md](MODULES.md).
+
 ## Features
 
+- **NSOPW ethnic-surname harvest** with compact query plans and parallel report fetches
+- **Jurisdiction report HTML + photo archive** under `data/report_pages/`
+- **Browse** — search, integrity, surname misclassify, statistics, photo report review, DeepFace hits
 - **Direct bulk downloads** for jurisdictions that publish files (AZ, DC, GA)
-- **Best-effort HTML scrapers** for other states (often return little without site-specific work)
-- **SQLite search** by name, race, and state
+- **SQLite** archive with multi-source provenance (`sources_json`) and merge-safe dedupe
 - **Surname / race mismatch flagging** using configurable ethnic surname lists
+- **DeepFace** (optional) local mugshot face/race gross-mismatch scan
+- **Shareable export cards** (photo + race banner + offense summary → Desktop)
+- **Cookie jar + CAPTCHA queue** for state host walls
+- **GitHub public database sync** (optional cold-start archive)
 - **GUI** (`python gui.py`) and **CLI** (`python -m scraper` / `python archiver.py`)
 
 ## Requirements

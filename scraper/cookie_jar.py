@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -39,6 +40,9 @@ class CookieJarStore:
     def __init__(self, path: Optional[Path] = None):
         self.path = Path(path) if path else DEFAULT_COOKIE_PATH
         self._data: Dict[str, List[Dict[str, Any]]] = {}
+        # Guards file writes so parallel report workers sharing one store
+        # never corrupt the JSON. Reentrant: capture_from_session -> save.
+        self._lock = threading.RLock()
         self.load()
 
     def load(self) -> None:
@@ -55,11 +59,12 @@ class CookieJarStore:
             self._data = {}
 
     def save(self) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(
-            json.dumps(self._data, indent=2, ensure_ascii=False) + "\n",
-            encoding="utf-8",
-        )
+        with self._lock:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self.path.write_text(
+                json.dumps(self._data, indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
 
     def cookies_for_url(self, url: str) -> List[Dict[str, Any]]:
         host = _host_key(url)
@@ -135,12 +140,13 @@ class CookieJarStore:
             return 0
         if not captured:
             return 0
-        # merge by name
-        existing = {c["name"]: c for c in self._data.get(host, []) if c.get("name")}
-        for c in captured:
-            existing[c["name"]] = c
-        self._data[host] = list(existing.values())
-        self.save()
+        # merge by name (guarded so concurrent report workers don't clobber)
+        with self._lock:
+            existing = {c["name"]: c for c in self._data.get(host, []) if c.get("name")}
+            for c in captured:
+                existing[c["name"]] = c
+            self._data[host] = list(existing.values())
+            self.save()
         return len(captured)
 
     def import_cookies(self, raw: str, default_domain: str = "") -> int:
@@ -273,6 +279,8 @@ class CaptchaQueue:
     def __init__(self, path: Optional[Path] = None):
         self.path = Path(path) if path else DEFAULT_CAPTCHA_QUEUE
         self._items: List[Dict[str, Any]] = []
+        # Guards concurrent add()/save() from parallel report workers.
+        self._lock = threading.RLock()
         self.load()
 
     def load(self) -> None:
@@ -287,13 +295,14 @@ class CaptchaQueue:
             self._items = []
 
     def save(self) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        # Keep last 500
-        self._items = self._items[-500:]
-        self.path.write_text(
-            json.dumps(self._items, indent=2, ensure_ascii=False) + "\n",
-            encoding="utf-8",
-        )
+        with self._lock:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            # Keep last 500
+            self._items = self._items[-500:]
+            self.path.write_text(
+                json.dumps(self._items, indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
 
     def add(
         self,
@@ -306,18 +315,19 @@ class CaptchaQueue:
         url = (url or "").strip()
         if not url:
             return
-        # de-dupe by url
-        self._items = [x for x in self._items if x.get("url") != url]
-        self._items.append(
-            {
-                "url": url,
-                "jurisdiction": (jurisdiction or "").upper()[:8],
-                "reason": reason or "captcha",
-                "name": name or "",
-                "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            }
-        )
-        self.save()
+        with self._lock:
+            # de-dupe by url
+            self._items = [x for x in self._items if x.get("url") != url]
+            self._items.append(
+                {
+                    "url": url,
+                    "jurisdiction": (jurisdiction or "").upper()[:8],
+                    "reason": reason or "captcha",
+                    "name": name or "",
+                    "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                }
+            )
+            self.save()
 
     def list_items(self) -> List[Dict[str, Any]]:
         return list(self._items)

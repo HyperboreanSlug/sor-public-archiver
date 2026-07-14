@@ -1,0 +1,133 @@
+# SOR Public Archiver 2.0 — Source Document
+
+**Purpose:** Find the right module quickly; prefer ≤200-line units; sleek SOR workbench.  
+**Branch:** `sorpa-2.0`  
+**Chassis:** mapa-style modular CustomTkinter (lazy tabs, split widgets, export cards)  
+**Domain:** NSOPW harvest, jurisdiction reports, cookies/CAPTCHA, multi-source provenance, state scrapers
+
+> **Rule:** Prefer production `.py` modules **≤200 lines**. Residual overs are almost always **one large method** (layout builders, `build()`, HTML export). Split the method body next — do not grow them.  
+> **Ignore:** `_legacy_gui_v1/`, `*_monolith_backup.py`, `data/`, `build/`, `dist/`, `__pycache__/`.
+
+---
+
+## How to use
+
+| Need | Open first |
+|------|------------|
+| GUI entry | `gui.py` → `gui_app/shell.py` |
+| Shell lifecycle | `shell.py`, `shell_sync.py`, `shell_header.py`, `shell_ops.py` |
+| Browse | `gui_app/tabs/browse/` packages |
+| NSOPW UI | `gui_app/tabs/nsopw/` |
+| DeepFace UI | `gui_app/tabs/deepface/` |
+| Settings | `gui_app/tabs/settings/` |
+| Export card | `gui_app/shared/export_card*.py` |
+| Detail drawer | `gui_app/shared/detail_drawer/` |
+| SQLite | `scraper/database/` |
+| NSOPW pipeline | `scraper/nsopw/` (`builder_*.py`, `client_*.py`) |
+| Report HTTP | `scraper/reports/fetcher_*.py` |
+| Surname engine | `scraper/searcher_*.py`, `ethnic_names_*.py` |
+| CLI | `scraper/cli.py` → `cli_parser.py` + `cli_cmds_*.py` |
+
+---
+
+## Architecture
+
+```
+Entry
+├── gui.py / Launch SOR Archiver.vbs / run_gui.bat
+├── archiver.py → core.py + sources.json
+└── python -m scraper → scraper.cli.main
+
+gui_app/     # CustomTkinter (lazy tabs, composed mixins)
+scraper/     # Domain packages (composed mixins)
+tests/
+data/        # offenders.db, report_pages, settings (runtime)
+```
+
+**Rule:** `scraper/` never imports `gui_app`.
+
+---
+
+## GUI map
+
+### Shell
+| Module | Role |
+|--------|------|
+| `shell.py` | Window, tabs, init |
+| `shell_sync.py` | GitHub DB sync |
+| `shell_header.py` | Path + counts |
+| `shell_ops.py` | Log, sash, close, tab change |
+
+### Tabs (packages of mixins)
+| Package | Pieces |
+|---------|--------|
+| `tabs/browse/search/` | build, run_query, run_tree, select |
+| `tabs/browse/integrity/` | build, refresh, enrich_*, requeue |
+| `tabs/browse/misclassify/` | build, run |
+| `tabs/browse/statistics/` | build, update |
+| `tabs/browse/reports/` | verdict_*, filter_*, source_*, cards_*, grid_*, export_* |
+| `tabs/browse/deepface_reports/` | build, data_*, photo_*, actions_*, review_* |
+| `tabs/nsopw/` | build, options_*, progress_*, tree_*, run_* |
+| `tabs/deepface/` | scan_*, setup_* |
+| `tabs/settings/` | build, captcha, cookies_*, paths, persist_* |
+| `tabs/scrape/` | build, select, run, import_csv, dedupe |
+
+### Shared
+`detail_drawer/`, `export_card*`, `record_sidebar*`, `widgets_*`, `theme`, `lazy_tabs`, `resize_perf`
+
+---
+
+## Domain map
+
+| Package | Composition |
+|---------|-------------|
+| `database/` | schema, inserts, queries, `dedupe_*`, `csv_*`, sources, deepface_scans |
+| `nsopw/` | `client_*`, `builder_*`, search_plan, parallel |
+| `reports/` | `fetcher_*`, util, photos, parse_html |
+| `searcher_*` | race helpers + core/analyze/export |
+| `ethnic_names_*` | load, signals, classify, confidence |
+| `cli_cmds_*` + `cli_parser` | CLI commands |
+| `mugshot_ethnicity/` | still denser — split next pass |
+| `db_sync*` | GitHub public DB sync parts |
+
+---
+
+## Product tabs
+
+Browse · NSOPW · Scrape · DeepFace · Settings
+
+---
+
+## Residual files still >200 LOC
+
+Mostly **single large methods** (not unstructured piles):
+
+- `nsopw/builder_build.py` — `build()` harvest loop  
+- Layout UIs: `nsopw/build.py`, `settings/build.py`, `deepface/scan_build.py`, …  
+- `reports/export_html.py`, `fetcher_parse.py`, …  
+- `mugshot_ethnicity/setup.py`, `scanner.py`, …  
+- `cli_parser.py` (`main` argparse tree)
+
+**Next maintenance:** extract method phases into helpers; keep public mixins thin.
+
+---
+
+## Verification
+
+```text
+python -c "from gui_app.shell import ArchiverApp; from scraper.database import Database; print('ok')"
+python -m unittest tests.test_smoke -q
+python -m scraper --help
+python gui.py
+```
+
+Smoke tests: **25/25 OK** (as of 2.0 modularization checkpoint).
+
+---
+
+## Maintenance
+
+1. New feature → new ≤200-line module; compose via mixin/`__init__.py`.  
+2. Never grow residual giants — split first.  
+3. Update this file when packages change.  
+4. Private constants (`_MERGE_SEP`, etc.) need **explicit** imports (star import skips `_` names).

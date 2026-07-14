@@ -1,6 +1,8 @@
 """Schema init and connection lifecycle for Database."""
 from __future__ import annotations
 
+import shutil
+
 from typing import Any, Dict, List, Optional, Tuple
 from pathlib import Path
 import json
@@ -28,13 +30,17 @@ from scraper.database.constants import (
 
 class SchemaMixin:
     def __init__(self, db_path: Optional[str] = None):
+        # check_same_thread=False: GUI workers + CLI importers share one connection
+        # under application-level coordination (same pattern as mapa).
         if db_path == ":memory:":
             self.db_path = Path(":memory:")
-            self._conn = sqlite3.connect(":memory:")
+            self._conn = sqlite3.connect(":memory:", check_same_thread=False)
         else:
             self.db_path = Path(db_path) if db_path else Path(DEFAULT_DB_PATH)
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
-            self._conn = sqlite3.connect(str(self.db_path))
+            self._conn = sqlite3.connect(
+                str(self.db_path), check_same_thread=False
+            )
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")  # Better concurrency
         self._conn.execute("PRAGMA foreign_keys=ON")
@@ -180,6 +186,7 @@ class SchemaMixin:
             "idx_offenders_risk_level": "risk_level",
             "idx_offenders_source_state": "source_state",
             "idx_offenders_source_url": "source_url",
+            "idx_offenders_external_id": "external_id",
             "idx_offenders_report_html": "report_html_path",
             "idx_offenders_photo": "photo_path",
         }

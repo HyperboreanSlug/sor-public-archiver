@@ -6,6 +6,8 @@ short human summary; Misclassify / detail drawers keep the full text.
 """
 from __future__ import annotations
 
+import time
+
 import re
 from typing import List, Optional
 
