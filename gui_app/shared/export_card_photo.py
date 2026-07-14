@@ -143,20 +143,41 @@ def with_opacity(img: Image.Image, opacity: float) -> Image.Image:
 
 
 def wrap_text(draw, text: str, font, max_width: int) -> list[str]:
-    words = text.split()
-    if not words:
+    """Word-wrap; hard-break very long tokens so crime lines stay in the box."""
+    text = " ".join((text or "").split())
+    if not text:
         return [""]
+    words = text.split()
     lines: list[str] = []
-    current = words[0]
-    for word in words[1:]:
-        trial = f"{current} {word}"
-        if draw.textlength(trial, font=font) <= max_width:
-            current = trial
-        else:
-            lines.append(current)
-            current = word
-    lines.append(current)
-    return lines
+    current = ""
+
+    def _break_token(token: str) -> list[str]:
+        if draw.textlength(token, font=font) <= max_width:
+            return [token]
+        parts: list[str] = []
+        chunk = ""
+        for ch in token:
+            trial = chunk + ch
+            if chunk and draw.textlength(trial, font=font) > max_width:
+                parts.append(chunk)
+                chunk = ch
+            else:
+                chunk = trial
+        if chunk:
+            parts.append(chunk)
+        return parts or [token]
+
+    for word in words:
+        for piece in _break_token(word):
+            trial = f"{current} {piece}".strip() if current else piece
+            if current and draw.textlength(trial, font=font) > max_width:
+                lines.append(current)
+                current = piece
+            else:
+                current = trial
+    if current:
+        lines.append(current)
+    return lines or [""]
 
 
 def draw_seal_watermark(

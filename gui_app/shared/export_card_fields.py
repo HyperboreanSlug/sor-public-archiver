@@ -73,56 +73,105 @@ def load_font(size: int, *, bold: bool = False) -> ImageFont.ImageFont:
     return ImageFont.load_default()
 
 
+def _clean_field(val: Any) -> str:
+    """Strip placeholders — never surface 'Unknown' on export cards."""
+    s = " ".join(str(val or "").split()).strip()
+    if not s:
+        return ""
+    low = s.casefold()
+    if low in (
+        "unknown",
+        "unknown location",
+        "unknown offense",
+        "n/a",
+        "na",
+        "none",
+        "null",
+        "—",
+        "-",
+    ):
+        return ""
+    if low.startswith("unknown "):
+        return ""
+    return s
+
+
 def person_name(record: Mapping[str, Any]) -> str:
-    full = str(record.get("full_name") or "").strip()
+    full = _clean_field(record.get("full_name"))
     if full:
         return full
     parts = [
-        str(record.get("first_name") or "").strip(),
-        str(record.get("middle_name") or "").strip(),
-        str(record.get("last_name") or "").strip(),
+        _clean_field(record.get("first_name")),
+        _clean_field(record.get("middle_name")),
+        _clean_field(record.get("last_name")),
     ]
-    return " ".join(p for p in parts if p) or "Unknown"
+    return " ".join(p for p in parts if p)
 
 
 def location(record: Mapping[str, Any]) -> str:
-    county = str(record.get("county") or "").strip()
-    state = str(record.get("state") or "").strip().upper()
-    city = str(record.get("city") or "").strip()
+    """Last known residence only (address → city/county/state). Empty if none."""
+    return last_known_location(record)
+
+
+def last_known_location(record: Mapping[str, Any]) -> str:
+    """Prefer street address; else city / county / state. Never 'Unknown'."""
+    addr = _clean_field(record.get("address"))
+    city = _clean_field(record.get("city"))
+    county = _clean_field(record.get("county"))
+    state = _clean_field(record.get("state") or record.get("source_state")).upper()
+    # Drop junk state codes
+    if state in ("YY", "XX", "ZZ", "US", "NA", "UN", "UNK"):
+        state = ""
+
+    if addr:
+        # Address often already includes city/state — avoid doubling if present
+        tail = []
+        if city and city.casefold() not in addr.casefold():
+            tail.append(city.title() if city == city.upper() or city == city.lower() else city)
+        if state and state not in addr.upper():
+            tail.append(state)
+        if tail:
+            return f"{addr}, {', '.join(tail)}"
+        return addr
+
     bits = []
     if city:
-        bits.append(city.title())
+        bits.append(city.title() if city == city.upper() or city == city.lower() else city)
     if county:
-        c = county.replace("-", " ").replace("_", " ").title()
-        if not c.lower().endswith("county"):
+        c = county.replace("-", " ").replace("_", " ")
+        c = c.title() if c == c.upper() or c == c.lower() else c
+        if not c.casefold().endswith("county"):
             c = f"{c} County"
         bits.append(c)
     if state:
         bits.append(state)
-    return ", ".join(bits) or "Unknown location"
+    return ", ".join(bits)
 
 
 def crime(record: Mapping[str, Any]) -> str:
-    """Offense text for share cards (SOR fields + optional crime_summary)."""
+    """Offense text for share cards. Empty string if missing — never 'Unknown'."""
     for key in (
         "crime",
         "offense_description",
         "offense_type",
         "charge_description",
     ):
-        val = str(record.get(key) or "").strip()
-        if val:
-            try:
-                from scraper.crime_summary import summarize_crime
+        val = _clean_field(record.get(key))
+        if not val:
+            continue
+        try:
+            from scraper.crime_summary import summarize_crime
 
-                return summarize_crime(val) or val
-            except Exception:
-                return val
-    return "Unknown offense"
+            out = _clean_field(summarize_crime(val) or val)
+            if out:
+                return out
+        except Exception:
+            return val
+    return ""
 
 
 def arrest_datetime(record: Mapping[str, Any]) -> str:
-    """Best available date for the card footer (registration / conviction / scrape)."""
+    """Best available date, or empty (never 'Unknown')."""
     for key in (
         "registration_date",
         "conviction_date",
@@ -131,9 +180,9 @@ def arrest_datetime(record: Mapping[str, Any]) -> str:
         "booking_date",
         "scraped_at",
     ):
-        date = str(record.get(key) or "").strip()
+        date = _clean_field(record.get(key))
         if date:
             if "T" in date:
                 date = date.partition("T")[0]
             return date
-    return "Unknown"
+    return ""

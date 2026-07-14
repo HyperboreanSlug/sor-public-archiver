@@ -74,63 +74,83 @@ class MisclassifyBuildMixin:
 
 
     def _misclass_controls_bar(self, parent) -> ctk.CTkFrame:
-        """Shared Analyze filters (used by Misclassify + Statistics)."""
+        """Shared Analyze filters (used by Misclassify + Statistics); wraps on resize."""
+        from gui_app.widgets_flow import FlowRow, after_idle_reflow
+
         bar = ctk.CTkFrame(parent, fg_color="transparent")
         self._ensure_misclass_filter_vars()
+        flow = FlowRow(bar, padx=5, pady=3)
+        h = flow.host
 
-        ctk.CTkComboBox(
-            bar, variable=self.misclass_ethnicity_var, width=160,
-            values=[
-                "all", "hispanic", "asian", "indian", "indian_high_confidence",
-                "african_american",
-            ],
-            fg_color=C["bg"], border_color=C["border"], button_color=C["elevated"],
-            text_color=C["text"], dropdown_fg_color=C["panel"],
-        ).pack(side="left", padx=(0, 8))
+        def _chip(label: str):
+            chip = flow.chip()
+            ctk.CTkLabel(
+                chip, text=label, font=FONT_SM, text_color=C["muted"]
+            ).pack(side="left", padx=(2, 4), pady=2)
+            return chip
 
-        ctk.CTkLabel(bar, text="Min conf.", font=FONT_SM, text_color=C["muted"]).pack(
-            side="left", padx=(8, 4)
+        flow.add(
+            ctk.CTkComboBox(
+                h, variable=self.misclass_ethnicity_var, width=160,
+                values=[
+                    "all", "hispanic", "asian", "indian", "indian_high_confidence",
+                    "african_american",
+                ],
+                fg_color=C["bg"], border_color=C["border"], button_color=C["elevated"],
+                text_color=C["text"], dropdown_fg_color=C["panel"],
+            )
         )
+        conf = _chip("Min conf.")
         ctk.CTkEntry(
-            bar, textvariable=self.misclass_conf_var, width=60,
+            conf, textvariable=self.misclass_conf_var, width=60,
             fg_color=C["bg"], border_color=C["border"], text_color=C["text"],
-        ).pack(side="left")
+        ).pack(side="left", pady=2)
+        flow.add(conf)
 
-        ctk.CTkLabel(bar, text="Scan cap (0=all)", font=FONT_SM, text_color=C["muted"]).pack(
-            side="left", padx=(12, 4)
-        )
+        cap = _chip("Scan cap (0=all)")
         ctk.CTkEntry(
-            bar, textvariable=self.misclass_limit_var, width=80,
+            cap, textvariable=self.misclass_limit_var, width=80,
             fg_color=C["bg"], border_color=C["border"], text_color=C["text"],
-        ).pack(side="left")
+        ).pack(side="left", pady=2)
+        flow.add(cap)
 
-        ctk.CTkButton(
-            bar, text="Analyze", width=100, command=self._run_misclassification,
-            fg_color=C["accent"], hover_color=C["accent_hover"], text_color=C["bg"],
-        ).pack(side="left", padx=12)
-        ctk.CTkButton(
-            bar, text="Export CSV", width=100, command=self._export_misclass,
-            fg_color=C["elevated"], hover_color=C["border"], text_color=C["text"],
-            border_width=1, border_color=C["border"],
-        ).pack(side="left", padx=(0, 6))
-        ctk.CTkLabel(bar, text="Enrich lim", font=FONT_SM, text_color=C["muted"]).pack(
-            side="left", padx=(8, 4)
+        flow.add(
+            ctk.CTkButton(
+                h, text="Analyze", width=100, command=self._run_misclassification,
+                fg_color=C["accent"], hover_color=C["accent_hover"], text_color=C["bg"],
+            )
         )
+        flow.add(
+            ctk.CTkButton(
+                h, text="Export CSV", width=100, command=self._export_misclass,
+                fg_color=C["elevated"], hover_color=C["border"], text_color=C["text"],
+                border_width=1, border_color=C["border"],
+            )
+        )
+        enr = _chip("Enrich lim")
         ctk.CTkEntry(
-            bar, textvariable=self.enrich_limit_var, width=52,
+            enr, textvariable=self.enrich_limit_var, width=52,
             fg_color=C["bg"], border_color=C["border"], text_color=C["text"],
-        ).pack(side="left", padx=(0, 4))
-        ctk.CTkCheckBox(
-            bar, text="External imports only", variable=self.enrich_external_only_var,
-            font=FONT_SM, text_color=C["text"],
-            fg_color=C["accent"], hover_color=C["accent_hover"],
-            checkmark_color=C["bg"], border_color=C["border"],
-        ).pack(side="left", padx=(0, 6))
-        ctk.CTkButton(
-            bar, text="NSOPW enrich", width=120, command=self._start_enrich_misclassified,
-            fg_color=C["elevated"], hover_color=C["border"], text_color=C["text"],
-            border_width=1, border_color=C["border"],
-        ).pack(side="left")
+        ).pack(side="left", pady=2)
+        flow.add(enr)
+        flow.add(
+            ctk.CTkCheckBox(
+                h, text="External imports only",
+                variable=self.enrich_external_only_var,
+                font=FONT_SM, text_color=C["text"],
+                fg_color=C["accent"], hover_color=C["accent_hover"],
+                checkmark_color=C["bg"], border_color=C["border"],
+            )
+        )
+        flow.add(
+            ctk.CTkButton(
+                h, text="NSOPW enrich", width=120,
+                command=self._start_enrich_misclassified,
+                fg_color=C["elevated"], hover_color=C["border"], text_color=C["text"],
+                border_width=1, border_color=C["border"],
+            )
+        )
+        after_idle_reflow(self, flow)
         return bar
 
 

@@ -8,6 +8,7 @@ from gui_app.shared.export_card_fields import (
     safe_filename as _safe_filename,
     load_font as _load_font,
     location as _location,
+    last_known_location as _last_known_location,
     crime as _crime,
     arrest_datetime as _arrest_datetime,
 )

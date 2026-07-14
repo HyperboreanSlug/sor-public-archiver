@@ -1,11 +1,15 @@
-"""Lazy tab host: build tab body on first selection."""
+"""Lazy tab host: build tab body on first selection (or idle warm)."""
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 
 class LazyTabHost:
-    """CTkTabview wrapper: first selection builds tab body once."""
+    """CTkTabview wrapper: first selection builds tab body once.
+
+    CustomTkinter tab bodies are expensive (many canvas widgets). Prefer
+    ``warm()`` during idle so the user's first click does not wait on build.
+    """
 
     def __init__(self, tabview: Any, on_change: Optional[Callable] = None):
         self.tabview = tabview
@@ -22,14 +26,36 @@ class LazyTabHost:
         self.tabview.add(name)
         self._loaders[name] = loader
 
+    def names(self) -> List[str]:
+        return list(self._loaders.keys())
+
+    def _build_once(self, name: str) -> Any:
+        """Create tab body if missing; no on_change side effects."""
+        if name in self._loaded:
+            return self._loaded[name]
+        if name not in self._loaders:
+            return None
+        parent = self.tabview.tab(name)
+        self._loaded[name] = self._loaders[name](parent)
+        return self._loaded[name]
+
+    def warm(self, name: str) -> Any:
+        """Build tab in the background without switching focus or on_change."""
+        try:
+            return self._build_once(name)
+        except Exception:
+            return None
+
     def _handle_change(self, name: Optional[str] = None) -> None:
         try:
             name = name or self.tabview.get()
         except Exception:
             return
         if name not in self._loaded and name in self._loaders:
-            parent = self.tabview.tab(name)
-            self._loaded[name] = self._loaders[name](parent)
+            try:
+                self._build_once(name)
+            except Exception:
+                pass
         if self._on_change:
             try:
                 self._on_change(name)
@@ -37,7 +63,7 @@ class LazyTabHost:
                 pass
 
     def ensure(self, name: str) -> Any:
-        """Force-load a tab (e.g. default landing tab)."""
+        """Force-load a tab (e.g. default landing tab) and fire on_change."""
         self._handle_change(name)
         return self._loaded.get(name)
 

@@ -58,6 +58,9 @@ data/        # offenders.db, report_pages, settings (runtime)
 | `shell_header.py` | Path + counts (async COUNT, never blocks UI) |
 | `shell_ops.py` | Log, sash, close, tab change |
 | `async_jobs.py` | `run_bg` + main-thread job queue (all DB work) |
+| `shell_warm.py` | Idle-preload lazy tabs so first open is near-instant |
+| `lazy_tabs.py` | `warm()` builds without focus steal / on_change |
+| `widgets_flow.py` | `FlowRow` — wrap toolbars so top controls stay visible |
 | `tabs/browse/integrity/refresh.py` | Integrity stats via `run_bg` |
 | `tabs/browse/search/run_query.py` | Browse search via `run_bg` |
 | `tabs/browse/misclassify/run.py` | Surname analyze / export via `run_bg` |

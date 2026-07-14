@@ -31,9 +31,11 @@ from gui_app.theme import (
     FONT_UI,
 )
 from gui_app.widgets import (
+    _after_idle_reflow,
     _bind_tree_scroll_isolation,
     _card,
     _enable_tree_column_sort,
+    _FlowRow,
     _format_race_display,
     _format_state_display,
     _hpaned,
@@ -55,22 +57,29 @@ class SearchBuildMixin:
         tab.grid_columnconfigure(0, weight=1)
         tab.grid_rowconfigure(1, weight=1)
 
-        bar = ctk.CTkFrame(tab, fg_color="transparent")
-        bar.grid(row=0, column=0, sticky="ew", padx=12, pady=(12, 6))
+        bar_host = ctk.CTkFrame(tab, fg_color="transparent")
+        bar_host.grid(row=0, column=0, sticky="ew", padx=12, pady=(12, 6))
+        flow = _FlowRow(bar_host, padx=6, pady=3)
+        self._search_toolbar_flow = flow
+        h = flow.host
 
-        def _opt_label(text: str, *, first: bool = False) -> None:
+        def _field(label: str):
+            chip = flow.chip()
             ctk.CTkLabel(
-                bar, text=text, font=FONT_SM, text_color=C["muted"],
-            ).pack(side="left", padx=((0 if first else 10), 4))
+                chip, text=label, font=FONT_SM, text_color=C["muted"]
+            ).pack(side="left", padx=(2, 4), pady=2)
+            return chip
 
-        _opt_label("Name", first=True)
+        name_chip = _field("Name")
         self.search_name_var = ctk.StringVar()
         ctk.CTkEntry(
-            bar, textvariable=self.search_name_var, placeholder_text="First or last…",
-            width=180, fg_color=C["bg"], border_color=C["border"], text_color=C["text"],
-        ).pack(side="left", padx=(0, 0))
+            name_chip, textvariable=self.search_name_var,
+            placeholder_text="First or last…", width=180,
+            fg_color=C["bg"], border_color=C["border"], text_color=C["text"],
+        ).pack(side="left", padx=(0, 2), pady=2)
+        flow.add(name_chip)
 
-        _opt_label("State")
+        st_chip = _field("State")
         self.search_state_var = ctk.StringVar(value="")
         _US_STATES = [
             "", "ALL",
@@ -81,17 +90,18 @@ class SearchBuildMixin:
             "UT", "VA", "VT", "WA", "WI", "WV", "WY",
         ]
         ctk.CTkComboBox(
-            bar, variable=self.search_state_var, width=90,
+            st_chip, variable=self.search_state_var, width=90,
             values=_US_STATES,
             fg_color=C["bg"], border_color=C["border"], button_color=C["elevated"],
             button_hover_color=C["border"], dropdown_fg_color=C["panel"],
             dropdown_hover_color=C["elevated"], text_color=C["text"],
-        ).pack(side="left", padx=(0, 0))
+        ).pack(side="left", padx=(0, 2), pady=2)
+        flow.add(st_chip)
 
-        _opt_label("Race")
+        race_chip = _field("Race")
         self.search_race_var = ctk.StringVar(value="")
         ctk.CTkComboBox(
-            bar, variable=self.search_race_var, width=120,
+            race_chip, variable=self.search_race_var, width=120,
             values=[
                 "", "WHITE", "BLACK", "HISPANIC", "ASIAN", "INDIAN",
                 "NATIVE AMERICAN", "OTHER",
@@ -99,40 +109,39 @@ class SearchBuildMixin:
             fg_color=C["bg"], border_color=C["border"], button_color=C["elevated"],
             button_hover_color=C["border"], dropdown_fg_color=C["panel"],
             text_color=C["text"],
-        ).pack(side="left", padx=(0, 0))
+        ).pack(side="left", padx=(0, 2), pady=2)
+        flow.add(race_chip)
 
-        # Surname-ethnicity lists (name-based; includes indian + high-confidence)
-        _opt_label("Ethnicity")
+        eth_chip = _field("Ethnicity")
         self.search_ethnicity_var = ctk.StringVar(value="")
         ctk.CTkComboBox(
-            bar, variable=self.search_ethnicity_var, width=170,
+            eth_chip, variable=self.search_ethnicity_var, width=170,
             values=[
-                "",
-                "indian",
-                "indian_high_confidence",
-                "hispanic",
-                "asian",
-                "african_american",
-                "arabic",
-                "jewish",
-                "portuguese",
+                "", "indian", "indian_high_confidence", "hispanic", "asian",
+                "african_american", "arabic", "jewish", "portuguese",
                 "native_american",
             ],
             fg_color=C["bg"], border_color=C["border"], button_color=C["elevated"],
             button_hover_color=C["border"], dropdown_fg_color=C["panel"],
             text_color=C["text"],
-        ).pack(side="left", padx=(0, 0))
+        ).pack(side="left", padx=(0, 2), pady=2)
+        flow.add(eth_chip)
 
-        ctk.CTkButton(
-            bar, text="Search", width=100, command=lambda: self._do_search(),
-            fg_color=C["accent"], hover_color=C["accent_hover"], text_color=C["bg"],
-        ).pack(side="left", padx=(12, 6))
-        ctk.CTkButton(
-            bar, text="Show all", width=100,
-            command=self._search_show_all,
-            fg_color=C["elevated"], hover_color=C["border"], text_color=C["text"],
-            border_width=1, border_color=C["border"],
-        ).pack(side="left")
+        flow.add(
+            ctk.CTkButton(
+                h, text="Search", width=100, command=lambda: self._do_search(),
+                fg_color=C["accent"], hover_color=C["accent_hover"], text_color=C["bg"],
+            )
+        )
+        flow.add(
+            ctk.CTkButton(
+                h, text="Show all", width=100,
+                command=self._search_show_all,
+                fg_color=C["elevated"], hover_color=C["border"], text_color=C["text"],
+                border_width=1, border_color=C["border"],
+            )
+        )
+        _after_idle_reflow(self, flow)
 
         mid = _hpaned(tab)
         mid.grid(row=1, column=0, sticky="nsew", padx=12, pady=(0, 4))

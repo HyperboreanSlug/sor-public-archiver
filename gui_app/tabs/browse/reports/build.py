@@ -31,9 +31,11 @@ from gui_app.theme import (
     FONT_UI,
 )
 from gui_app.widgets import (
+    _after_idle_reflow,
     _bind_tree_scroll_isolation,
     _card,
     _enable_tree_column_sort,
+    _FlowRow,
     _format_race_display,
     _format_state_display,
     _hpaned,
@@ -56,46 +58,56 @@ class ReportsBuildMixin:
         tab.grid_columnconfigure(0, weight=1)
         tab.grid_rowconfigure(2, weight=1)
 
-        # ---- Toolbar ----
+        # ---- Toolbar (wraps so every control stays visible) ----
         top = ctk.CTkFrame(tab, fg_color=C["surface"])
         top.grid(row=0, column=0, sticky="ew", padx=8, pady=(8, 2))
 
-        bar = ctk.CTkFrame(top, fg_color="transparent")
-        bar.pack(fill="x", padx=4, pady=(0, 4))
+        flow = _FlowRow(top, padx=5, pady=3)
+        self._reports_toolbar_flow = flow
+        h = flow.host
 
-        ctk.CTkButton(
-            bar, text="Analyze & build", width=130,
-            command=self._reports_build_list,
-            fg_color=C["accent"], hover_color=C["accent_hover"], text_color=C["bg"],
-        ).pack(side="left", padx=(0, 6))
+        def _lbl_chip(text: str):
+            chip = flow.chip()
+            ctk.CTkLabel(
+                chip, text=text, font=FONT_SM, text_color=C["muted"]
+            ).pack(side="left", padx=(2, 4), pady=2)
+            return chip
+
+        flow.add(
+            ctk.CTkButton(
+                h, text="Analyze & build", width=130,
+                command=self._reports_build_list,
+                fg_color=C["accent"], hover_color=C["accent_hover"], text_color=C["bg"],
+            )
+        )
 
         self.report_photos_only = ctk.BooleanVar(value=True)
-        ctk.CTkCheckBox(
-            bar, text="Photos only", variable=self.report_photos_only,
-            font=FONT_SM, text_color=C["text"],
-            fg_color=C["accent"], hover_color=C["accent_hover"],
-            border_color=C["border"], checkmark_color=C["bg"],
-            command=lambda: self._reports_on_filter_change(),
-        ).pack(side="left", padx=(0, 8))
+        flow.add(
+            ctk.CTkCheckBox(
+                h, text="Photos only", variable=self.report_photos_only,
+                font=FONT_SM, text_color=C["text"],
+                fg_color=C["accent"], hover_color=C["accent_hover"],
+                border_color=C["border"], checkmark_color=C["bg"],
+                command=lambda: self._reports_on_filter_change(),
+            )
+        )
 
-        # Include stored DeepFace mugshot hits (from DeepFace → Scan) — off by default
         self.report_include_deepface = ctk.BooleanVar(value=False)
-        ctk.CTkCheckBox(
-            bar, text="DeepFace hits", variable=self.report_include_deepface,
-            font=FONT_SM, text_color=C["text"],
-            fg_color=C["accent"], hover_color=C["accent_hover"],
-            border_color=C["border"], checkmark_color=C["bg"],
-            command=lambda: self._reports_on_filter_change(),
-        ).pack(side="left", padx=(0, 8))
+        flow.add(
+            ctk.CTkCheckBox(
+                h, text="DeepFace hits", variable=self.report_include_deepface,
+                font=FONT_SM, text_color=C["text"],
+                fg_color=C["accent"], hover_color=C["accent_hover"],
+                border_color=C["border"], checkmark_color=C["bg"],
+                command=lambda: self._reports_on_filter_change(),
+            )
+        )
 
-        # Layout: list rows vs multi-column mugshot grid (also used by Open HTML)
         self.report_grid_view = ctk.BooleanVar(value=True)
         self.report_layout_mode = ctk.StringVar(value="Grid")
-        ctk.CTkLabel(bar, text="Layout", font=FONT_SM, text_color=C["muted"]).pack(
-            side="left", padx=(4, 4)
-        )
+        lay = _lbl_chip("Layout")
         self.report_layout_seg = ctk.CTkSegmentedButton(
-            bar,
+            lay,
             values=["Grid", "List"],
             variable=self.report_layout_mode,
             command=self._reports_on_layout_change,
@@ -108,19 +120,17 @@ class ReportsBuildMixin:
             text_color=C["text"],
             height=28,
         )
-        self.report_layout_seg.pack(side="left", padx=(0, 10))
+        self.report_layout_seg.pack(side="left", padx=(0, 2), pady=2)
         try:
             self.report_layout_seg.set("Grid")
         except Exception:
             pass
+        flow.add(lay)
 
-        # Listed-as (registry race) + actual (surname / face) — dropdowns
-        ctk.CTkLabel(bar, text="Listed as", font=FONT_SM, text_color=C["muted"]).pack(
-            side="left", padx=(4, 4)
-        )
+        listed = _lbl_chip("Listed as")
         self.report_listed_filter = ctk.StringVar(value="White")
         ctk.CTkComboBox(
-            bar,
+            listed,
             variable=self.report_listed_filter,
             width=100,
             values=["All", "White", "Black", "Other"],
@@ -130,28 +140,19 @@ class ReportsBuildMixin:
             text_color=C["text"],
             dropdown_fg_color=C["panel"],
             command=lambda _v: self._reports_on_filter_change(),
-        ).pack(side="left", padx=(0, 8))
+        ).pack(side="left", padx=(0, 2), pady=2)
+        flow.add(listed)
 
-        ctk.CTkLabel(bar, text="Actual", font=FONT_SM, text_color=C["muted"]).pack(
-            side="left", padx=(4, 4)
-        )
+        actual = _lbl_chip("Actual")
         self.report_actual_filter = ctk.StringVar(value="All")
         ctk.CTkComboBox(
-            bar,
+            actual,
             variable=self.report_actual_filter,
             width=150,
             values=[
-                "All",
-                "Hispanic",
-                "Indian",
-                "Asian",
-                "African American",
-                "Arabic",
-                "European",
-                "Jewish",
-                "Portuguese",
-                "Native American",
-                "Other",
+                "All", "Hispanic", "Indian", "Asian", "African American",
+                "Arabic", "European", "Jewish", "Portuguese",
+                "Native American", "Other",
             ],
             fg_color=C["bg"],
             border_color=C["border"],
@@ -159,144 +160,141 @@ class ReportsBuildMixin:
             text_color=C["text"],
             dropdown_fg_color=C["panel"],
             command=lambda _v: self._reports_on_filter_change(),
-        ).pack(side="left", padx=(0, 8))
+        ).pack(side="left", padx=(0, 2), pady=2)
+        flow.add(actual)
 
-        # Legacy BooleanVars kept in sync for any old callers
         self.report_race_white = ctk.BooleanVar(value=True)
         self.report_race_black = ctk.BooleanVar(value=False)
         self.report_race_other = ctk.BooleanVar(value=False)
 
-        ctk.CTkLabel(bar, text="Page size", font=FONT_SM, text_color=C["muted"]).pack(
-            side="left", padx=(8, 4)
-        )
+        psize = _lbl_chip("Page size")
         self.report_max_var = ctk.IntVar(value=48)
         page_size_entry = ctk.CTkEntry(
-            bar, textvariable=self.report_max_var, width=48,
+            psize, textvariable=self.report_max_var, width=48,
             fg_color=C["bg"], border_color=C["border"], text_color=C["text"],
         )
-        page_size_entry.pack(side="left", padx=(0, 8))
-        # Enter reapplies page size (Prev/Next also re-read it each click)
+        page_size_entry.pack(side="left", padx=(0, 2), pady=2)
         page_size_entry.bind(
             "<Return>", lambda _e: self._reports_on_filter_change()
         )
+        flow.add(psize)
 
-        ctk.CTkLabel(bar, text="Show", font=FONT_SM, text_color=C["muted"]).pack(
-            side="left", padx=(4, 4)
-        )
-        # Work queue default: unconfirmed only
+        show = _lbl_chip("Show")
         self.report_verdict_filter = ctk.StringVar(value="Unconfirmed")
         ctk.CTkComboBox(
-            bar, variable=self.report_verdict_filter, width=170,
+            show, variable=self.report_verdict_filter, width=170,
             values=[
-                "Unconfirmed",
-                "Confirmed incorrect",
-                "Confirmed correct",
-                "All",
+                "Unconfirmed", "Confirmed incorrect", "Confirmed correct", "All",
             ],
             fg_color=C["bg"], border_color=C["border"], button_color=C["elevated"],
             text_color=C["text"], dropdown_fg_color=C["panel"],
-            # Pass selection explicitly — StringVar can lag one tick behind command
             command=lambda v: self._reports_on_filter_change(show_value=v),
-        ).pack(side="left", padx=(0, 8))
+        ).pack(side="left", padx=(0, 2), pady=2)
+        flow.add(show)
 
-        ctk.CTkButton(
-            bar, text="Confirm unchecked", width=130,
-            command=self._reports_confirm_unchecked,
-            fg_color="#5c3030", hover_color="#7a4040", text_color=C["text"],
-        ).pack(side="left", padx=(0, 6))
-        ctk.CTkButton(
-            bar, text="Open HTML", width=100,
-            command=self._reports_open_html,
-            fg_color=C["elevated"], hover_color=C["border"], text_color=C["text"],
-            border_width=1, border_color=C["border"],
-        ).pack(side="left", padx=(0, 6))
-        ctk.CTkButton(
-            bar, text="Export CSV", width=90,
-            command=self._reports_export_csv,
-            fg_color=C["elevated"], hover_color=C["border"], text_color=C["text"],
-            border_width=1, border_color=C["border"],
-        ).pack(side="left", padx=(0, 8))
+        flow.add(
+            ctk.CTkButton(
+                h, text="Confirm unchecked", width=130,
+                command=self._reports_confirm_unchecked,
+                fg_color="#5c3030", hover_color="#7a4040", text_color=C["text"],
+            )
+        )
+        flow.add(
+            ctk.CTkButton(
+                h, text="Open HTML", width=100,
+                command=self._reports_open_html,
+                fg_color=C["elevated"], hover_color=C["border"], text_color=C["text"],
+                border_width=1, border_color=C["border"],
+            )
+        )
+        flow.add(
+            ctk.CTkButton(
+                h, text="Export CSV", width=90,
+                command=self._reports_export_csv,
+                fg_color=C["elevated"], hover_color=C["border"], text_color=C["text"],
+                border_width=1, border_color=C["border"],
+            )
+        )
 
-        # Checkbox export → watermarked mapa-style card grids
-        ctk.CTkLabel(
-            bar, text="Grid export", font=FONT_SM, text_color=C["muted"],
-        ).pack(side="left", padx=(4, 4))
+        gex = _lbl_chip("Grid export")
         ctk.CTkButton(
-            bar, text="1×2", width=48,
+            gex, text="1×2", width=48,
             command=lambda: self._reports_export_grid("1x2"),
             fg_color=C["elevated"], hover_color=C["border"], text_color=C["text"],
             border_width=1, border_color=C["border"],
-        ).pack(side="left", padx=(0, 4))
+        ).pack(side="left", padx=(0, 3), pady=2)
         ctk.CTkButton(
-            bar, text="2×2", width=48,
+            gex, text="2×2", width=48,
             command=lambda: self._reports_export_grid("2x2"),
             fg_color=C["elevated"], hover_color=C["border"], text_color=C["text"],
             border_width=1, border_color=C["border"],
-        ).pack(side="left", padx=(0, 4))
+        ).pack(side="left", padx=(0, 3), pady=2)
         ctk.CTkButton(
-            bar, text="Clear sel", width=70,
+            gex, text="Clear sel", width=70,
             command=self._reports_clear_export_selection,
             fg_color=C["elevated"], hover_color=C["border"], text_color=C["muted"],
             border_width=1, border_color=C["border"],
-        ).pack(side="left", padx=(0, 6))
+        ).pack(side="left", padx=(0, 3), pady=2)
         self.report_export_sel_label = ctk.CTkLabel(
-            bar, text="Selected for grid: 0", font=FONT_SM, text_color=C["dim"],
+            gex, text="Selected: 0", font=FONT_SM, text_color=C["dim"],
         )
-        self.report_export_sel_label.pack(side="left", padx=(0, 4))
+        self.report_export_sel_label.pack(side="left", padx=(2, 2), pady=2)
+        flow.add(gex)
         if hasattr(self, "_reports_export_selected_init"):
             self._reports_export_selected_init()
 
-        # Pagination row
-        page_row = ctk.CTkFrame(top, fg_color="transparent")
-        page_row.pack(fill="x", padx=4, pady=(0, 2))
+        page_flow = _FlowRow(top, padx=5, pady=2)
         self._report_page = 0
-        self._report_pool: list = []  # full filtered list
-        ctk.CTkButton(
-            page_row, text="◀ Prev", width=80,
-            command=self._reports_prev_page,
-            fg_color=C["elevated"], hover_color=C["border"], text_color=C["text"],
-            border_width=1, border_color=C["border"],
-        ).pack(side="left", padx=(0, 6))
-        self.report_page_label = ctk.CTkLabel(
-            page_row, text="Page —", font=FONT_SM, text_color=C["muted"],
+        self._report_pool: list = []
+        page_flow.add(
+            ctk.CTkButton(
+                page_flow.host, text="◀ Prev", width=80,
+                command=self._reports_prev_page,
+                fg_color=C["elevated"], hover_color=C["border"], text_color=C["text"],
+                border_width=1, border_color=C["border"],
+            )
         )
-        self.report_page_label.pack(side="left", padx=6)
-        ctk.CTkButton(
-            page_row, text="Next ▶", width=90,
-            command=self._reports_next_page,
-            fg_color=C["elevated"], hover_color=C["border"], text_color=C["text"],
-            border_width=1, border_color=C["border"],
-        ).pack(side="left", padx=(6, 0))
+        self.report_page_label = ctk.CTkLabel(
+            page_flow.host, text="Page —", font=FONT_SM, text_color=C["muted"],
+        )
+        page_flow.add(self.report_page_label)
+        page_flow.add(
+            ctk.CTkButton(
+                page_flow.host, text="Next ▶", width=90,
+                command=self._reports_next_page,
+                fg_color=C["elevated"], hover_color=C["border"], text_color=C["text"],
+                border_width=1, border_color=C["border"],
+            )
+        )
         self.report_layout_hint = ctk.CTkLabel(
-            page_row,
-            text="Check cards → 1×2 / 2×2 watermarked export  ·  Open HTML uses layout",
+            page_flow.host,
+            text="Check cards → 1×2 / 2×2 watermarked export",
             font=FONT_SM,
             text_color=C["dim"],
         )
-        self.report_layout_hint.pack(side="left", padx=(14, 0))
+        page_flow.add(self.report_layout_hint)
 
-        # ---- Summary metrics ----
-        sum_row = ctk.CTkFrame(top, fg_color="transparent")
-        sum_row.pack(fill="x", padx=4, pady=(0, 4))
+        # ---- Summary metrics (also wrap) ----
+        sum_flow = _FlowRow(top, padx=4, pady=2)
 
-        def _chip(key: str) -> ctk.CTkLabel:
+        def _metric(key: str) -> ctk.CTkLabel:
             chip = ctk.CTkFrame(
-                sum_row, fg_color=C["elevated"], corner_radius=6,
+                sum_flow.host, fg_color=C["elevated"], corner_radius=6,
                 border_width=1, border_color=C["border"],
             )
-            chip.pack(side="left", padx=3, pady=1, fill="x", expand=True)
             lb = ctk.CTkLabel(
                 chip, text="—", font=FONT_SM, text_color=C["text"], anchor="center",
             )
-            lb.pack(padx=8, pady=5)
+            lb.pack(padx=10, pady=5)
             setattr(self, key, lb)
+            sum_flow.add(chip)
             return lb
 
-        _chip("report_m_total")
-        _chip("report_m_photo")
-        _chip("report_m_confirmed")
-        _chip("report_m_correct")
-        _chip("report_m_unreviewed")
+        _metric("report_m_total")
+        _metric("report_m_photo")
+        _metric("report_m_confirmed")
+        _metric("report_m_correct")
+        _metric("report_m_unreviewed")
 
         self.report_status = ctk.CTkLabel(
             top,
@@ -305,8 +303,19 @@ class ReportsBuildMixin:
                 "Show: Unconfirmed (default) · Confirmed correct drops off this sheet."
             ),
             font=FONT_SM, text_color=C["dim"], anchor="w",
+            wraplength=900, justify="left",
         )
         self.report_status.pack(fill="x", padx=8, pady=(0, 4))
+        top.bind(
+            "<Configure>",
+            lambda e: self.report_status.configure(
+                wraplength=max(200, int(getattr(e, "width", 900) or 900) - 24)
+            ),
+            add="+",
+        )
+        _after_idle_reflow(self, flow)
+        _after_idle_reflow(self, page_flow)
+        _after_idle_reflow(self, sum_flow)
 
         # ---- Scrollable card list (fast wheel binding after paint) ----
         scroll = ctk.CTkScrollableFrame(

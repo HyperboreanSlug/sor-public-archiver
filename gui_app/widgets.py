@@ -11,6 +11,7 @@ from gui_app.widgets_sort import (
     tree_rows_reset,
     tree_selected_record,
 )
+from gui_app.widgets_flow import FlowRow, after_idle_reflow
 from gui_app.widgets_tree import (
     bind_tree_scroll_isolation,
     card,
@@ -43,3 +44,5 @@ _wire_wide_scroll = wire_wide_scroll
 _bind_tree_scroll_isolation = bind_tree_scroll_isolation
 _misclass_race_bucket = misclass_race_bucket
 _enable_tree_column_sort = enable_tree_column_sort
+_FlowRow = FlowRow
+_after_idle_reflow = after_idle_reflow

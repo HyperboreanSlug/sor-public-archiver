@@ -52,32 +52,42 @@ from gui_app.widgets import (
 class ScrapeBuildMixin:
     def _build_scrape(self, tab):
         tab.configure(fg_color=C["surface"])
+        from gui_app.widgets_flow import FlowRow, after_idle_reflow
+
         top = ctk.CTkFrame(tab, fg_color="transparent")
         top.pack(fill="x", padx=12, pady=(12, 6))
+        flow = FlowRow(top, padx=5, pady=3)
+        h = flow.host
 
         self.scrape_direct_only = ctk.BooleanVar(value=True)
-        ctk.CTkCheckBox(
-            top,
-            text="Direct / bulk only",
-            variable=self.scrape_direct_only,
-            font=FONT_SM,
-            text_color=C["text"],
-            fg_color=C["accent"],
-            hover_color=C["accent_hover"],
-            checkmark_color=C["bg"],
-            border_color=C["border"],
-        ).pack(side="left", padx=(0, 12))
-
-        ctk.CTkButton(
-            top, text="Select all", width=100, command=self._scrape_select_all,
-            fg_color=C["elevated"], hover_color=C["border"], text_color=C["text"],
-            border_width=1, border_color=C["border"],
-        ).pack(side="left", padx=4)
-        ctk.CTkButton(
-            top, text="Clear", width=80, command=self._scrape_clear_selection,
-            fg_color=C["elevated"], hover_color=C["border"], text_color=C["text"],
-            border_width=1, border_color=C["border"],
-        ).pack(side="left", padx=4)
+        flow.add(
+            ctk.CTkCheckBox(
+                h,
+                text="Direct / bulk only",
+                variable=self.scrape_direct_only,
+                font=FONT_SM,
+                text_color=C["text"],
+                fg_color=C["accent"],
+                hover_color=C["accent_hover"],
+                checkmark_color=C["bg"],
+                border_color=C["border"],
+            )
+        )
+        flow.add(
+            ctk.CTkButton(
+                h, text="Select all", width=100, command=self._scrape_select_all,
+                fg_color=C["elevated"], hover_color=C["border"], text_color=C["text"],
+                border_width=1, border_color=C["border"],
+            )
+        )
+        flow.add(
+            ctk.CTkButton(
+                h, text="Clear", width=80, command=self._scrape_clear_selection,
+                fg_color=C["elevated"], hover_color=C["border"], text_color=C["text"],
+                border_width=1, border_color=C["border"],
+            )
+        )
+        after_idle_reflow(self, flow)
 
         mid_split = _hpaned(tab)
         mid_split.pack(fill="both", expand=True, padx=12, pady=6)

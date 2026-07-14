@@ -13,6 +13,7 @@ from gui_app.paths import ROOT
 from gui_app.shell_header import ShellHeaderMixin
 from gui_app.shell_ops import ShellOpsMixin
 from gui_app.shell_sync import ShellSyncMixin
+from gui_app.shell_warm import ShellWarmMixin
 from gui_app.shared.detail_drawer import DetailDrawerMixin
 from gui_app.tabs.browse import BrowseTabMixin
 from gui_app.tabs.browse.deepface_reports import DeepfaceReportsTabMixin
@@ -38,6 +39,7 @@ from gui_app.widgets import _card, _vpaned
 
 class ArchiverApp(
     AsyncJobsMixin,
+    ShellWarmMixin,
     ShellSyncMixin,
     ShellHeaderMixin,
     ShellOpsMixin,
@@ -99,27 +101,36 @@ class ArchiverApp(
         except Exception:
             pass
         self.after(400, self._maybe_prompt_or_sync_database)
+        # Pre-build other tabs while idle so first click is not a multi-second freeze
+        self._schedule_tab_warmup()
 
     def _build(self) -> None:
-        header = ctk.CTkFrame(self, fg_color=C["surface"], height=44, corner_radius=0)
+        from gui_app.widgets_flow import FlowRow, after_idle_reflow
+
+        header = ctk.CTkFrame(self, fg_color=C["surface"], corner_radius=0)
         header.pack(fill="x")
-        header.pack_propagate(False)
 
-        ctk.CTkLabel(
-            header,
-            text="SOR Public Archiver",
-            font=FONT_TITLE,
-            text_color=C["text"],
-        ).pack(side="left", padx=14, pady=8)
+        # Wrap title / DB path / actions so they stay visible on narrow windows
+        flow = FlowRow(header, padx=6, pady=4)
+        self._header_flow = flow
+        h = flow.host
 
-        db_row = ctk.CTkFrame(header, fg_color="transparent")
-        db_row.pack(side="left", padx=(8, 0), fill="y")
-        self.header_db_label = ctk.CTkLabel(
-            db_row, text="", font=FONT_SM, text_color=C["muted"], anchor="w"
+        flow.add(
+            ctk.CTkLabel(
+                h,
+                text="SOR Public Archiver",
+                font=FONT_TITLE,
+                text_color=C["text"],
+            )
         )
-        self.header_db_label.pack(side="left", padx=(0, 8))
+
+        db_chip = flow.chip()
+        self.header_db_label = ctk.CTkLabel(
+            db_chip, text="", font=FONT_SM, text_color=C["muted"], anchor="w"
+        )
+        self.header_db_label.pack(side="left", padx=(0, 8), pady=4)
         ctk.CTkButton(
-            db_row,
+            db_chip,
             text="Open data",
             width=88,
             height=28,
@@ -129,12 +140,15 @@ class ArchiverApp(
             text_color=C["text"],
             border_width=1,
             border_color=C["border"],
-        ).pack(side="left")
+        ).pack(side="left", pady=4)
+        flow.add(db_chip)
 
         self.stats_label = ctk.CTkLabel(
-            header, text="Ready", font=FONT_SM, text_color=C["accent"]
+            h, text="Ready", font=FONT_SM, text_color=C["accent"]
         )
-        self.stats_label.pack(side="right", padx=14)
+        flow.add(self.stats_label)
+        after_idle_reflow(self, flow)
+
         self._header_record_count: Optional[int] = None
         self._header_refresh_after_id = None
         self.after(50, self._refresh_header_db_path)

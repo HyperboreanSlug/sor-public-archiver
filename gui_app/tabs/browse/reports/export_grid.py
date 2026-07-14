@@ -137,7 +137,7 @@ class ReportsExportGridMixin:
                 self.log_queue.put(f"Reports grid export: {path}")
             except Exception:
                 pass
-            messagebox.showinfo("Export grid", f"Saved watermarked grid:\n{path}")
+            # No confirmation dialog — status bar + log are enough
 
         if hasattr(self, "run_bg"):
             self.run_bg(work, done, name="report-grid-export")
