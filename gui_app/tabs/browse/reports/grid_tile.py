@@ -208,8 +208,8 @@ class ReportsGridTileMixin:
             anchor="center",
         ).pack(fill="x", padx=2, pady=(2, 1))
 
-        # Crime only (summarized; locations stripped in crime_summary)
-        crime_short = self._reports_summarize_crime(crime, max_len=72)
+        # Crime only (summarized); use full card width so text is not clipped
+        crime_short = self._reports_summarize_crime(crime, max_len=96)
         crime_lbl = ctk.CTkLabel(
             card,
             text=crime_short or "—",
@@ -217,10 +217,10 @@ class ReportsGridTileMixin:
             text_color=C["text"] if crime_short else C["dim"],
             anchor="nw",
             justify="left",
-            wraplength=_W - 10,
-            height=36,
+            wraplength=_W - 4,
+            height=40,
         )
-        crime_lbl.pack(fill="x", padx=3, pady=(1, 0))
+        crime_lbl.pack(fill="x", padx=2, pady=(1, 0))
 
         meta_row = ctk.CTkFrame(card, fg_color="transparent", height=14)
         meta_row.pack(fill="x", padx=3, pady=(0, 0))

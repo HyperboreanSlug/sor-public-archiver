@@ -21,6 +21,7 @@
 | DeepFace UI | `gui_app/tabs/deepface/` |
 | Settings | `gui_app/tabs/settings/` |
 | Export card | `gui_app/shared/export_card*.py` |
+| Crime summary | `scraper/crime_summary*.py` (clause parse + docket strip) |
 | Detail drawer | `gui_app/shared/detail_drawer/` |
 | SQLite | `scraper/database/` |
 | NSOPW pipeline | `scraper/nsopw/` (`builder_*.py`, `client_*.py`) |
@@ -61,7 +62,8 @@ data/        # offenders.db, report_pages, settings (runtime)
 | `async_jobs.py` | `run_bg` + main-thread job queue (all DB work) |
 | `shell_warm.py` | Idle-preload lazy tabs so first open is near-instant |
 | `lazy_tabs.py` | `warm()` builds without focus steal / on_change |
-| `widgets_flow.py` | `FlowRow` — wrap toolbars so top controls stay visible |
+| `widgets_flow.py` | `FlowRow` — wrap toolbars so top controls stay fully visible |
+| `widgets_flow_measure.py` | Chip/leaf size for reflow (ignore CTk 200×200 defaults; HiDPI) |
 | `tabs/browse/integrity/refresh.py` | Integrity stats via `run_bg` |
 | `tabs/browse/search/run_query.py` | Browse search via `run_bg` |
 | `tabs/browse/misclassify/run.py` | Surname analyze / export via `run_bg` |

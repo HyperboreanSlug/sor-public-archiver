@@ -1,7 +1,7 @@
 """Text fitting helpers for export cards (crime block stays inside the frame)."""
 from __future__ import annotations
 
-from typing import List
+from typing import List, Optional, Tuple
 
 from gui_app.shared.export_card_fields import _MUTED, _TEXT, load_font
 from gui_app.shared.export_card_photo import wrap_text
@@ -18,14 +18,23 @@ def draw_labeled_block(
     value_font,
     *,
     max_lines: int = 3,
+    bottom_limit: Optional[int] = None,
 ) -> int:
+    """Draw labeled value. Stops early if *bottom_limit* would be exceeded."""
+    need = 34 + 42  # label + one value line
+    if bottom_limit is not None and top + need > bottom_limit:
+        return top
     draw.text((margin, top), label.upper(), font=label_font, fill=_MUTED)
     top += 34
     all_lines = wrap_text(draw, value, value_font, max_text_w)
     lines = all_lines[:max_lines]
     if len(all_lines) > max_lines and lines:
-        lines[-1] = ellipsize(draw, " ".join(all_lines[max_lines - 1 :]), value_font, max_text_w)
+        lines[-1] = ellipsize(
+            draw, " ".join(all_lines[max_lines - 1 :]), value_font, max_text_w
+        )
     for line in lines:
+        if bottom_limit is not None and top + 42 > bottom_limit:
+            break
         draw.text((margin, top), line, font=value_font, fill=_TEXT)
         top += 42
     return top + 10
@@ -37,15 +46,15 @@ def plan_crime_block(
     *,
     max_text_w: int,
     max_height: int,
-) -> tuple:
+) -> Optional[Tuple]:
     """Return (font, line_h, lines, total_h) that fits in *max_height*."""
     label_h = 34
     body_avail = max_height - label_h - 8
-    if body_avail < 24:
+    if body_avail < 22:
         return None
     for size in (34, 30, 26, 22, 18):
         font = load_font(size, bold=True)
-        line_h = max(28, size + 8)
+        line_h = max(26, size + 8)
         max_lines = max(1, body_avail // line_h)
         lines = fit_lines(draw, cr, font, max_text_w, max_lines)
         body_h = len(lines) * line_h
@@ -54,7 +63,10 @@ def plan_crime_block(
     font = load_font(18, bold=True)
     line_h = 26
     lines = [ellipsize(draw, cr, font, max_text_w)]
-    return font, line_h, lines, label_h + line_h + 6
+    total = label_h + line_h + 6
+    if total > max_height:
+        return None
+    return font, line_h, lines, total
 
 
 def draw_crime_block(
@@ -67,20 +79,42 @@ def draw_crime_block(
     bottom_limit: int,
     label_font,
     anchor_bottom: bool = False,
+    min_height: int = 90,
 ) -> int:
-    """Draw CRIME. If *anchor_bottom*, pin the block to just above *bottom_limit*."""
-    label_h = 34
-    max_height = bottom_limit - top
-    if max_height < 40:
+    """Draw CRIME. With *anchor_bottom*, always pin just above *bottom_limit*."""
+    cr = " ".join((cr or "").split())
+    if not cr:
         return top
+
+    if anchor_bottom:
+        # Guaranteed bottom band so name/race/location never erase crime
+        band = max(min_height, min(180, bottom_limit - max(0, top)))
+        if band < 50:
+            band = min_height
+        plan_top = bottom_limit - band
+        max_height = band
+    else:
+        plan_top = top
+        max_height = bottom_limit - top
+        if max_height < 40:
+            return top
+
     plan = plan_crime_block(
         draw, cr, max_text_w=max_text_w, max_height=max_height
     )
     if plan is None:
-        return top
-    font, line_h, lines, total_h = plan
+        # Last resort: one ellipsized line in the bottom band
+        font = load_font(18, bold=True)
+        line_h = 26
+        lines = [ellipsize(draw, cr, font, max_text_w)]
+        total_h = 34 + line_h + 6
+        label_h = 34
+    else:
+        font, line_h, lines, total_h = plan
+        label_h = 34
+
     if anchor_bottom:
-        top = max(top, bottom_limit - total_h)
+        top = bottom_limit - total_h
     draw.text((margin, top), "CRIME", font=label_font, fill=_MUTED)
     y = top + label_h
     for line in lines:

@@ -6,259 +6,22 @@ short human summary; Misclassify / detail drawers keep the full text.
 """
 from __future__ import annotations
 
-import time
-
 import re
 from typing import List, Optional
 
-# Drop entire clauses that are pure legal chrome
-_DROP_CLAUSE = re.compile(
-    r"(?ix)^(?:"
-    r"commission\s+of\s+or\s+attempt.*"
-    r"|attempt,?\s*solicit,?\s*or\s*conspire.*"
-    r"|chapter\s+\d+.*"
-    r"|f\.?s\.?\s*[\d.]+.*"
-    r"|s\.?\s*\d{3}\.\d+.*"
-    r"|rcw\s+[\d\s.a-z]+$"
-    r"|guilty/?convict.*"
-    r"|adjudication\s+withheld.*"
-    r"|principal\s*$"
-    r"|charge\s+correlation\s+pending.*"
-    r"|no\s+picture\s+available.*"
-    r"|registration\s+of\s+criminal\s+offenders.*"
-    r"|scars,?\s*marks\s+and\s+tattoos.*"
-    r"|alias(?:es)?\s*(?:information)?:?$"
-    r"|photos?:?$"
-    r"|more\s+information.*"
-    r"|compliant\s+tier\s+level.*"
-    r"|offender\s+age\s+at\s+time.*"
-    r"|physical\s+description.*"
-    r"|name:?$"
-    r"|level:?.*"
-    r"|status:?.*"
-    r"|this\s+link\s+reflects.*"
-    r")$"
+from scraper.crime_summary_clause import (
+    CITY_STATE,
+    COUNTY_LOC,
+    extract_from_clause,
+    norm,
+    strip_dates,
+    strip_location_junk,
 )
-
-_DATE = re.compile(
-    r"(?ix)\b(?:"
-    r"\d{1,2}[./\-]\d{1,2}[./\-]\d{2,4}"
-    r"|\d{4}-\d{1,2}-\d{1,2}"
-    r"|(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|"
-    r"jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|"
-    r"nov(?:ember)?|dec(?:ember)?)\.?\s+\d{1,2},?\s+\d{2,4}"
-    r")\b"
+from scraper.crime_summary_junk import (
+    clean_label,
+    is_junk_label,
+    strip_statute_cites,
 )
-
-_STATUTE_ONLY = re.compile(
-    r"(?ix)^(?:"
-    r"(?:f\.?s\.?|s\.?c\.?\s*code|rcw|u\.?s\.?c\.?|c\.?r\.?s\.?)\s*[\d\s.()\-a-z/]+"
-    r"|s\.\s*\d{2,4}\.\d+.*"
-    r"|chapter\s+\d+.*"
-    r"|\d{2,}-\d{3,4}.*"  # case numbers like 9709272 / 21-5510
-    r"|[\d\s.\-()a-z]{3,40}$"  # bare numbers / cites
-    r")$"
-)
-
-# Court / place junk often after FL short charges
-_COURT_JUNK = re.compile(
-    r"(?ix)\b(?:"
-    r"(?:county|judicial\s+district|superior\s+court|circuit\s+court|"
-    r"district\s+court|dept\.?\s+of\s+corrections|ndoc|doc)\b.*"
-    r")$"
-)
-
-# Location / address noise that should never appear in report crime lines
-_LOCATION_TRAIL = re.compile(
-    r"(?ix)"
-    r"(?:"
-    r",?\s*(?:in\s+)?(?:the\s+)?(?:city|county|state)\s+of\s+.+$"
-    r"|,?\s*(?:resides?|residence|address|located)\s*(?:at|in|:)\s*.+$"
-    r"|,?\s*\d{1,6}\s+[A-Za-z0-9.\- ]{2,40}\s+"
-    r"(?:st|street|ave|avenue|blvd|rd|road|dr|drive|ln|lane|ct|court|way|hwy)\b.+$"
-    r")$"
-)
-_CITY_STATE = re.compile(
-    r"(?ix)\b[A-Za-z][A-Za-z.\-']+(?:\s+[A-Za-z][A-Za-z.\-']+){0,3}"
-    r",\s*[A-Z]{2}\b(?:\s+\d{5}(?:-\d{4})?)?"
-)
-_COUNTY_LOC = re.compile(
-    r"(?ix)\b[A-Za-z][A-Za-z.\-']+(?:\s+[A-Za-z][A-Za-z.\-']+)?\s+"
-    r"County(?:,\s*[A-Z]{2})?\b"
-)
-
-# Known short registry codes → readable labels (first match wins)
-_CODE_MAP = [
-    (re.compile(r"(?i)SEX\s*BAT\s*/?\s*WPN\.?\s*OR\s*FORCE"), "Sexual battery (weapon/force)"),
-    (re.compile(r"(?i)SEX\s*BAT\s*BY\s*ADULT\s*/?\s*VCTM\s*UNDER\s*12"), "Sexual battery (adult/victim under 12)"),
-    (re.compile(r"(?i)SEX\s*BAT\s*BY\s*JUVEN\s*/?\s*VCTM\s*UNDER\s*12"), "Sexual battery (juvenile/victim under 12)"),
-    (re.compile(r"(?i)SEX\s*BAT\s*/?\s*INJ\s*NOT\s*LIKELY"), "Sexual battery (injury not likely)"),
-    # LEWD ASLT paired with sex bat → keep sexual-battery-style short label only
-    (re.compile(r"(?i)LEWD\s*ASLT\s*/?\s*SEX\s*BAT\s*VCTM\s*<?\s*16"), "Sex bat (victim <16)"),
-    (re.compile(r"(?i)SEXUAL\s*BATTERY\s*BY\s*ADULT\s*ON\s*ADULT"), "Sexual battery (adult on adult)"),
-    (re.compile(r"(?i)FAIL(?:URE)?\s*TO\s*REGIST|FAIL\s*COMPLY\s*REG|RE-?REGISTR"), "Fail to register"),
-    (re.compile(r"(?i)TRAVELING\s+TO\s+MEET\s+MINOR"), "Traveling to meet minor"),
-    (re.compile(r"(?i)STATUTORY\s+SEXUAL\s+SEDUCTION"), "Statutory sexual seduction"),
-    (re.compile(r"(?i)COMMUNICATE\s+WITH\s+MINOR\s+FOR\s+IMMORAL"), "Communicate with minor (immoral purposes)"),
-]
-
-_MONTHS = (
-    r"(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
-    r"Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|"
-    r"Nov(?:ember)?|Dec(?:ember)?)"
-)
-
-
-def _norm(s: str) -> str:
-    return " ".join((s or "").split()).strip(" ;,|")
-
-
-def _strip_dates(s: str) -> str:
-    t = _DATE.sub(" ", s)
-    t = re.sub(rf"(?i)\b{_MONTHS}\.?\s+\d{{1,2}},?\s+\d{{2,4}}\b", " ", t)
-    t = re.sub(r"\(\s*(?:19|20)\d{2}\s*\)", " ", t)
-    t = re.sub(r"\b(?:19|20)\d{2}\b", " ", t)
-    return _norm(t)
-
-
-def _strip_statute_cites(s: str) -> str:
-    t = s
-    t = re.sub(r"(?i)\*?\s*excluding\s+subsections?\s+[\d.(),\s]+", " ", t)
-    t = re.sub(r"(?i)\bF\.?S\.?\s*[\d.()/a-z]+\s*(?:\(PRINCIPAL\))?", " ", t)
-    t = re.sub(r"(?i)\bs\.\s*\d{2,4}\.\d+(?:\([a-z0-9]+\))*\d*", " ", t)
-    t = re.sub(r"(?i)\bChapter\s+\d+\b", " ", t)
-    t = re.sub(r"(?i)\bRCW\s+[\d\s.A-Z]+", " ", t)
-    t = re.sub(r"(?i)\b(?:PRINCIPAL|CHARGE CORRELATION PENDING)\b", " ", t)
-    t = re.sub(r"\b\d{5,}\b", " ", t)  # case / booking numbers
-    t = re.sub(r"\s{2,}", " ", t)
-    return _norm(t)
-
-
-def _strip_location_junk(s: str) -> str:
-    """Remove city/state, county, address trails from offense text."""
-    t = s or ""
-    t = _LOCATION_TRAIL.sub(" ", t)
-    t = _CITY_STATE.sub(" ", t)
-    t = _COUNTY_LOC.sub(" ", t)
-    t = re.sub(r"(?i)\b(?:guilty/?convict(?:ed)?|adjudication\s+withheld)\b", " ", t)
-    t = re.sub(r"(?i)\b(?:at\s+)?(?:last\s+)?known\s+(?:address|location)\b.*$", " ", t)
-    t = re.sub(r"\s*[|;]\s*", " · ", t)
-    t = re.sub(r"(?:\s*·\s*)+", " · ", t)
-    return _norm(t.strip(" ·;,"))
-
-
-def _title_offense(s: str) -> str:
-    s = s.strip()
-    if not s:
-        return s
-    # Already mostly title/upper codes handled elsewhere
-    if s.isupper() and len(s) < 40:
-        return s.title()
-    # Sentence case for known phrases
-    low = s.lower()
-    if low.startswith("sexual battery"):
-        rest = s[len("sexual battery") :].strip(" -:")
-        return ("Sexual battery " + rest).strip() if rest else "Sexual battery"
-    return s[0].upper() + s[1:] if len(s) > 1 else s.upper()
-
-
-def _extract_from_clause(clause: str) -> Optional[str]:
-    c = _norm(clause)
-    if not c or len(c) < 3:
-        return None
-    if _DROP_CLAUSE.match(c):
-        return None
-    # Bare statute / case number
-    if _STATUTE_ONLY.match(c) and not re.search(
-        r"(?i)sexual|lewd|rape|molest|battery|assault|porn|child|indecent|sodomy",
-        c,
-    ):
-        return None
-
-    c = _strip_dates(c)
-    c = _strip_statute_cites(c)
-    if not c or _DROP_CLAUSE.match(c):
-        return None
-
-    # Map short codes first (before dropping pure lewd clauses)
-    src = clause + " " + c
-    for rx, label in _CODE_MAP:
-        if rx.search(src):
-            return label
-    m = re.search(r"(?i)CHILD\s+MOLESTATION[- ]?(\d)", src)
-    if m:
-        return f"Child molestation {m.group(1)}"
-
-    # Drop lewd/lascivious entirely from report summaries (often duplicates)
-    if re.search(r"(?i)\blewd\b|\blascivious\b", src):
-        return None
-
-    # "21 - 5510 (a3) — Sexual exploitation of a child..."
-    m = re.search(r"—\s*(.+)$", c)
-    if m and len(m.group(1)) > 8:
-        c = _norm(m.group(1))
-    m = re.search(r"§\s*[\d\-.]+\s*[—-]\s*(.+)$", c)
-    if m and len(m.group(1)) > 8:
-        c = _norm(m.group(1))
-
-    # Re-check after em-dash extraction
-    if re.search(r"(?i)\blewd\b|\blascivious\b", c):
-        return None
-
-    # Sexual battery (with optional exclusion noise already stripped)
-    if re.search(r"(?i)sexual\s+battery", c):
-        extra = []
-        if re.search(r"(?i)weapon|force|wpn", c):
-            extra.append("weapon/force")
-        if re.search(r"(?i)under\s*12", c):
-            extra.append("victim under 12")
-        if re.search(r"(?i)injury\s+not\s+likely", c):
-            extra.append("injury not likely")
-        base = "Sexual battery"
-        return f"{base} ({', '.join(extra)})" if extra else base
-
-    # Rape / sodomy / molestation / exploitation
-    for pat, lab in (
-        (r"(?i)\brape\b.*\b1st\b|\b1st\s+degree\s+rape\b", "Rape 1st degree"),
-        (r"(?i)\brape\b.*\b3rd\b|\b3rd\s+degree\s+rape\b", "Rape 3rd degree"),
-        (r"(?i)\brape\b", "Rape"),
-        (r"(?i)sodomy", "Sodomy"),
-        (r"(?i)child\s+molestation", "Child molestation"),
-        (r"(?i)sexual\s+exploitation\s+of\s+a\s+child", "Sexual exploitation of a child"),
-        (r"(?i)aggravated\s+indecent\s+liberties", "Aggravated indecent liberties"),
-        (r"(?i)indecent\s+liberties", "Indecent liberties"),
-        (r"(?i)criminal\s+sexual\s+conduct", "Criminal sexual conduct"),
-        (r"(?i)sexual\s+assault", "Sexual assault"),
-        (r"(?i)unlawful\s+sexual\s+activity", "Unlawful sexual activity with minor"),
-        (r"(?i)possession\s+of\s+child\s+porn", "Possession of child pornography"),
-        (r"(?i)false\s+imprison", "False imprisonment"),
-    ):
-        if re.search(pat, c):
-            return lab
-
-    # Drop court/location trailing junk for remaining short phrases
-    c2 = _COURT_JUNK.sub("", c).strip(" ;,")
-    c2 = _strip_location_junk(c2)
-    if not c2 or len(c2) < 4:
-        return None
-    if _DROP_CLAUSE.match(c2) or _STATUTE_ONLY.match(c2):
-        return None
-    # Avoid dumping remaining long legal paragraphs
-    if len(c2) > 90:
-        # Try first clause-like fragment
-        c2 = re.split(r"\s+where\s+|\s+by\s+offender\s+", c2, maxsplit=1)[0]
-        c2 = _strip_location_junk(_norm(c2))
-        if len(c2) > 80:
-            return None
-    # Skip pure person names / address-like leftovers
-    if re.match(r"^[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3}$", c2) and not re.search(
-        r"(?i)sexual|lewd|rape|child|assault|battery", c2
-    ):
-        return None
-    # Skip leftover pure locations
-    if _CITY_STATE.fullmatch(c2) or _COUNTY_LOC.fullmatch(c2):
-        return None
-    return _title_offense(c2)
 
 
 def _dedupe_preserve(items: List[str]) -> List[str]:
@@ -281,15 +44,13 @@ def summarize_crime(text: Optional[str], *, max_len: int = 140) -> str:
 
         Commission of OR Attempt...; Chapter 794; Sexual Battery *Excluding...;
         s. 800.04(4)(b); Lewd/lascivious ... under 12 ... force...;
-        s. 800.04(5)(c)1; Lewd/lascivious ... unclothed genitals...; s. 800.04(5)(d)
 
-        → Sexual battery · Lewd/lascivious (under 12/force) · Lewd/lascivious (unclothed genitals)
+        → Sexual battery
     """
-    raw = _norm(text or "")
+    raw = norm(text or "")
     if not raw:
         return ""
 
-    # Pre-strip global junk headers
     raw = re.sub(
         r"(?i)^scars,?\s*marks\s+and\s+tattoos\s*[—\-:]+\s*",
         "",
@@ -297,22 +58,22 @@ def summarize_crime(text: Optional[str], *, max_len: int = 140) -> str:
     )
     raw = re.sub(r"(?i)no\s+photograph\s+available[^.]*\.", " ", raw)
 
-    parts = re.split(r"\s*;\s*", raw)
     labels: List[str] = []
-    for p in parts:
-        lab = _extract_from_clause(p)
+    for p in re.split(r"\s*;\s*", raw):
+        lab = extract_from_clause(p)
         if lab:
             labels.append(lab)
 
-    # If nothing parsed, fall back to first non-junk fragment stripped
     if not labels:
-        cleaned = _strip_location_junk(_strip_statute_cites(_strip_dates(raw)))
+        cleaned = strip_location_junk(strip_statute_cites(strip_dates(raw)))
         cleaned = re.sub(
             r"(?i)commission of or attempt, solicit, or conspire to commit",
             "",
             cleaned,
         )
-        cleaned = _strip_location_junk(_norm(cleaned))
+        cleaned = clean_label(strip_location_junk(norm(cleaned))) or ""
+        if cleaned and is_junk_label(cleaned):
+            cleaned = ""
         if cleaned and len(cleaned) <= max_len:
             return cleaned
         if cleaned:
@@ -324,18 +85,17 @@ def summarize_crime(text: Optional[str], *, max_len: int = 140) -> str:
 
     labels = _dedupe_preserve(labels)
 
-    # Never show lewd/lascivious or pure location scraps in report summaries
-    labels = [
-        x
-        for x in labels
-        if not re.search(r"(?i)\blewd\b|\blascivious\b", x)
-        and not _CITY_STATE.fullmatch(x)
-        and not _COUNTY_LOC.fullmatch(x)
-    ]
-    labels = [_strip_location_junk(x) for x in labels]
-    labels = [x for x in labels if x and len(x) >= 3]
+    cleaned_labels: List[str] = []
+    for x in labels:
+        if re.search(r"(?i)\blewd\b|\blascivious\b", x):
+            continue
+        if CITY_STATE.fullmatch(x) or COUNTY_LOC.fullmatch(x):
+            continue
+        polished = clean_label(strip_location_junk(x))
+        if polished and len(polished) >= 3 and not is_junk_label(polished):
+            cleaned_labels.append(polished)
+    labels = _dedupe_preserve(cleaned_labels)
 
-    # Prefer "Sexual battery (…)" over bare "Sexual battery" when both appear
     has_sb_qual = any(
         x.casefold().startswith("sexual battery (") for x in labels
     )
@@ -346,7 +106,6 @@ def summarize_crime(text: Optional[str], *, max_len: int = 140) -> str:
     if len(summary) <= max_len:
         return summary
 
-    # Drop trailing items until it fits; keep at least one
     while len(labels) > 1 and len(" · ".join(labels)) > max_len:
         labels.pop()
     summary = " · ".join(labels)

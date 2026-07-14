@@ -13,7 +13,8 @@ _SEAL_PATH = (
 )
 _CARD_W = 1080
 _CARD_H = 1350
-_PHOTO_H = 820
+# Leave room below for name + race banner + location + crime at bottom
+_PHOTO_H = 760
 _BG = (12, 12, 14, 255)
 _PANEL = (26, 26, 32, 255)
 _TEXT = (236, 236, 241, 255)

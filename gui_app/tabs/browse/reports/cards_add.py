@@ -167,18 +167,32 @@ class ReportsCardsAddMixin:
             height=22,
         ).pack(fill="x", pady=(2, 2))
 
-        # Crime summarized (no locations / statute dumps)
-        crime_sum = self._reports_summarize_crime(crime, max_len=140)
-        ctk.CTkLabel(
+        # Crime summarized (no locations / statute dumps); full body width
+        crime_sum = self._reports_summarize_crime(crime, max_len=180)
+        crime_lbl = ctk.CTkLabel(
             body,
             text=crime_sum or "—",
             font=FONT_SM,
             text_color=C["text"] if crime_sum else C["dim"],
             anchor="w",
             justify="left",
-            wraplength=520,
-            height=36,
-        ).pack(fill="x")
+            wraplength=900,
+            height=40,
+        )
+        crime_lbl.pack(fill="x", expand=True)
+
+        def _fit_crime_wrap(_event=None, lbl=crime_lbl, host=body):
+            try:
+                w = max(int(host.winfo_width()) - 4, 200)
+                lbl.configure(wraplength=w)
+            except Exception:
+                pass
+
+        body.bind("<Configure>", _fit_crime_wrap, add="+")
+        try:
+            body.after_idle(_fit_crime_wrap)
+        except Exception:
+            pass
 
         # Confidence · state (restored)
         ctk.CTkLabel(

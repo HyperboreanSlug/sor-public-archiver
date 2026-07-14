@@ -79,13 +79,21 @@ def render_export_card(record: Mapping[str, Any]) -> Image.Image:
 
     y = bar_y + 28
     max_text_w = _CARD_W - margin * 2
+    # Crime uses slightly wider inset so long labels are not clipped early
+    crime_margin = max(28, margin - 16)
+    crime_text_w = _CARD_W - crime_margin * 2
     crime_bottom = _CARD_H - margin - footer_reserve
+    # Hard-reserve bottom band so name/race/location never push crime off the card
+    crime_band = 120 if cr else 0
+    content_limit = crime_bottom - crime_band
 
     for line in wrap_text(draw, name, name_font, max_text_w)[:2]:
+        if y + 56 > content_limit:
+            break
         draw.text((margin, y), line, font=name_font, fill=_TEXT)
-        y += 62
+        y += 56
 
-    if race:
+    if race and y + 100 <= content_limit:
         y = _draw_race_banner(draw, race, y, margin, max_text_w, banner_font)
 
     # City + state only (never address/county)
@@ -100,6 +108,7 @@ def render_export_card(record: Mapping[str, Any]) -> Image.Image:
             label_font,
             value_font,
             max_lines=2,
+            bottom_limit=content_limit,
         )
 
     # Crime always at the bottom of the card (above watermark handle)
@@ -107,12 +116,13 @@ def render_export_card(record: Mapping[str, Any]) -> Image.Image:
         draw_crime_block(
             draw,
             cr,
-            y + 12,
-            margin=margin,
-            max_text_w=max_text_w,
+            content_limit,
+            margin=crime_margin,
+            max_text_w=crime_text_w,
             bottom_limit=crime_bottom,
             label_font=label_font,
             anchor_bottom=True,
+            min_height=crime_band,
         )
 
     handle = _WATERMARK or "@DoDeportations"
@@ -129,9 +139,9 @@ def render_export_card(record: Mapping[str, Any]) -> Image.Image:
 
 
 def _draw_race_banner(draw, race, y, margin, max_text_w, banner_font) -> int:
-    banner_h = 108
+    banner_h = 96
     banner_pad_x = 28
-    banner_top = y + 12
+    banner_top = y + 8
     draw.rounded_rectangle(
         (margin, banner_top, _CARD_W - margin, banner_top + banner_h),
         radius=14,
@@ -169,7 +179,7 @@ def _draw_race_banner(draw, race, y, margin, max_text_w, banner_font) -> int:
             fill=_BANNER_TEXT,
         )
         cursor_y += lh + 4
-    return banner_top + banner_h + 22
+    return banner_top + banner_h + 14
 
 
 def export_record_card_to_desktop(record: Mapping[str, Any]) -> Path:

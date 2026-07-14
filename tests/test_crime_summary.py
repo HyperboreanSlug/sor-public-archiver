@@ -59,6 +59,44 @@ class CrimeSummaryTests(unittest.TestCase):
         self.assertNotIn("Main St", out)
         self.assertNotIn("Springfield", out)
 
+    def test_federal_case_docket_not_shown(self):
+        """David Jesus Barcenas-style FL dump: real charges only, no docket scrap."""
+        raw = (
+            "01/10/2012; SEX OFFENSE, FEDERAL (POSSESSION OF CHILD PORNOGRAPHY); "
+            "1:0:11-60222-CR-WILLIAMS-01; Federal, FL; Guilty/convict; "
+            "Commission of OR Attempt, Solicit, or Conspire to Commit; "
+            "Chapter 794; Sexual Battery *Excluding subsections 794.011(10)"
+        )
+        out = summarize_crime(raw)
+        self.assertIn("Possession of child pornography", out)
+        self.assertIn("Sexual battery", out)
+        self.assertNotIn("60222", out)
+        self.assertNotIn("Williams", out)
+        self.assertNotIn("1:0", out)
+        self.assertNotIn("Federal", out)
+        self.assertNotIn("Guilty", out)
+
+    def test_fail_to_register_not_dropped_as_statute(self):
+        raw = (
+            "02/01/2007; Sex Offender Fail Comply Registration; F.s. 943.0435(9); "
+            "0512631; Hillsborough, FL; Guilty/convict"
+        )
+        out = summarize_crime(raw)
+        self.assertEqual(out, "Fail to register")
+        self.assertNotIn("0512631", out)
+        self.assertNotIn("943", out)
+
+    def test_child_porn_counts_clean(self):
+        raw = (
+            "SOLICIT, POSSESS, CONTROL, OR INTENTIONALLY VIEW CHILD PORNOGRAPHY "
+            "827.071(5) (PRINCIPAL (10 COUNTS)); 1508477; Pinellas, FL"
+        )
+        out = summarize_crime(raw)
+        self.assertIn("Possession of child pornography", out)
+        self.assertIn("10 counts", out)
+        self.assertNotIn("827", out)
+        self.assertNotIn("1508477", out)
+
 
 if __name__ == "__main__":
     unittest.main()

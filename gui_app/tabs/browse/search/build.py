@@ -101,7 +101,7 @@ class SearchBuildMixin:
         race_chip = _field("Race")
         self.search_race_var = ctk.StringVar(value="")
         ctk.CTkComboBox(
-            race_chip, variable=self.search_race_var, width=120,
+            race_chip, variable=self.search_race_var, width=150,
             values=[
                 "", "WHITE", "BLACK", "HISPANIC", "ASIAN", "INDIAN",
                 "NATIVE AMERICAN", "OTHER",
@@ -114,8 +114,9 @@ class SearchBuildMixin:
 
         eth_chip = _field("Ethnicity")
         self.search_ethnicity_var = ctk.StringVar(value="")
+        # Wide enough for indian_high_confidence — never clip menu labels
         ctk.CTkComboBox(
-            eth_chip, variable=self.search_ethnicity_var, width=170,
+            eth_chip, variable=self.search_ethnicity_var, width=200,
             values=[
                 "", "indian", "indian_high_confidence", "hispanic", "asian",
                 "african_american", "arabic", "jewish", "portuguese",
