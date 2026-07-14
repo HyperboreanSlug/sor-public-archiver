@@ -131,14 +131,14 @@ def extract_from_clause(clause: str) -> Optional[str]:
         if re.search(r"injury\s+not\s+likely", c, re.I):
             extra.append("injury not likely")
         base = "Sexual battery"
-        return f"{base} ({', '.join(extra)})" if extra else base
+        return f"{base} — {', '.join(extra)}" if extra else base
 
     for pat, lab in OFFENSE_MAP:
         if re.search(pat, c, re.I):
             if "porn" in lab.lower():
                 m_c = re.search(r"\(\s*(\d+)\s*counts?\s*\)", src, re.I)
                 if m_c:
-                    return f"{lab} ({m_c.group(1)} counts)"
+                    return f"{lab} — {m_c.group(1)} counts"
             return lab
 
     c2 = _COURT_JUNK.sub("", c).strip(" ;,")

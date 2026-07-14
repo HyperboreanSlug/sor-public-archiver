@@ -6,16 +6,16 @@ import re
 _rx = lambda p: re.compile(p, re.I)  # noqa: E731
 
 CODE_MAP = [
-    (_rx(r"SEX\s*BAT\s*/?\s*WPN\.?\s*OR\s*FORCE"), "Sexual battery (weapon/force)"),
-    (_rx(r"SEX\s*BAT\s*BY\s*ADULT\s*/?\s*VCTM\s*UNDER\s*12"), "Sexual battery (adult/victim under 12)"),
-    (_rx(r"SEX\s*BAT\s*BY\s*JUVEN\s*/?\s*VCTM\s*UNDER\s*12"), "Sexual battery (juvenile/victim under 12)"),
-    (_rx(r"SEX\s*BAT\s*/?\s*INJ\s*NOT\s*LIKELY"), "Sexual battery (injury not likely)"),
-    (_rx(r"LEWD\s*ASLT\s*/?\s*SEX\s*BAT\s*VCTM\s*<?\s*16"), "Sex bat (victim <16)"),
-    (_rx(r"SEXUAL\s*BATTERY\s*BY\s*ADULT\s*ON\s*ADULT"), "Sexual battery (adult on adult)"),
+    (_rx(r"SEX\s*BAT\s*/?\s*WPN\.?\s*OR\s*FORCE"), "Sexual battery — weapon/force"),
+    (_rx(r"SEX\s*BAT\s*BY\s*ADULT\s*/?\s*VCTM\s*UNDER\s*12"), "Sexual battery — adult/victim under 12"),
+    (_rx(r"SEX\s*BAT\s*BY\s*JUVEN\s*/?\s*VCTM\s*UNDER\s*12"), "Sexual battery — juvenile/victim under 12"),
+    (_rx(r"SEX\s*BAT\s*/?\s*INJ\s*NOT\s*LIKELY"), "Sexual battery — injury not likely"),
+    (_rx(r"LEWD\s*ASLT\s*/?\s*SEX\s*BAT\s*VCTM\s*<?\s*16"), "Sex bat — victim under 16"),
+    (_rx(r"SEXUAL\s*BATTERY\s*BY\s*ADULT\s*ON\s*ADULT"), "Sexual battery — adult on adult"),
     (_rx(r"FAIL(?:URE)?\s*TO\s*REGIST|FAIL\s*COMPLY\s*REG|RE-?REGISTR"), "Fail to register"),
     (_rx(r"TRAVELING\s+TO\s+MEET\s+MINOR"), "Traveling to meet minor"),
     (_rx(r"STATUTORY\s+SEXUAL\s+SEDUCTION"), "Statutory sexual seduction"),
-    (_rx(r"COMMUNICATE\s+WITH\s+MINOR\s+FOR\s+IMMORAL"), "Communicate with minor (immoral purposes)"),
+    (_rx(r"COMMUNICATE\s+WITH\s+MINOR\s+FOR\s+IMMORAL"), "Communicate with minor — immoral purposes"),
 ]
 
 OFFENSE_MAP = [

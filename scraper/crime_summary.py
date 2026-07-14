@@ -20,6 +20,7 @@ from scraper.crime_summary_clause import (
 from scraper.crime_summary_junk import (
     clean_label,
     is_junk_label,
+    strip_parentheses,
     strip_statute_cites,
 )
 
@@ -74,6 +75,8 @@ def summarize_crime(text: Optional[str], *, max_len: int = 140) -> str:
         cleaned = clean_label(strip_location_junk(norm(cleaned))) or ""
         if cleaned and is_junk_label(cleaned):
             cleaned = ""
+        cleaned = strip_parentheses(cleaned).replace("(", "").replace(")", "")
+        cleaned = re.sub(r"\s{2,}", " ", cleaned).strip(" ·;,")
         if cleaned and len(cleaned) <= max_len:
             return cleaned
         if cleaned:
@@ -97,18 +100,25 @@ def summarize_crime(text: Optional[str], *, max_len: int = 140) -> str:
     labels = _dedupe_preserve(cleaned_labels)
 
     has_sb_qual = any(
-        x.casefold().startswith("sexual battery (") for x in labels
+        x.casefold().startswith("sexual battery —")
+        or x.casefold().startswith("sexual battery -")
+        for x in labels
     )
     if has_sb_qual:
         labels = [x for x in labels if x.casefold() != "sexual battery"]
 
     summary = " · ".join(labels)
+    # Final guard: never ship parentheses in report/export crime text
+    summary = summary.replace("(", "").replace(")", "")
+    summary = re.sub(r"\s{2,}", " ", summary).strip(" ·;,")
     if len(summary) <= max_len:
         return summary
 
     while len(labels) > 1 and len(" · ".join(labels)) > max_len:
         labels.pop()
     summary = " · ".join(labels)
+    summary = summary.replace("(", "").replace(")", "")
+    summary = re.sub(r"\s{2,}", " ", summary).strip(" ·;,")
     if len(summary) <= max_len:
         return summary
     cut = summary[: max_len - 1]

@@ -94,10 +94,22 @@ def is_junk_label(label: str) -> bool:
     return False
 
 
+def strip_parentheses(s: str) -> str:
+    """No parentheses in report crime text — keep inner words with an em dash."""
+    t = s or ""
+    # "Sexual battery (weapon/force)" → "Sexual battery — weapon/force"
+    t = re.sub(r"\s*\(([^)]*)\)", r" — \1", t)
+    t = t.replace("(", " ").replace(")", " ")
+    t = re.sub(r"(?:\s*—\s*)+", " — ", t)
+    t = re.sub(r"\s{2,}", " ", t)
+    return t.strip(" ·;,|—- ")
+
+
 def clean_label(label: str) -> Optional[str]:
-    """Final polish: drop dockets/statutes left inside an otherwise OK label."""
+    """Final polish: drop dockets/statutes and all parentheses."""
     s = strip_statute_cites(label)
-    s = re.sub(r"\s{2,}", " ", s).strip(" ·;,|()-")
+    s = strip_parentheses(s)
+    s = re.sub(r"\s{2,}", " ", s).strip(" ·;,|—-")
     if is_junk_label(s):
         return None
     return s

@@ -97,6 +97,18 @@ class CrimeSummaryTests(unittest.TestCase):
         self.assertNotIn("827", out)
         self.assertNotIn("1508477", out)
 
+    def test_no_parentheses_in_output(self):
+        samples = [
+            "SEX BAT/ WPN. OR FORCE; F.S. 794.011(3); Sexual Battery",
+            "SEX OFFENSE, FEDERAL (POSSESSION OF CHILD PORNOGRAPHY)",
+            "SOLICIT, POSSESS CHILD PORNOGRAPHY 827.071(5) (PRINCIPAL (10 COUNTS))",
+            "Communicate with minor for immoral purposes",
+        ]
+        for raw in samples:
+            out = summarize_crime(raw)
+            self.assertNotIn("(", out, msg=raw)
+            self.assertNotIn(")", out, msg=raw)
+
 
 if __name__ == "__main__":
     unittest.main()
