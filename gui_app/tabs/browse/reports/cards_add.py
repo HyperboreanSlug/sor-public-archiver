@@ -122,6 +122,25 @@ class ReportsCardsAddMixin:
 
         line1 = ctk.CTkFrame(body, fg_color="transparent")
         line1.pack(fill="x")
+        sel_var = ctk.BooleanVar(
+            value=bool(
+                hasattr(self, "_reports_is_export_selected")
+                and self._reports_is_export_selected(mc)
+            )
+        )
+        ctk.CTkCheckBox(
+            line1,
+            text="",
+            width=22,
+            variable=sel_var,
+            command=lambda m=mc, v=sel_var: self._reports_set_export_selected(
+                m, bool(v.get())
+            ),
+            fg_color=C["accent"],
+            hover_color=C["accent_hover"],
+            border_color=C["border"],
+            checkmark_color=C["bg"],
+        ).pack(side="left", padx=(0, 4))
         ctk.CTkLabel(
             line1, text=name, font=FONT_BOLD, text_color=C["text"], anchor="w",
         ).pack(side="left")

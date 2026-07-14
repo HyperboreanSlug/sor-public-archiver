@@ -69,7 +69,8 @@ data/        # offenders.db, report_pages, settings (runtime)
 | `tabs/browse/integrity/` | build, refresh, enrich_*, requeue |
 | `tabs/browse/misclassify/` | build, run |
 | `tabs/browse/statistics/` | build, update |
-| `tabs/browse/reports/` | verdict_*, filter_*, source_*, cards_*, grid_*, export_* |
+| `tabs/browse/reports/` | verdict_*, filter_*, source_*, cards_*, grid_*, export_csv/html/grid |
+| `shared/export_card_grid.py` | Watermarked 1×2 / 2×2 card collages (mapa seal + @DoDeportations) |
 | `tabs/browse/deepface_reports/` | build, data_*, photo_*, actions_*, review_* |
 | `tabs/nsopw/` | build, options_*, progress_*, tree_*, run_* |
 | `tabs/deepface/` | scan_*, setup_* |

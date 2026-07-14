@@ -215,7 +215,36 @@ class ReportsBuildMixin:
             command=self._reports_export_csv,
             fg_color=C["elevated"], hover_color=C["border"], text_color=C["text"],
             border_width=1, border_color=C["border"],
-        ).pack(side="left")
+        ).pack(side="left", padx=(0, 8))
+
+        # Checkbox export → watermarked mapa-style card grids
+        ctk.CTkLabel(
+            bar, text="Grid export", font=FONT_SM, text_color=C["muted"],
+        ).pack(side="left", padx=(4, 4))
+        ctk.CTkButton(
+            bar, text="1×2", width=48,
+            command=lambda: self._reports_export_grid("1x2"),
+            fg_color=C["elevated"], hover_color=C["border"], text_color=C["text"],
+            border_width=1, border_color=C["border"],
+        ).pack(side="left", padx=(0, 4))
+        ctk.CTkButton(
+            bar, text="2×2", width=48,
+            command=lambda: self._reports_export_grid("2x2"),
+            fg_color=C["elevated"], hover_color=C["border"], text_color=C["text"],
+            border_width=1, border_color=C["border"],
+        ).pack(side="left", padx=(0, 4))
+        ctk.CTkButton(
+            bar, text="Clear sel", width=70,
+            command=self._reports_clear_export_selection,
+            fg_color=C["elevated"], hover_color=C["border"], text_color=C["muted"],
+            border_width=1, border_color=C["border"],
+        ).pack(side="left", padx=(0, 6))
+        self.report_export_sel_label = ctk.CTkLabel(
+            bar, text="Selected for grid: 0", font=FONT_SM, text_color=C["dim"],
+        )
+        self.report_export_sel_label.pack(side="left", padx=(0, 4))
+        if hasattr(self, "_reports_export_selected_init"):
+            self._reports_export_selected_init()
 
         # Pagination row
         page_row = ctk.CTkFrame(top, fg_color="transparent")
@@ -240,7 +269,7 @@ class ReportsBuildMixin:
         ).pack(side="left", padx=(6, 0))
         self.report_layout_hint = ctk.CTkLabel(
             page_row,
-            text="Grid · multi-column mugshots  ·  Open HTML uses same layout",
+            text="Check cards → 1×2 / 2×2 watermarked export  ·  Open HTML uses layout",
             font=FONT_SM,
             text_color=C["dim"],
         )

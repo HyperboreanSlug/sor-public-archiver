@@ -235,6 +235,26 @@ class ReportsGridTileMixin:
         actions.pack(fill="x", padx=2, pady=(1, 2), side="bottom")
         actions.pack_propagate(False)
 
+        sel_var = ctk.BooleanVar(
+            value=bool(
+                hasattr(self, "_reports_is_export_selected")
+                and self._reports_is_export_selected(mc)
+            )
+        )
+        ctk.CTkCheckBox(
+            actions,
+            text="",
+            width=18,
+            variable=sel_var,
+            command=lambda m=mc, v=sel_var: self._reports_set_export_selected(
+                m, bool(v.get())
+            ),
+            fg_color=C["accent"],
+            hover_color=C["accent_hover"],
+            border_color=C["border"],
+            checkmark_color=C["bg"],
+        ).pack(side="left", padx=(0, 2))
+
         def _set(v: str, m=mc, card_widget=card, status=status_lbl):
             self._set_verdict_for_mc(m, v, save=True)
             self._refresh_stats_from_verdicts()

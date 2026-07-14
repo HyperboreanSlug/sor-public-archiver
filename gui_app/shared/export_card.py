@@ -26,10 +26,20 @@ from gui_app.shared.export_card_render import (
     render_export_card,
     export_record_card_to_desktop,
 )
+from gui_app.shared.export_card_grid import (
+    render_export_grid,
+    export_grid_to_desktop,
+    layout_capacity,
+    normalize_layout,
+)
 
 __all__ = [
     "render_export_card",
     "export_record_card_to_desktop",
+    "render_export_grid",
+    "export_grid_to_desktop",
+    "layout_capacity",
+    "normalize_layout",
     "os_environ_get",
     "_person_name",
     "_desktop_dir",

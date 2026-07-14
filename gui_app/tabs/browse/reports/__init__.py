@@ -5,6 +5,7 @@ from .build import ReportsBuildMixin
 from .cards_add import ReportsCardsAddMixin
 from .cards_layout import ReportsCardsLayoutMixin
 from .export_csv import ReportsExportCsvMixin
+from .export_grid import ReportsExportGridMixin
 from .export_html import ReportsExportHtmlMixin
 from .filter_actual import ReportsFilterActualMixin
 from .filter_page import ReportsFilterPageMixin
@@ -31,6 +32,7 @@ class ReportsTabMixin(
     ReportsGridTileMixin,
     ReportsGridMetaMixin,
     ReportsExportCsvMixin,
+    ReportsExportGridMixin,
     ReportsExportHtmlMixin,
 ):
     """Photo report review, verdicts, grid/list export."""

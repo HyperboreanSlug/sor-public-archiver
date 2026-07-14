@@ -45,8 +45,13 @@ def render_export_card(record: Mapping[str, Any]) -> Image.Image:
     mug = load_mugshot(record, photo_box).convert("RGBA")
     canvas.paste(mug, (margin, margin), mug if mug.mode == "RGBA" else None)
 
+    # Mandatory: seal + handle watermark on every export card
     draw_seal_watermark(
-        canvas, photo_box=photo_rect, seal_opacity=0.03, text_opacity=0.15
+        canvas,
+        photo_box=photo_rect,
+        text=_WATERMARK,
+        seal_opacity=0.03,
+        text_opacity=0.15,
     )
 
     bar_y = margin + _PHOTO_H + 18
@@ -103,10 +108,12 @@ def render_export_card(record: Mapping[str, Any]) -> Image.Image:
             ry += 42
         return max(ly, ry) + 10
 
-    y = two_col_section("Arrest location", loc, "Arrest date", arrest_dt, y)
+    # SOR: registry location / date (mapa-style layout + watermark)
+    y = two_col_section("Location", loc, "Date", arrest_dt, y)
     y = section("Crime", cr, y)
 
-    handle = _WATERMARK
+    # Footer handle always present — all card exports are watermarked
+    handle = _WATERMARK or "@DoDeportations"
     handle_font = load_font(28, bold=True)
     hb = draw.textbbox((0, 0), handle, font=handle_font)
     hw, hh = hb[2] - hb[0], hb[3] - hb[1]

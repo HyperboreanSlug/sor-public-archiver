@@ -50,23 +50,43 @@ from gui_app.widgets import (
 
 
 class ReportsVerdictFilterMixin:
+    # Show dropdown labels (lowercased) → internal verdict filter keys
+    _REPORT_SHOW_TO_VERDICT = {
+        "unconfirmed": "unreviewed",
+        "confirmed incorrect": "confirmed",
+        "confirmed correct": "correct",
+        "skip": "skip",
+        "all": "all",
+        # Internal keys pass through if already stored that way
+        "unreviewed": "unreviewed",
+        "confirmed": "confirmed",
+        "correct": "correct",
+    }
+
     def _reports_verdict_filter_key(self, show_value: Optional[str] = None) -> str:
         """Normalize Show dropdown → unreviewed|confirmed|correct|skip|all."""
-        raw = (
-            show_value
-            if show_value is not None
-            else (self.report_verdict_filter.get() or "Unconfirmed")
-        )
+        try:
+            default = (
+                self.report_verdict_filter.get()
+                if hasattr(self, "report_verdict_filter")
+                else "Unconfirmed"
+            )
+        except Exception:
+            default = "Unconfirmed"
+        raw = show_value if show_value is not None else default
         raw = str(raw or "Unconfirmed").strip().lower()
         # Tolerate partial / truncated combo text
-        if raw in self._REPORT_SHOW_TO_VERDICT:
-            return self._REPORT_SHOW_TO_VERDICT[raw]
+        mapping = getattr(self, "_REPORT_SHOW_TO_VERDICT", {}) or {}
+        if raw in mapping:
+            return mapping[raw]
         if "unconfirm" in raw or raw == "pending":
             return "unreviewed"
         if "incorrect" in raw or raw == "misclass":
             return "confirmed"
         if "correct" in raw:
             return "correct"
+        if "skip" in raw:
+            return "skip"
         if raw == "all" or raw.startswith("all "):
             return "all"
         return "unreviewed"
