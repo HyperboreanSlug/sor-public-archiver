@@ -50,7 +50,8 @@ from gui_app.widgets import (
 
 
 class SettingsBuildMixin:
-    def _build_settings(self, tab):
+    def _build_settings_general(self, tab):
+        """General prefs (DB, sync, cookies, CAPTCHA) — nested under Settings."""
         tab.configure(fg_color=C["surface"])
         scroll = ctk.CTkScrollableFrame(tab, fg_color=C["surface"])
         scroll.pack(fill="both", expand=True, padx=8, pady=8)

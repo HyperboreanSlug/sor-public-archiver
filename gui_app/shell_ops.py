@@ -14,13 +14,23 @@ class ShellOpsMixin:
     """Shared shell operations used by multiple tabs."""
 
     def _on_main_tab_change(self, _name: str | None = None) -> None:
-        """Show Activity log only on NSOPW and Scrape tabs."""
+        """Show Activity log on NSOPW and Settings → Scrape."""
         try:
             name = _name or self.tabs.get()
         except Exception:
             name = "Browse"
-        want = name in ("NSOPW", "Scrape")
-        if name == "Settings" and hasattr(self, "_settings_refresh_status"):
+        scrape_active = False
+        if name == "Settings" and hasattr(self, "_settings_scrape_active"):
+            try:
+                scrape_active = bool(self._settings_scrape_active())
+            except Exception:
+                scrape_active = False
+        want = name == "NSOPW" or scrape_active
+        if (
+            name == "Settings"
+            and not scrape_active
+            and hasattr(self, "_settings_refresh_status")
+        ):
             try:
                 self._settings_refresh_status()
             except Exception:

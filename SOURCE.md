@@ -75,7 +75,8 @@ data/        # offenders.db, report_pages, settings (runtime)
 | `tabs/nsopw/` | build, options_*, progress_*, tree_*, run_* |
 | `tabs/deepface/` | scan_*, setup_* |
 | `tabs/settings/` | build, captcha, cookies_*, paths, persist_* |
-| `tabs/scrape/` | build, select, run, import_csv, dedupe |
+| `tabs/scrape/` | build, select, run, import_csv, dedupe (under Settings → Scrape) |
+| `tabs/settings/shell.py` | Nested General + Scrape tab host |
 
 ### Shared
 `detail_drawer/`, `export_card*`, `record_sidebar*`, `widgets_*`, `theme`, `lazy_tabs`, `resize_perf`
@@ -99,7 +100,7 @@ data/        # offenders.db, report_pages, settings (runtime)
 
 ## Product tabs
 
-Browse · NSOPW · Scrape · DeepFace · Settings
+Browse · NSOPW · DeepFace · Settings (General · Scrape)
 
 ---
 

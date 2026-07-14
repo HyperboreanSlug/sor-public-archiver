@@ -8,9 +8,11 @@ from .cookies_status import SettingsCookieStatusMixin
 from .paths import SettingsPathsMixin
 from .persist_collect import SettingsCollectMixin
 from .persist_sync import SettingsDbSyncMixin
+from .shell import SettingsShellMixin
 
 
 class SettingsTabMixin(
+    SettingsShellMixin,
     SettingsBuildMixin,
     SettingsCaptchaMixin,
     SettingsCookiePullMixin,
@@ -19,7 +21,7 @@ class SettingsTabMixin(
     SettingsDbSyncMixin,
     SettingsPathsMixin,
 ):
-    """Settings: DB, backups, cookies, CAPTCHA, sync."""
+    """Settings: General prefs + Scrape sub-tab; DB, cookies, CAPTCHA, sync."""
 
 
 __all__ = ["SettingsTabMixin"]

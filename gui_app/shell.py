@@ -174,7 +174,6 @@ class ArchiverApp(
         self._main_lazy = LazyTabHost(self.tabs, on_change=self._on_main_tab_change)
         self._main_lazy.register("Browse", lambda p: self._build_browse(p) or True)
         self._main_lazy.register("NSOPW", lambda p: self._build_nsopw(p) or True)
-        self._main_lazy.register("Scrape", lambda p: self._build_scrape(p) or True)
         self._main_lazy.register("DeepFace", lambda p: self._build_deepface(p) or True)
         self._main_lazy.register("Settings", lambda p: self._build_settings(p) or True)
 
@@ -188,7 +187,7 @@ class ArchiverApp(
         log_card.pack(fill="both", expand=True, padx=0, pady=(4, 0))
         ctk.CTkLabel(
             log_card,
-            text="Activity  ·  shown on NSOPW & Scrape · drag sash to resize",
+            text="Activity  ·  shown on NSOPW & Settings → Scrape · drag sash to resize",
             font=FONT_BOLD,
             text_color=C["muted"],
             anchor="w",
