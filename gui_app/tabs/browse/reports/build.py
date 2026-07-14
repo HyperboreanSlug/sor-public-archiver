@@ -58,9 +58,9 @@ class ReportsBuildMixin:
         tab.grid_columnconfigure(0, weight=1)
         tab.grid_rowconfigure(2, weight=1)
 
-        # ---- Compact header (stats out of the way + thin toolbar) ----
+        # ---- Compact header (stats + thin toolbar; no dead vertical space) ----
         top = ctk.CTkFrame(tab, fg_color=C["surface"])
-        top.grid(row=0, column=0, sticky="ew", padx=4, pady=(2, 0))
+        top.grid(row=0, column=0, sticky="ew", padx=4, pady=(0, 0))
 
         # One-line stats strip at very top (does not compete with filters)
         self.report_stats_bar = ctk.CTkLabel(
@@ -69,6 +69,7 @@ class ReportsBuildMixin:
             font=("Segoe UI", 11),
             text_color=C["dim"],
             anchor="e",
+            height=18,
         )
         self.report_stats_bar.pack(fill="x", padx=4, pady=(0, 0))
         # Back-compat: metric updaters may still set these keys
@@ -296,9 +297,9 @@ class ReportsBuildMixin:
             top,
             text="Analyze & build · Export = one card · check boxes for 1×2 / 2×2",
             font=("Segoe UI", 10), text_color=C["dim"], anchor="w",
-            wraplength=900, justify="left",
+            wraplength=900, justify="left", height=16,
         )
-        self.report_status.pack(fill="x", padx=4, pady=(0, 1))
+        self.report_status.pack(fill="x", padx=4, pady=(0, 0))
         top.bind(
             "<Configure>",
             lambda e: self.report_status.configure(

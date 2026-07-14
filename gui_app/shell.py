@@ -111,7 +111,7 @@ class ArchiverApp(
         header.pack(fill="x")
 
         # Wrap title / DB path / actions so they stay visible on narrow windows
-        flow = FlowRow(header, padx=6, pady=4)
+        flow = FlowRow(header, padx=6, pady=2)
         self._header_flow = flow
         h = flow.host
 
