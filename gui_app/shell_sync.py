@@ -70,7 +70,7 @@ class ShellSyncMixin:
             return
         self._db_sync_bg_running = True
         sett = getattr(self, "app_settings", {}) or {}
-        repo = str(sett.get("db_sync_repo") or "HyperboreanSlug/sor-public-archiver")
+        repo = str(sett.get("db_sync_repo") or "HyperboreanSlug/SORPA")
         tag = str(sett.get("db_sync_tag") or "database-latest")
         db_path = Path(self.db_path)
 

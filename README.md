@@ -74,7 +74,7 @@ Dark CustomTkinter UI (Browse: search + integrity + misclassify, NSOPW, scrape +
 ### Standalone Windows EXE
 
 **Pre-built package:** download **SOR-Public-Archiver-Windows.zip** from the
-[latest GitHub Release](https://github.com/HyperboreanSlug/sor-public-archiver/releases/latest).
+[latest GitHub Release](https://github.com/HyperboreanSlug/SORPA/releases/latest).
 
 Extract the zip, then run `SOR-Public-Archiver\SOR-Public-Archiver.exe`
 (keep the `_internal` folder next to the exe).

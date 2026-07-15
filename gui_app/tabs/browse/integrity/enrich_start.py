@@ -146,9 +146,9 @@ class IntegrityEnrichStartMixin:
             ethnic_db = None
         if ethnic_db is None and ethnicity_filter and ethnicity_filter != "all":
             try:
-                from scraper.ethnic_names import EthnicDatabase
+                from scraper.ethnic_names import get_ethnic_database
 
-                ethnic_db = EthnicDatabase()
+                ethnic_db = get_ethnic_database()
             except Exception as e:
                 messagebox.showerror(
                     "NSOPW enrich",

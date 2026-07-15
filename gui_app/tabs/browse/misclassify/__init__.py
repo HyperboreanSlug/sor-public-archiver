@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 from .build import MisclassifyBuildMixin
+from .filters import MisclassifyFiltersMixin
 from .run import MisclassifyRunMixin
 from .run_apply import MisclassifyApplyMixin
 
 
 class MisclassifyTabMixin(
     MisclassifyBuildMixin,
+    MisclassifyFiltersMixin,
     MisclassifyRunMixin,
     MisclassifyApplyMixin,
 ):

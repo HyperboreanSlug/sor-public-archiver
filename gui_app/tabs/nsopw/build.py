@@ -236,6 +236,9 @@ class NsopwBuildMixin:
         )
         self.nsopw_surname_count_label.pack(fill="x", pady=(6, 0))
         self._nsopw_refresh_subcategories()
+        # State filter: every jurisdiction + scrape access + enriched/total
+        if hasattr(self, "_nsopw_build_state_filter"):
+            self._nsopw_build_state_filter(scope)
 
         # Limits & delays — 2×2 grid
         limits = _opt_card("Limits & delays")

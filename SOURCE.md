@@ -59,6 +59,7 @@ data/        # offenders.db, report_pages, settings (runtime)
 | `shell_header.py` | Path + counts (async COUNT, never blocks UI) |
 | `shell_ops.py` | Log, sash, close, tab change |
 | `process_lifecycle.py` | Hard shutdown: cancel flags, quit Tk, force-exit leftover threads |
+| `auto_update.py` | On open: git fetch origin; ff-only pull when behind; relaunch |
 | `async_jobs.py` | `run_bg` + main-thread job queue (all DB work) |
 | `shell_warm.py` | Idle-preload lazy tabs so first open is near-instant |
 | `lazy_tabs.py` | `warm()` builds without focus steal / on_change |
@@ -73,12 +74,13 @@ data/        # offenders.db, report_pages, settings (runtime)
 |---------|--------|
 | `tabs/browse/search/` | build, run_query, run_tree, select |
 | `tabs/browse/integrity/` | build, refresh, enrich_*, requeue |
-| `tabs/browse/misclassify/` | build, run |
+| `tabs/browse/misclassify/` | build (Likely ethnicity, Listed as, photo filter), filters, run |
+| `reports/race_value.py` | Reject alias/address junk in parsed race fields |
 | `tabs/browse/statistics/` | build, update |
 | `tabs/browse/reports/` | verdict_*, filter_*, source_*, cards_*, grid_*, export_csv/html/grid |
 | `shared/export_card_grid.py` | Watermarked 1×2 / 2×2 card collages (mapa seal + @DoDeportations) |
 | `tabs/browse/deepface_reports/` | build, data_*, photo_*, actions_*, review_* |
-| `tabs/nsopw/` | build, options_*, progress_*, tree_*, run_* |
+| `tabs/nsopw/` | build, options_* (incl. state filter), state_stats, progress_*, tree_*, run_* |
 | `tabs/deepface/` | scan_*, setup_* |
 | `tabs/settings/` | build, captcha, cookies_*, paths, persist_* |
 | `tabs/scrape/` | build, select, run, import_csv, dedupe (under Settings → Scrape) |

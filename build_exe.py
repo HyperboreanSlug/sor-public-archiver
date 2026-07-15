@@ -189,7 +189,7 @@ def main() -> None:
                 "4. If startup fails, install Microsoft Visual C++ Redistributable 2015–2022 (x64).",
                 "5. Registry data is written under a local data/ folder next to the exe when possible.",
                 "",
-                "Source: https://github.com/HyperboreanSlug/sor-public-archiver",
+                "Source: https://github.com/HyperboreanSlug/SORPA",
                 "",
             ]
         ),

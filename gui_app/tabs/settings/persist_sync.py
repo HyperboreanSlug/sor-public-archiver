@@ -80,7 +80,7 @@ class SettingsDbSyncMixin:
         repo = (
             (self.settings_db_sync_repo.get() if hasattr(self, "settings_db_sync_repo") else "")
             or (self.app_settings or {}).get("db_sync_repo")
-            or "HyperboreanSlug/sor-public-archiver"
+            or "HyperboreanSlug/SORPA"
         ).strip()
         tag = str((self.app_settings or {}).get("db_sync_tag") or "database-latest")
         db_path = Path(self.db_path)

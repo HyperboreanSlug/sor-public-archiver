@@ -170,6 +170,13 @@ def _start_deepface_setup_background(app_settings: Optional[dict] = None) -> Non
 
 
 def main() -> None:
+    # GitHub auto-update before loading the full GUI (may exit + relaunch)
+    try:
+        from gui_app.auto_update import maybe_update_and_relaunch
+
+        maybe_update_and_relaunch(_ROOT, app_title="SOR Public Archiver")
+    except Exception:
+        pass
     try:
         from gui_app.shell import ArchiverApp
     except Exception as e:

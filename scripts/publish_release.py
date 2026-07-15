@@ -18,7 +18,7 @@ import urllib.request
 from pathlib import Path
 
 OWNER = "HyperboreanSlug"
-REPO = "sor-public-archiver"
+REPO = "SORPA"
 ASSET_NAME = "SOR-Public-Archiver-Windows.zip"
 
 

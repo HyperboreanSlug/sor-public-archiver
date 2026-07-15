@@ -7,7 +7,7 @@ from typing import Any, Dict, Optional, TYPE_CHECKING
 from scraper.database.sources import infer_source_type, parse_sources
 
 if TYPE_CHECKING:
-    from scraper.ethnic_names import EthnicDatabase
+    from scraper.ethnic_names import EthnicNameDatabase
 
 # enrich_scope / source_scope values
 SCOPE_ALL = "all"
@@ -116,7 +116,7 @@ def record_matches_ethnicity_classifier(
     ethnicity_filter: Optional[str],
     *,
     min_confidence: float = 0.5,
-    ethnic_db: Optional["EthnicDatabase"] = None,
+    ethnic_db: Optional["EthnicNameDatabase"] = None,
 ) -> bool:
     """
     True when the offender's name classifies into *ethnicity_filter*.
@@ -169,7 +169,7 @@ def filter_records_for_enrich(
     source_scope: Optional[str] = SCOPE_ALL,
     ethnicity_filter: Optional[str] = None,
     min_confidence: float = 0.5,
-    ethnic_db: Optional["EthnicDatabase"] = None,
+    ethnic_db: Optional["EthnicNameDatabase"] = None,
 ) -> tuple[list, int]:
     """
     Return (matching_records, skipped_count) after scope filters.

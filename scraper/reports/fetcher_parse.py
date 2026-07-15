@@ -23,6 +23,7 @@ from scraper.reports.util import (  # noqa: F401
     photo_url_variants,
     extract_dedicated_photo_urls,
 )
+from scraper.reports.race_value import is_plausible_race_value
 
 class FetcherParseMixin:
     def _from_html(self, html: str, base_url: str = "") -> Dict[str, Any]:
@@ -86,9 +87,11 @@ class FetcherParseMixin:
                     i += 1
 
         # Bootstrap / CA Megans Law: Label:</div><div class="col-…">VALUE</div>
+        # Word boundaries required — bare "Race" otherwise matches TERRACE / HORACE.
         for m in re.finditer(
-            r"(Race|Ethnicity|Sex|Gender|Height|Weight|Hair Color|Eye Color|Eyes|Hair|"
-            r"Date of Birth|DOB|Age)\s*:?\s*</(?:div|span|label|strong|b|dt|th)>\s*"
+            r"(?<![A-Za-z])(Race|Ethnicity|Sex|Gender|Height|Weight|Hair Color|Eye Color|"
+            r"Eyes|Hair|Date of Birth|DOB|Age)(?![A-Za-z])\s*:?\s*"
+            r"</(?:div|span|label|strong|b|dt|th)>\s*"
             r"<(?:div|span|dd|td)[^>]*>\s*([^<]{1,80}?)\s*</(?:div|span|dd|td)>",
             raw_html,
             flags=re.I,
@@ -297,10 +300,19 @@ class FetcherParseMixin:
             if isinstance(v, str):
                 found[k] = _clean_value(v)
 
+        # Drop alias/address false-positives (e.g. "PAUL, JOHN K", "REX, GA 30273")
+        race_val = str(found.get("race") or "").strip()
+        if race_val and not is_plausible_race_value(race_val):
+            found.pop("race", None)
+
         # CA and others often use Ethnicity where Race is expected
         if not found.get("race") and found.get("ethnicity"):
             eth = str(found["ethnicity"]).strip()
-            if eth and eth.lower() not in ("unknown", "undetermined", "n/a", "none"):
+            if (
+                eth
+                and eth.lower() not in ("unknown", "undetermined", "n/a", "none")
+                and is_plausible_race_value(eth)
+            ):
                 found["race"] = eth
 
         # Synthesize primary crime field from any offense pieces

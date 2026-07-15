@@ -4,6 +4,7 @@ from __future__ import annotations
 from .build import NsopwBuildMixin
 from .options_ethnicity import NsopwEthnicityMixin
 from .options_runtime import NsopwRuntimeMixin
+from .options_state import NsopwStateMixin
 from .progress_eta import NsopwEtaMixin
 from .progress_ui import NsopwProgressUiMixin
 from .run_cancel import NsopwCancelMixin
@@ -15,6 +16,7 @@ from .tree_rows import NsopwTreeRowsMixin
 class NsopwTabMixin(
     NsopwBuildMixin,
     NsopwEthnicityMixin,
+    NsopwStateMixin,
     NsopwRuntimeMixin,
     NsopwEtaMixin,
     NsopwProgressUiMixin,

@@ -89,6 +89,33 @@ class SettingsBuildMixin:
             border_color=C["border"],
         ).pack(side="left")
 
+        # --- App code auto-update (git) ---
+        upd_card = _card(scroll)
+        upd_card.pack(fill="x", padx=4, pady=(0, 8))
+        _section_label(upd_card, "App updates (GitHub)").pack(
+            anchor="w", padx=14, pady=(12, 4)
+        )
+        _muted(
+            upd_card,
+            "On every open, check the git remote for new commits. When behind, "
+            "fast-forward pull and reopen automatically. Requires git and a clone "
+            "of the repo. Local data/ is never modified.",
+        ).pack(anchor="w", padx=14, pady=(0, 8))
+        self.settings_auto_update = ctk.BooleanVar(
+            value=bool(self.app_settings.get("auto_update_enabled", True))
+        )
+        ctk.CTkCheckBox(
+            upd_card,
+            text="Auto-update app from GitHub on every open",
+            variable=self.settings_auto_update,
+            font=FONT_SM,
+            text_color=C["text"],
+            fg_color=C["accent"],
+            hover_color=C["accent_hover"],
+            checkmark_color=C["bg"],
+            border_color=C["border"],
+        ).pack(anchor="w", padx=14, pady=(0, 12))
+
         # --- Public database sync (GitHub Releases) ---
         sync_card = _card(scroll)
         sync_card.pack(fill="x", padx=4, pady=(0, 8))
@@ -155,7 +182,7 @@ class SettingsBuildMixin:
         self.settings_db_sync_repo = ctk.StringVar(
             value=str(
                 self.app_settings.get("db_sync_repo")
-                or "HyperboreanSlug/sor-public-archiver"
+                or "HyperboreanSlug/SORPA"
             )
         )
         repo_row = ctk.CTkFrame(sync_card, fg_color="transparent")

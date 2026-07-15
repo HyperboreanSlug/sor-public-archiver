@@ -7,7 +7,7 @@ The archive is published as Release assets:
 Paths inside the DB are project-relative; photos extract next to the DB's
 ``data/`` folder so ``photo_path`` resolves for Browse / detail views.
 
-Default source: ``HyperboreanSlug/sor-public-archiver`` release tag
+Default source: ``HyperboreanSlug/SORPA`` release tag
 ``database-latest``.
 """
 from __future__ import annotations
@@ -27,7 +27,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 # Public GitHub repository that hosts the database release asset (not a person).
-DEFAULT_GITHUB_REPO = "HyperboreanSlug/sor-public-archiver"
+DEFAULT_GITHUB_REPO = "HyperboreanSlug/SORPA"
 DEFAULT_RELEASE_TAG = "database-latest"
 DEFAULT_ASSET_NAME = "offenders.db.zip"
 DEFAULT_MANIFEST_NAME = "MANIFEST.json"

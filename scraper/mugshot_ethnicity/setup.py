@@ -26,7 +26,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 # Package roots (repo root = parents[2] from this file)
 _ROOT = Path(__file__).resolve().parents[2]
 _VISION_REQ = _ROOT / "requirements-vision.txt"
-_LOCK_PATH = Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "sor-public-archiver" / "deepface_pip.lock"
+_LOCK_PATH = Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "SORPA" / "deepface_pip.lock"
 
 # pip names if requirements-vision.txt is missing
 _FALLBACK_PACKAGES = [

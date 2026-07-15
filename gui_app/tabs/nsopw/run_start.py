@@ -91,8 +91,18 @@ class NsopwStartMixin:
         self._nsopw_eta_samples = []
         if hasattr(self, "nsopw_eta_label"):
             self.nsopw_eta_label.configure(text="ETA …")
+        jurs_preview = (
+            self._nsopw_selected_jurisdictions()
+            if hasattr(self, "_nsopw_selected_jurisdictions")
+            else None
+        )
+        jurs_txt = (
+            ", ".join(jurs_preview)
+            if jurs_preview
+            else "all states"
+        )
         self.nsopw_status.configure(
-            text="Running NSOPW search… (edit delays/caps/checkboxes anytime)"
+            text=f"Running NSOPW ({jurs_txt})… (edit delays/caps/checkboxes anytime)"
         )
         self.nsopw_tree.delete(*self.nsopw_tree.get_children())
         if getattr(self, "nsopw_tree_other", None) is not None:
@@ -135,7 +145,11 @@ class NsopwStartMixin:
                         if hasattr(self, "nsopw_first_mode_var")
                         else "initials"
                     ),
-                    jurisdictions=None,
+                    jurisdictions=(
+                        self._nsopw_selected_jurisdictions()
+                        if hasattr(self, "_nsopw_selected_jurisdictions")
+                        else None
+                    ),
                     max_searches=live0.get("max_searches"),
                     max_names=live0.get("max_names"),
                     skip_existing_urls=bool(live0.get("skip_existing_urls", True)),

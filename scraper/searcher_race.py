@@ -101,12 +101,22 @@ _RACE_ALIASES = {
 }
 
 
-def _canonical_race_key(recorded_race: str) -> str:
-    """
-    Normalize recorded race for comparison and grouping.
+def _split_multi_race_parts(recorded_race: str) -> List[str]:
+    """Split multi-source race strings (``Black | B``, ``W [FL·csv] | Asian``)."""
+    raw = (recorded_race or "").strip()
+    if not raw:
+        return []
+    parts: List[str] = []
+    for chunk in raw.split("|"):
+        # Drop provenance tags like [FL·csv✓]
+        piece = re.sub(r"\[[^\]]*\]", "", chunk).strip()
+        if piece:
+            parts.append(piece)
+    return parts
 
-    Merges case variants (White / WHITE → WHITE) and common aliases.
-    """
+
+def _canonical_race_key_one(recorded_race: str) -> str:
+    """Canonicalize a single race token (no multi-source pipes)."""
     raw = (recorded_race or "").strip()
     if not raw or raw.upper() in ("N/A", "NA"):
         return "UNKNOWN"
@@ -134,6 +144,8 @@ def _canonical_race_key(recorded_race: str) -> str:
         return "HISPANIC"
     if r_spaced.startswith("WHITE") or r_spaced.endswith(" WHITE"):
         return "WHITE"
+    if r_spaced.startswith("BLACK") or r_spaced.endswith(" BLACK"):
+        return "BLACK"
 
     if r_spaced in ("OTHER", "OTHER RACE", "OTHER RACES", "OT"):
         return "OTHER"
@@ -147,16 +159,53 @@ def _canonical_race_key(recorded_race: str) -> str:
     return r_spaced
 
 
-def format_race_label(recorded_race: str) -> str:
-    """Human-readable race label (White not WHITE; Other Asian not OTHER ASIAN)."""
-    key = _canonical_race_key(recorded_race)
+def _canonical_race_key(recorded_race: str) -> str:
+    """
+    Normalize recorded race for comparison and grouping.
+
+    Merges case variants (White / WHITE → WHITE) and common aliases.
+    Multi-source values (``Black | B``) collapse when all parts agree;
+    true conflicts become a sorted join of distinct keys.
+    """
+    parts = _split_multi_race_parts(recorded_race)
+    if not parts:
+        return "UNKNOWN"
+    keys: List[str] = []
+    seen: set = set()
+    for p in parts:
+        k = _canonical_race_key_one(p)
+        if k == "UNKNOWN":
+            continue
+        if k not in seen:
+            seen.add(k)
+            keys.append(k)
+    if not keys:
+        return "UNKNOWN"
+    if len(keys) == 1:
+        return keys[0]
+    return " | ".join(keys)
+
+
+def _format_race_key(key: str) -> str:
     if key == "UNKNOWN":
-        raw = (recorded_race or "").strip()
-        return raw if raw else "—"
-    # Title-case words; keep short codes upper
+        return "—"
     if len(key) <= 2:
         return key
     return key.title().replace("Or", "or").replace("/ ", "/")
+
+
+def format_race_label(recorded_race: str) -> str:
+    """Human-readable race label (White not WHITE; Black | B → Black)."""
+    raw = (recorded_race or "").strip()
+    if not raw:
+        return "—"
+    key = _canonical_race_key(raw)
+    if key == "UNKNOWN":
+        return raw
+    # Conflict: "BLACK | WHITE" → "Black | White"
+    if " | " in key:
+        return " | ".join(_format_race_key(k) for k in key.split(" | "))
+    return _format_race_key(key)
 
 
 def _ethnicity_family(likely_ethnicity: str) -> str:

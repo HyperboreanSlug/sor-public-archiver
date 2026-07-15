@@ -76,9 +76,14 @@ class SettingsCollectMixin:
             "deepface_weight_models",
             "db_sync_prompted",
             "db_sync_tag",
+            "auto_update_enabled",
         ):
             if k in sett:
                 out[k] = sett[k]
+        if hasattr(self, "settings_auto_update"):
+            out["auto_update_enabled"] = bool(self.settings_auto_update.get())
+        else:
+            out["auto_update_enabled"] = bool(sett.get("auto_update_enabled", True))
         if hasattr(self, "df_auto_setup"):
             out["deepface_auto_setup"] = bool(self.df_auto_setup.get())
         if hasattr(self, "df_auto_warm"):
@@ -104,7 +109,7 @@ class SettingsCollectMixin:
             out["db_sync_enabled"] = bool(sett.get("db_sync_enabled", False))
             out["db_sync_on_startup"] = bool(sett.get("db_sync_on_startup", True))
             out["db_sync_repo"] = str(
-                sett.get("db_sync_repo") or "HyperboreanSlug/sor-public-archiver"
+                sett.get("db_sync_repo") or "HyperboreanSlug/SORPA"
             )
         return out
 

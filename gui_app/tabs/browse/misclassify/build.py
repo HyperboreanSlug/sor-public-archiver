@@ -1,52 +1,22 @@
-"""MisclassifyBuildMixin."""
+"""MisclassifyBuildMixin — Analyze filters + results tree."""
 from __future__ import annotations
 
-import csv
-import json
-import os
-import queue
-import re
-import subprocess
-import sys
-import threading
-import traceback
-import webbrowser
-from datetime import datetime
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
-
-import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from typing import Any, Dict
 
 import customtkinter as ctk
 
-from gui_app.paths import ROOT
-from gui_app.theme import (
-    C,
-    FONT_BOLD,
-    FONT_MONO,
-    FONT_SECTION,
-    FONT_SM,
-    FONT_TITLE,
-    FONT_UI,
-)
+from gui_app.theme import C, FONT_SM
 from gui_app.widgets import (
     _bind_tree_scroll_isolation,
     _card,
     _enable_tree_column_sort,
-    _format_race_display,
-    _format_state_display,
     _hpaned,
-    _misclass_race_bucket,
     _muted,
-    _render_bar_chart,
-    _render_pie_chart,
     _section_label,
     _stretch_columns,
     _tree_frame,
-    _vpaned,
-    _wire_wide_scroll,
 )
+from gui_app.widgets_flow import FlowRow, after_idle_reflow
 
 
 class MisclassifyBuildMixin:
@@ -63,6 +33,12 @@ class MisclassifyBuildMixin:
         if not hasattr(self, "misclass_limit_var"):
             # 0 = scan entire DB; when capped, Analyze walks newest ids first
             self.misclass_limit_var = ctk.IntVar(value=0)
+        if not hasattr(self, "misclass_hide_no_photo_var"):
+            # Default on: tree only shows rows with a photo on disk
+            self.misclass_hide_no_photo_var = ctk.BooleanVar(value=True)
+        if not hasattr(self, "misclass_listed_var"):
+            # Registry-listed race (recorded race), not surname ethnicity
+            self.misclass_listed_var = ctk.StringVar(value="All")
         if not hasattr(self, "enrich_limit_var"):
             self.enrich_limit_var = ctk.IntVar(value=25)
         if not hasattr(self, "enrich_external_only_var"):
@@ -72,11 +48,8 @@ class MisclassifyBuildMixin:
         if not hasattr(self, "_misclass_meta"):
             self._misclass_meta = {}
 
-
     def _misclass_controls_bar(self, parent) -> ctk.CTkFrame:
         """Shared Analyze filters (used by Misclassify + Statistics); wraps on resize."""
-        from gui_app.widgets_flow import FlowRow, after_idle_reflow
-
         bar = ctk.CTkFrame(parent, fg_color="transparent")
         self._ensure_misclass_filter_vars()
         flow = FlowRow(bar, padx=5, pady=3)
@@ -89,17 +62,28 @@ class MisclassifyBuildMixin:
             ).pack(side="left", padx=(2, 4), pady=2)
             return chip
 
-        flow.add(
-            ctk.CTkComboBox(
-                h, variable=self.misclass_ethnicity_var, width=200,
-                values=[
-                    "all", "hispanic", "asian", "indian", "indian_high_confidence",
-                    "african_american",
-                ],
-                fg_color=C["bg"], border_color=C["border"], button_color=C["elevated"],
-                text_color=C["text"], dropdown_fg_color=C["panel"],
-            )
-        )
+        eth = _chip("Likely ethnicity")
+        ctk.CTkComboBox(
+            eth, variable=self.misclass_ethnicity_var, width=200,
+            values=[
+                "all", "hispanic", "asian", "indian", "indian_high_confidence",
+                "african_american",
+            ],
+            fg_color=C["bg"], border_color=C["border"], button_color=C["elevated"],
+            text_color=C["text"], dropdown_fg_color=C["panel"],
+        ).pack(side="left", pady=2)
+        flow.add(eth)
+
+        listed = _chip("Listed as")
+        ctk.CTkComboBox(
+            listed, variable=self.misclass_listed_var, width=110,
+            values=["All", "White", "Black", "Other"],
+            fg_color=C["bg"], border_color=C["border"], button_color=C["elevated"],
+            text_color=C["text"], dropdown_fg_color=C["panel"],
+            command=lambda _v: self._misclass_on_display_filter_toggle(),
+        ).pack(side="left", pady=2)
+        flow.add(listed)
+
         conf = _chip("Min conf.")
         ctk.CTkEntry(
             conf, textvariable=self.misclass_conf_var, width=60,
@@ -114,6 +98,16 @@ class MisclassifyBuildMixin:
         ).pack(side="left", pady=2)
         flow.add(cap)
 
+        flow.add(
+            ctk.CTkCheckBox(
+                h, text="Remove without photo",
+                variable=self.misclass_hide_no_photo_var,
+                font=FONT_SM, text_color=C["text"],
+                fg_color=C["accent"], hover_color=C["accent_hover"],
+                checkmark_color=C["bg"], border_color=C["border"],
+                command=self._misclass_on_display_filter_toggle,
+            )
+        )
         flow.add(
             ctk.CTkButton(
                 h, text="Analyze", width=100, command=self._run_misclassification,
@@ -153,7 +147,6 @@ class MisclassifyBuildMixin:
         after_idle_reflow(self, flow)
         return bar
 
-
     def _build_misclass(self, tab):
         tab.configure(fg_color=C["surface"])
         tab.grid_columnconfigure(0, weight=1)
@@ -162,7 +155,6 @@ class MisclassifyBuildMixin:
         bar = self._misclass_controls_bar(tab)
         bar.grid(row=0, column=0, sticky="ew", padx=12, pady=(12, 6))
 
-        # Table | detail drawer (photo + fields) — same pattern as Search
         mid = _hpaned(tab)
         mid.grid(row=1, column=0, sticky="nsew", padx=12, pady=(0, 4))
         left = ctk.CTkFrame(mid, fg_color="transparent")
@@ -202,5 +194,3 @@ class MisclassifyBuildMixin:
             font=FONT_SM, text_color=C["muted"],
         )
         self.misclass_status.grid(row=2, column=0, sticky="w", padx=14, pady=(0, 10))
-
-

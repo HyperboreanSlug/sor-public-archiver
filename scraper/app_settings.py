@@ -42,8 +42,10 @@ DEFAULTS: Dict[str, Any] = {
     "db_sync_enabled": False,
     "db_sync_prompted": False,
     "db_sync_on_startup": True,
-    "db_sync_repo": "HyperboreanSlug/sor-public-archiver",
+    "db_sync_repo": "HyperboreanSlug/SORPA",
     "db_sync_tag": "database-latest",
+    # App code auto-update from GitHub (git fetch + ff-only pull on open)
+    "auto_update_enabled": True,
 }
 
 
@@ -100,6 +102,7 @@ def normalize_settings(s: Dict[str, Any]) -> Dict[str, Any]:
     out["db_sync_enabled"] = bool(out.get("db_sync_enabled", False))
     out["db_sync_prompted"] = bool(out.get("db_sync_prompted", False))
     out["db_sync_on_startup"] = bool(out.get("db_sync_on_startup", True))
+    out["auto_update_enabled"] = bool(out.get("auto_update_enabled", True))
     out["db_sync_repo"] = (
         str(out.get("db_sync_repo") or DEFAULTS["db_sync_repo"]).strip()
         or DEFAULTS["db_sync_repo"]

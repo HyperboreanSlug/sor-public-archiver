@@ -11,7 +11,7 @@ gui.py → gui_app.shell.ArchiverApp
 python -m scraper → scraper.cli.main
 
 gui_app/
-  shell*.py, theme, widgets*, lazy_tabs, resize_perf
+  shell*.py, theme, widgets*, lazy_tabs, resize_perf, auto_update, process_lifecycle
   shared/ (detail_drawer/, export_card*, record_sidebar*)
   tabs/
     browse/{search,integrity,misclassify,statistics,reports,deepface_reports}/
