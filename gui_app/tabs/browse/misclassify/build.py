@@ -40,8 +40,9 @@ class MisclassifyBuildMixin:
             # 0 = scan entire DB; when capped, Analyze walks newest ids first
             self.misclass_limit_var = ctk.IntVar(value=0)
         if not hasattr(self, "misclass_hide_no_photo_var"):
-            # Default on: tree only shows rows with a photo on disk
-            self.misclass_hide_no_photo_var = ctk.BooleanVar(value=True)
+            # Default off: after bulk confirm of photo rows, photos-only would
+            # hide almost all remaining unreviewed mismatches (e.g. 81 → 3).
+            self.misclass_hide_no_photo_var = ctk.BooleanVar(value=False)
         if not hasattr(self, "misclass_listed_var"):
             # Registry-listed race (recorded race), not surname ethnicity
             self.misclass_listed_var = ctk.StringVar(value="All")
@@ -107,7 +108,7 @@ class MisclassifyBuildMixin:
 
         flow.add(
             ctk.CTkCheckBox(
-                h, text="Remove without photo",
+                h, text="Photos only",
                 variable=self.misclass_hide_no_photo_var,
                 font=FONT_SM, text_color=C["text"],
                 fg_color=C["accent"], hover_color=C["accent_hover"],

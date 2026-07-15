@@ -21,13 +21,14 @@ class MisclassifyApplyMixin:
         }
         stats_results = self._results_excluding_correct(results)
         n_correct = len(results) - len(stats_results)
-        if hasattr(self, "_misclass_apply_display_filters"):
+        if hasattr(self, "_misclass_filter_breakdown"):
+            tree_results, filt_bits = self._misclass_filter_breakdown(stats_results)
+        elif hasattr(self, "_misclass_apply_display_filters"):
             tree_results = self._misclass_apply_display_filters(stats_results)
-        elif hasattr(self, "_misclass_apply_photo_filter"):
-            tree_results = self._misclass_apply_photo_filter(stats_results)
+            filt_bits = []
         else:
             tree_results = stats_results
-        n_filtered = len(stats_results) - len(tree_results)
+            filt_bits = []
 
         if getattr(self, "misclass_sidebar", None) is not None:
             try:
@@ -39,39 +40,49 @@ class MisclassifyApplyMixin:
                 self._fill_detail_drawer(self.misclass_detail, None)
             except Exception:
                 pass
-        # Tree applies listed-as + photo filters inside populate
+        # Tree re-applies listed-as + photo filters inside populate
         self._populate_misclass_tree(stats_results)
         shown = min(500, len(tree_results))
-        filt_note = f" · {n_filtered} filtered out" if n_filtered else ""
+        filt_note = (" · " + " · ".join(filt_bits)) if filt_bits else ""
+        photo_hint = ""
+        if (
+            hasattr(self, "_misclass_photo_filter_on")
+            and self._misclass_photo_filter_on()
+            and len(tree_results) < len(stats_results)
+        ):
+            photo_hint = " · uncheck Photos only to show rows without mugshots"
+
         if hasattr(self, "misclass_status"):
             if eth != "all" and eth_base is not None:
                 rate = (len(stats_results) / eth_base * 100.0) if eth_base else 0.0
                 self.misclass_status.configure(
                     text=(
                         f"{eth}: {eth_base:,} name matches · "
-                        f"{len(stats_results):,} misclassified ({rate:.1f}%)"
-                        + (f" · {n_correct} correct excluded" if n_correct else "")
+                        f"{len(results):,} misclassified · "
+                        f"{len(stats_results):,} unreviewed ({rate:.1f}% of names)"
+                        + (f" · {n_correct:,} already confirmed" if n_correct else "")
                         + filt_note
                         + (
-                            f" · tree shows {shown}"
-                            if len(tree_results) <= 500
-                            else f" · tree shows first {shown} of {len(tree_results)}"
+                            f" · tree shows first {shown} of {len(tree_results):,}"
+                            if len(tree_results) > 500
+                            else f" · tree shows {shown:,}"
                         )
-                        + " · select a row for photo · Ctrl+C copies row"
+                        + photo_hint
                     )
                 )
             else:
                 self.misclass_status.configure(
                     text=(
-                        f"{len(stats_results)} potential mismatches"
-                        + (f" · {n_correct} correct excluded" if n_correct else "")
+                        f"{len(results):,} misclassified · "
+                        f"{len(stats_results):,} unreviewed"
+                        + (f" · {n_correct:,} already confirmed" if n_correct else "")
                         + filt_note
                         + (
-                            f" · tree shows {shown}"
-                            if len(tree_results) <= 500
-                            else f" · tree shows first {shown} of {len(tree_results)}"
+                            f" · tree shows first {shown} of {len(tree_results):,}"
+                            if len(tree_results) > 500
+                            else f" · tree shows {shown:,}"
                         )
-                        + " · select a row for photo · Statistics for transitions"
+                        + photo_hint
                     )
                 )
 
@@ -84,15 +95,16 @@ class MisclassifyApplyMixin:
             eth_base_count=eth_base,
         )
         self.log_queue.put(
-            f"Misclassification: {len(stats_results)} mismatches"
-            + (f" ({n_correct} correct excluded)" if n_correct else "")
+            f"Misclassification: {len(results)} raw · {len(stats_results)} unreviewed"
+            + (f" · {n_correct} confirmed excluded" if n_correct else "")
+            + (f" · tree {len(tree_results)}" if tree_results is not None else "")
             + (f" / {eth_base} {eth}" if eth != "all" else "")
         )
         if hasattr(self, "report_status"):
             self.report_status.configure(
                 text=(
-                    f"Analyze ready · {len(stats_results):,} mismatches"
-                    + (f" · {n_correct} correct excluded" if n_correct else "")
+                    f"Analyze ready · {len(stats_results):,} unreviewed"
+                    + (f" · {n_correct:,} already confirmed" if n_correct else "")
                     + " · Reports → Analyze & build for photo review"
                 )
             )

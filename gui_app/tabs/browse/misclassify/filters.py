@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import List, Tuple
 
 
 class MisclassifyFiltersMixin:
@@ -18,33 +19,39 @@ class MisclassifyFiltersMixin:
         except OSError:
             return False
 
-    def _misclass_apply_photo_filter(self, results: list) -> list:
-        """Drop rows without photo when Remove without photo is checked."""
+    def _misclass_photo_filter_on(self) -> bool:
         if hasattr(self, "_ensure_misclass_filter_vars"):
             self._ensure_misclass_filter_vars()
-        hide = True
         var = getattr(self, "misclass_hide_no_photo_var", None)
-        if var is not None:
-            try:
-                hide = bool(var.get())
-            except Exception:
-                hide = True
-        if not hide:
+        if var is None:
+            return False
+        try:
+            return bool(var.get())
+        except Exception:
+            return False
+
+    def _misclass_listed_want(self) -> str:
+        if hasattr(self, "_ensure_misclass_filter_vars"):
+            self._ensure_misclass_filter_vars()
+        var = getattr(self, "misclass_listed_var", None)
+        if var is None:
+            return "All"
+        try:
+            want = (var.get() or "All").strip() or "All"
+        except Exception:
+            want = "All"
+        return want if want in ("White", "Black", "Other", "All") else "All"
+
+    def _misclass_apply_photo_filter(self, results: list) -> list:
+        """Drop rows without photo when Photos only is checked."""
+        if not self._misclass_photo_filter_on():
             return list(results)
         return [mc for mc in results if self._misclass_mc_has_photo(mc)]
 
     def _misclass_apply_listed_filter(self, results: list) -> list:
         """Keep mismatches whose registry-listed race matches Listed as."""
-        if hasattr(self, "_ensure_misclass_filter_vars"):
-            self._ensure_misclass_filter_vars()
-        want = "All"
-        var = getattr(self, "misclass_listed_var", None)
-        if var is not None:
-            try:
-                want = (var.get() or "All").strip() or "All"
-            except Exception:
-                want = "All"
-        if want not in ("White", "Black", "Other"):
+        want = self._misclass_listed_want()
+        if want == "All":
             return list(results)
         from gui_app.widgets import _misclass_race_bucket
 
@@ -64,6 +71,22 @@ class MisclassifyFiltersMixin:
             self._misclass_apply_listed_filter(results)
         )
 
+    def _misclass_filter_breakdown(
+        self, stats_results: list
+    ) -> Tuple[list, List[str]]:
+        """Apply display filters; return (tree_rows, human status fragments)."""
+        bits: List[str] = []
+        listed = self._misclass_apply_listed_filter(stats_results)
+        want = self._misclass_listed_want()
+        if want != "All":
+            bits.append(f"Listed {want}: {len(listed):,}")
+        tree = self._misclass_apply_photo_filter(listed)
+        if self._misclass_photo_filter_on():
+            hid = len(listed) - len(tree)
+            if hid > 0:
+                bits.append(f"photos-only hid {hid:,}")
+        return tree, bits
+
     def _misclass_on_display_filter_toggle(self, *_args) -> None:
         """Re-populate the tree from cached Analyze results (no re-scan)."""
         if not getattr(self, "_misclass_results", None):
@@ -75,24 +98,25 @@ class MisclassifyFiltersMixin:
             pass
         if not hasattr(self, "misclass_status"):
             return
-        shown_list = self._misclass_apply_display_filters(filtered)
-        shown = min(500, len(shown_list))
-        total = len(filtered)
-        n_hidden = total - len(shown_list)
-        note = f" · {n_hidden} filtered out" if n_hidden > 0 else ""
+        tree_results, filt_bits = self._misclass_filter_breakdown(filtered)
+        shown = min(500, len(tree_results))
+        note = (" · " + " · ".join(filt_bits)) if filt_bits else ""
         try:
-            self.misclass_status.configure(
-                text=(
-                    f"{total} potential mismatches"
-                    + (
-                        f" · showing first {shown}"
-                        if total > 500
-                        else f" · showing {shown}"
-                    )
-                    + note
-                    + " · select a row for photo"
+            base = (
+                f"{len(filtered):,} unreviewed mismatches"
+                + note
+                + (
+                    f" · tree shows first {shown} of {len(tree_results):,}"
+                    if len(tree_results) > 500
+                    else f" · tree shows {shown:,}"
                 )
             )
+            if (
+                self._misclass_photo_filter_on()
+                and len(tree_results) < len(filtered)
+            ):
+                base += " · uncheck Photos only to show rows without mugshots"
+            self.misclass_status.configure(text=base)
         except Exception:
             pass
 
