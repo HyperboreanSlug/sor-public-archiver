@@ -414,11 +414,15 @@ def _is_compatible(
     likely_ethnicity: str,
     recorded_race: str,
     recorded_ethnicity: Optional[str] = None,
+    last_name: Optional[str] = None,
 ) -> bool:
     """Return True if recorded race/ethnicity is consistent with the name-based ethnicity.
 
     Hispanic + race White: only compatible when *recorded_ethnicity* is also
     Hispanic/Latino. White with blank/non-Hispanic ethnicity is a mismatch.
+
+    African / African American + race White: only a mismatch when the surname
+    is *uniquely* Black (not shared Anglo names like Wade / Washington).
     """
     if not recorded_race or not likely_ethnicity or likely_ethnicity == "Unknown":
         return True
@@ -434,6 +438,13 @@ def _is_compatible(
         "WHITE", "OTHER", "MIDDLE EASTERN", "ARAB", "UNKNOWN",
     ):
         return True
+
+    # Shared Anglo/Black surnames: White is not a misclassification
+    if family in ("african_american", "african") and race == "WHITE":
+        from scraper.ethnic_names_black_unique import is_shared_black_white_surname
+
+        if last_name and is_shared_black_white_surname(last_name):
+            return True
 
     # Hispanic surnames: empty / unknown race are not useful mismatch signals
     if family == "hispanic" and race in ("UNKNOWN", "OTHER"):

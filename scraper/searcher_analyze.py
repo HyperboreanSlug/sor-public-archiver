@@ -90,7 +90,10 @@ class SearcherAnalyzeMixin:
             base_count += 1
 
             if _is_compatible(
-                likely_eth, recorded_race, recorded_ethnicity=recorded_ethnicity or None
+                likely_eth,
+                recorded_race,
+                recorded_ethnicity=recorded_ethnicity or None,
+                last_name=last_name,
             ):
                 continue
 

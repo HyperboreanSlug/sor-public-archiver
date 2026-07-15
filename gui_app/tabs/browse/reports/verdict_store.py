@@ -239,6 +239,7 @@ class ReportsVerdictStoreMixin:
                     mc.likely_ethnicity or "",
                     (rec.get("race") or mc.expected_race or "").strip(),
                     recorded_ethnicity=(rec.get("ethnicity") or "").strip() or None,
+                    last_name=(rec.get("last_name") or "").strip() or None,
                 )
             )
         except Exception:

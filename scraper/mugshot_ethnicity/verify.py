@@ -129,6 +129,7 @@ def verify_record(
         name_ethnicity or "Unknown",
         recorded_race,
         recorded_ethnicity=recorded_eth,
+        last_name=(rec.get("last_name") or "") if isinstance(rec, dict) else None,
     )
     face_vs_race = face_contradicts_recorded(face_lab, recorded_race)
     face_supports_name = bool(expected_from_name) and face_lab in expected_from_name

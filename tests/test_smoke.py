@@ -852,6 +852,41 @@ class EthnicAndSearchTests(unittest.TestCase):
         self.assertFalse(ethnicity_filter_matches("hispanic", "white"))
         self.assertFalse(ethnicity_filter_matches("european", "black"))
 
+    def test_shared_anglo_surnames_not_african_when_white(self):
+        """Wade etc. are not uniquely Black — do not label AA/African or flag White."""
+        from scraper.ethnic_names import EthnicNameDatabase
+        from scraper.searcher_race import _is_compatible
+
+        edb = EthnicNameDatabase()
+        eth, conf, _ = edb.classify_by_name("Wade")
+        self.assertFalse(
+            eth.startswith("African") or eth == "African American",
+            f"Wade must not be African*, got {eth}",
+        )
+        eth_w, conf_w, _ = edb.classify_by_name("Washington", first_name="John")
+        self.assertFalse(
+            eth_w.startswith("African") or eth_w == "African American",
+            f"John Washington must not be AA, got {eth_w}",
+        )
+        eth_d, conf_d, _ = edb.classify_by_name("Washington", first_name="DeShawn")
+        self.assertTrue(
+            eth_d == "African American" or eth_d.startswith("African"),
+            f"DeShawn Washington should stay AA, got {eth_d}",
+        )
+        # Unique African still flags White as mismatch
+        eth_o, _, _ = edb.classify_by_name("Okonkwo")
+        self.assertTrue(eth_o.startswith("African"), eth_o)
+        self.assertFalse(
+            _is_compatible(eth_o, "White", last_name="Okonkwo")
+        )
+        # Shared name never flags White even if label were AA
+        self.assertTrue(
+            _is_compatible("African American", "White", last_name="Wade")
+        )
+        self.assertTrue(
+            _is_compatible("African (senegalese)", "White", last_name="Wade")
+        )
+
     def test_ethnicity_review_flags_persist(self):
         """Sidebar confirmations store correct/incorrect on offenders.flags."""
         import tempfile

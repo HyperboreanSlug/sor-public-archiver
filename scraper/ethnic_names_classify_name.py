@@ -54,9 +54,6 @@ class EthnicClassifyNameMixin:
             if surname_lc in names:
                 matches.append((f"Asian ({group})", f"asian_{group}"))
 
-        if surname_lc in self._african_american_lc:
-            matches.append(("African American", "african_american_surnames"))
-
         if surname_lc in self._native_american_lc:
             matches.append(("Native American", "native_american_surnames"))
 
@@ -74,14 +71,26 @@ class EthnicClassifyNameMixin:
         if surname_lc in self._arabic_lc:
             matches.append(("Indian/MENA (arabic)", "arabic_surnames"))
 
-        for region, names in self._african_lc.items():
-            if surname_lc in names:
-                matches.append((f"African ({region})", f"african_{region}"))
+        fn_signal = self._resolve_given_name_signal(first_name, middle_name)
+
+        # African / AA: only for uniquely Black surnames, or shared surnames
+        # with a strong AA first name (DeShawn Washington). Never mark Wade
+        # etc. as African without that signal.
+        from scraper.ethnic_names_black_unique import is_shared_black_white_surname
+
+        shared_bw = is_shared_black_white_surname(surname_lc)
+        allow_black_lists = (not shared_bw) or (fn_signal == "african_american")
+
+        if allow_black_lists and surname_lc in self._african_american_lc:
+            matches.append(("African American", "african_american_surnames"))
+
+        if allow_black_lists:
+            for region, names in self._african_lc.items():
+                if surname_lc in names:
+                    matches.append((f"African ({region})", f"african_{region}"))
 
         if not matches:
             return ("Unknown", 0.0, [])
-
-        fn_signal = self._resolve_given_name_signal(first_name, middle_name)
         is_amb = surname_lc in self._indian_amb_lc
         is_hc = surname_lc in self._indian_hc_lc
         # Very short surnames (Dey, Rai, …) are easy false positives with Western
