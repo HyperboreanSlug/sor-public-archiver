@@ -130,7 +130,7 @@ class SettingsBuildMixin:
         ).pack(anchor="w", padx=14, pady=(0, 8))
 
         self.settings_db_sync_enabled = ctk.BooleanVar(
-            value=bool(self.app_settings.get("db_sync_enabled", False))
+            value=bool(self.app_settings.get("db_sync_enabled", True))
         )
         # Always true when sync is enabled (kept for settings schema compatibility).
         self.settings_db_sync_on_startup = ctk.BooleanVar(value=True)

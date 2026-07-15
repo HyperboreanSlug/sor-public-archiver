@@ -109,7 +109,7 @@ class SettingsCollectMixin:
             if out["db_sync_enabled"]:
                 out["db_sync_prompted"] = True
         else:
-            out["db_sync_enabled"] = bool(sett.get("db_sync_enabled", False))
+            out["db_sync_enabled"] = bool(sett.get("db_sync_enabled", True))
             out["db_sync_on_startup"] = bool(out["db_sync_enabled"])
             out["db_sync_repo"] = str(
                 sett.get("db_sync_repo") or "HyperboreanSlug/SORPA"

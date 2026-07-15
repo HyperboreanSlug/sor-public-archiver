@@ -49,8 +49,9 @@ DEFAULTS: Dict[str, Any] = {
     "deepface_scan_force_rescan": False,
 
     # Public database sync from GitHub Releases (no local user PII in archives)
-    "db_sync_enabled": False,
-    "db_sync_prompted": False,
+    # Download autosync is on by default (check every open when enabled).
+    "db_sync_enabled": True,
+    "db_sync_prompted": True,
     "db_sync_on_startup": True,
     "db_sync_repo": "HyperboreanSlug/SORPA",
     "db_sync_tag": "database-latest",
@@ -138,8 +139,8 @@ def normalize_settings(s: Dict[str, Any]) -> Dict[str, Any]:
     if "Race" not in parts:
         parts.insert(0, "Race")
     out["deepface_weight_models"] = ",".join(parts)
-    out["db_sync_enabled"] = bool(out.get("db_sync_enabled", False))
-    out["db_sync_prompted"] = bool(out.get("db_sync_prompted", False))
+    out["db_sync_enabled"] = bool(out.get("db_sync_enabled", True))
+    out["db_sync_prompted"] = bool(out.get("db_sync_prompted", True))
     out["db_sync_on_startup"] = bool(out.get("db_sync_on_startup", True))
     out["auto_update_enabled"] = bool(out.get("auto_update_enabled", True))
     out["db_sync_repo"] = (
