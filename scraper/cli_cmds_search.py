@@ -169,25 +169,15 @@ def cmd_misclassify(args: argparse.Namespace) -> None:
     print()
 
     try:
-        if ethnicity == "hispanic":
-            results = searcher.find_hispanic_misclassifications(
-                min_confidence=min_confidence, limit=limit
-            )
-            title = "Hispanic Names with Non-Hispanic Race Classification"
-        elif ethnicity == "asian":
-            results = searcher.find_asian_misclassifications(
-                min_confidence=min_confidence, limit=limit
-            )
-            title = "Asian Names with Non-Asian Race Classification"
-        elif ethnicity == "african_american":
-            results = searcher.find_african_american_misclassifications(
-                min_confidence=min_confidence, limit=limit
-            )
-            title = "African-American Names with Non-Black Race Classification"
+        eth_filter = None if ethnicity in ("all", "", None) else ethnicity
+        results = searcher.analyze_ethnicities(
+            min_confidence=min_confidence,
+            limit=limit,
+            ethnicity_filter=eth_filter,
+        )
+        if eth_filter:
+            title = f"Misclassifications ({ethnicity})"
         else:
-            results = searcher.analyze_ethnicities(
-                min_confidence=min_confidence, limit=limit
-            )
             title = "All Potential Misclassifications"
 
         print(f"  {title}")

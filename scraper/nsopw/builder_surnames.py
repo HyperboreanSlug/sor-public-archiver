@@ -67,9 +67,10 @@ class BuilderSurnamesMixin:
             "all", "mena", "arabic", "indian/mena", "indian_mena", "merged",
             "indian/mena (merged)", "middle_eastern", "middle eastern",
         )
-        if want_indian and sub == "high_confidence":
-            take(hc_names, "Indian/MENA (high_confidence)", cap)
-        elif want_indian and sub != "high_confidence":
+        # sub=arabic → MENA list only (even under merged eth)
+        if sub == "arabic":
+            take(self.ethnic_db.arabic_surnames, "Indian/MENA (arabic)", cap)
+        elif want_indian:
             by_group = getattr(self.ethnic_db, "indian_surnames_by_group", None) or {}
             if by_group:
                 for group, names in sorted(by_group.items()):
@@ -82,7 +83,9 @@ class BuilderSurnamesMixin:
                 take(self.ethnic_db.indian_surnames, "Indian/MENA", cap)
             if not sub:
                 take(hc_names, "Indian/MENA (high_confidence)", group_cap())
-        if want_mena and not sub:
+            if want_mena and not sub:
+                take(self.ethnic_db.arabic_surnames, "Indian/MENA (arabic)", cap)
+        elif want_mena:
             take(self.ethnic_db.arabic_surnames, "Indian/MENA (arabic)", cap)
         if eth in ("all", "african_american") and not sub:
             take(self.ethnic_db.african_american_surnames, "African American", cap)

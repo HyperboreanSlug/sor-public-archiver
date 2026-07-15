@@ -112,11 +112,9 @@ class IntegrityBuildMixin:
         ).pack(side="left", padx=(0, 6))
         ctk.CTkComboBox(
             scope_row, variable=self.requeue_ethnicity, width=160,
-            values=[
-                "all", "hispanic", "asian",
-                "indian/mena (merged)", "indian", "mena",
-                "african_american",
-            ],
+            values=["all", *(__import__(
+                "scraper.searcher_race", fromlist=["ETHNICITY_FILTER_UI"]
+            ).ETHNICITY_FILTER_UI)],
             fg_color=C["bg"], border_color=C["border"], button_color=C["elevated"],
             text_color=C["text"], dropdown_fg_color=C["panel"],
         ).pack(side="left")

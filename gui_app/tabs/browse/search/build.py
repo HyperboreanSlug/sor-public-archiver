@@ -115,13 +115,11 @@ class SearchBuildMixin:
         eth_chip = _field("Ethnicity")
         self.search_ethnicity_var = ctk.StringVar(value="")
         # Wide enough for indian/mena (merged) — never clip labels
+        from scraper.searcher_race import ETHNICITY_FILTER_UI
+
         ctk.CTkComboBox(
             eth_chip, variable=self.search_ethnicity_var, width=200,
-            values=[
-                "", "indian/mena (merged)", "indian", "mena", "hispanic", "asian",
-                "african_american", "jewish", "portuguese",
-                "native_american",
-            ],
+            values=["", *ETHNICITY_FILTER_UI],
             fg_color=C["bg"], border_color=C["border"], button_color=C["elevated"],
             button_hover_color=C["border"], dropdown_fg_color=C["panel"],
             text_color=C["text"],

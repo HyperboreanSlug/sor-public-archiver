@@ -550,33 +550,34 @@ class BuilderSurnameTests(unittest.TestCase):
             )
         b = NSOPWEthnicDatabaseBuilder(db_path=":memory:", delay=1.5, report_delay=0.1)
         try:
-            # HC-only via subcategory; full indian/mena includes HC among others
-            pairs_hc = b.surnames_for_ethnicity(
-                "indian", subcategory="high_confidence", all_surnames=True
-            )
-            names_hc = {s for s, _lab in pairs_hc}
-            self.assertIn("Patel", names_hc)
-            self.assertNotIn("Dwayne", names_hc)
+            pairs_ind = b.surnames_for_ethnicity("indian", all_surnames=True)
+            names_ind = {s for s, _ in pairs_ind}
+            self.assertIn("Patel", names_ind)
+            self.assertNotIn("Dwayne", names_ind)
             self.assertTrue(
-                all(lab == "Indian/MENA (high_confidence)" for _s, lab in pairs_hc)
+                all(lab.startswith("Indian/MENA") for _, lab in pairs_ind)
+            )
+            # HC surnames appear under indian pool (not a separate abandoned filter)
+            self.assertTrue(
+                any("high_confidence" in lab for _, lab in pairs_ind)
+            )
+            pairs_mena = b.surnames_for_ethnicity("mena", all_surnames=True)
+            self.assertTrue(
+                all(lab == "Indian/MENA (arabic)" for _, lab in pairs_mena)
             )
             pairs_full = b.surnames_for_ethnicity(
                 "indian/mena (merged)", all_surnames=True
             )
             names_full = {s for s, _ in pairs_full}
-            self.assertIn("Patel", names_full)
-            self.assertTrue(names_hc.issubset(names_full))
-            pairs_ind = b.surnames_for_ethnicity("indian", all_surnames=True)
-            pairs_mena = b.surnames_for_ethnicity("mena", all_surnames=True)
-            self.assertTrue(all(lab.startswith("Indian/MENA") for _, lab in pairs_ind))
-            self.assertTrue(
-                all(lab == "Indian/MENA (arabic)" for _, lab in pairs_mena)
-                or len(pairs_mena) == 0
-            )
+            self.assertTrue(names_ind.issubset(names_full))
             if pairs_mena:
                 self.assertTrue(
                     {s for s, _ in pairs_mena}.issubset(names_full)
                 )
+            # No abandoned arabic-only labels under indian-only filter
+            self.assertFalse(
+                any("(arabic)" in lab for _, lab in pairs_ind)
+            )
         finally:
             b.close()
 

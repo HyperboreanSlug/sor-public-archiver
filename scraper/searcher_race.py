@@ -216,6 +216,7 @@ def format_race_label(recorded_race: str) -> str:
 # UI / CLI filter keys (analyze, search, enrich, NSOPW)
 INDIAN_ONLY_FILTERS = frozenset({
     "indian",
+    # legacy aliases (no longer shown in UI)
     "indian_high_confidence",
     "high_confidence_indian",
     "high-confidence indian",
@@ -223,19 +224,49 @@ INDIAN_ONLY_FILTERS = frozenset({
 })
 MENA_ONLY_FILTERS = frozenset({
     "mena",
+    # legacy aliases (no longer shown in UI)
     "arabic",
     "middle_eastern",
     "middle eastern",
 })
-# Merged Indian + MENA (labeled in UI as indian/mena (merged))
+# Merged Indian + MENA (canonical UI label: indian/mena (merged))
 INDIAN_MENA_MERGED_FILTERS = frozenset({
+    "indian/mena (merged)",
+    # legacy aliases
     "indian/mena",
     "indian_mena",
     "merged",
-    "indian/mena (merged)",
     "indian/mena_merged",
     "indian_mena_merged",
 })
+
+# Canonical dropdown values (no abandoned / duplicate labels)
+ETHNICITY_FILTER_UI = (
+    "hispanic",
+    "asian",
+    "indian/mena (merged)",
+    "indian",
+    "mena",
+    "african_american",
+    "african",
+    "jewish",
+    "portuguese",
+    "native_american",
+    "european",
+)
+# CLI accepts the same set plus legacy aliases for scripts
+ETHNICITY_FILTER_CLI = tuple(
+    dict.fromkeys(
+        ("all",)
+        + ETHNICITY_FILTER_UI
+        + (
+            "indian/mena",
+            "merged",
+            "arabic",  # → mena
+            "indian_high_confidence",  # → indian
+        )
+    )
+)
 
 
 def _is_mena_arabic_label(likely_ethnicity: str) -> bool:

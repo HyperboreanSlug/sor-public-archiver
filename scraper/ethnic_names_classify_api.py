@@ -55,19 +55,25 @@ class EthnicClassifyApiMixin:
 
     def subcategories(self, ethnicity: str) -> List[str]:
         eth = (ethnicity or "").lower().strip()
-        if eth in (
-            "indian_high_confidence",
-            "high_confidence_indian",
-            "high-confidence indian",
-            "indian_hc",
-        ):
+        from scraper.searcher_race import (
+            INDIAN_MENA_MERGED_FILTERS,
+            INDIAN_ONLY_FILTERS,
+            MENA_ONLY_FILTERS,
+        )
+
+        if eth in MENA_ONLY_FILTERS:
             return ["all"]
         if eth == "asian":
             return ["all"] + sorted(self.asian_surnames.keys(), key=str.lower)
-        if eth == "indian":
-            groups = sorted((self.indian_surnames_by_group or {}).keys(), key=str.lower)
-            if "high_confidence" in groups:
-                groups = ["high_confidence"] + [g for g in groups if g != "high_confidence"]
+        if eth in INDIAN_ONLY_FILTERS or eth in INDIAN_MENA_MERGED_FILTERS:
+            groups = sorted(
+                (self.indian_surnames_by_group or {}).keys(), key=str.lower
+            )
+            # Drop abandoned high_confidence subcategory (merged into indian)
+            groups = [g for g in groups if g.lower() != "high_confidence"]
+            if eth in INDIAN_MENA_MERGED_FILTERS:
+                # Merged pool: regional Indic groups + arabic branch
+                return ["all"] + groups + ["arabic"] if groups else ["all", "arabic"]
             return ["all"] + groups if groups else ["all"]
         if eth == "european":
             return ["all"] + sorted(self.european_surnames.keys(), key=str.lower)

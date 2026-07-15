@@ -167,8 +167,8 @@ class ReportsBuildMixin:
             variable=self.report_actual_filter,
             width=168,
             values=[
-                "All", "Hispanic", "Indian", "Asian", "African American",
-                "Arabic", "European", "Jewish", "Portuguese",
+                "All", "Hispanic", "Indian/MENA", "Asian", "African American",
+                "European", "Jewish", "Portuguese",
                 "Native American", "Other",
             ],
             fg_color=C["bg"],

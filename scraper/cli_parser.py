@@ -28,6 +28,8 @@ Usage:
 
 import argparse
 import csv
+
+from scraper.searcher_race import ETHNICITY_FILTER_CLI
 from pathlib import Path
 
 
@@ -116,16 +118,11 @@ Examples:
     p_misclassify = subparsers.add_parser("misclassify", help="Find potential race/ethnicity misclassifications")
     p_misclassify.add_argument(
         "--ethnicity",
-        choices=[
-            "all", "hispanic", "asian",
-            "indian", "mena", "indian/mena", "indian/mena (merged)", "merged",
-            "african_american", "african", "arabic", "jewish", "portuguese",
-            "native_american", "european",
-        ],
+        choices=list(ETHNICITY_FILTER_CLI),
         default="all",
         help=(
-            "Misclass filter: indian=Indic only; mena=Arabic only; "
-            "indian/mena (merged)=both"
+            "Misclass filter: indian=Indic; mena=MENA; "
+            "indian/mena (merged)=both; plus hispanic/asian/…"
         ),
     )
     p_misclassify.add_argument("--confidence", type=float, default=0.5, help="Minimum confidence threshold (0-1)")
@@ -304,15 +301,10 @@ Examples:
     )
     p_nsopw.add_argument(
         "--ethnicity",
-        choices=[
-            "all", "hispanic", "asian",
-            "indian", "mena", "indian/mena", "indian/mena (merged)", "merged",
-            "african_american", "african",
-            "arabic", "jewish", "portuguese", "native_american", "european",
-        ],
+        choices=list(ETHNICITY_FILTER_CLI),
         default="hispanic",
         help=(
-            "Surname list: indian=Indic; mena=Arabic; "
+            "Surname list: indian=Indic; mena=MENA; "
             "indian/mena (merged)=both; default: hispanic"
         ),
     )

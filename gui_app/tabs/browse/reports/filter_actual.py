@@ -100,8 +100,17 @@ class ReportsFilterActualMixin:
             return "Other"
         if "hispanic" in e or "latino" in e or "latina" in e:
             return "Hispanic"
-        if "indian" in e or "south asian" in e or "desi" in e:
-            return "Indian"
+        # Indic + MENA share one actual bucket (matches classifier branding)
+        if (
+            "indian" in e
+            or "mena" in e
+            or "south asian" in e
+            or "desi" in e
+            or "arab" in e
+            or "middle east" in e
+            or "middle_eastern" in e
+        ):
+            return "Indian/MENA"
         if (
             "african" in e
             or e in ("black", "b")
@@ -123,8 +132,6 @@ class ReportsFilterActualMixin:
             )
         ):
             return "Asian"
-        if "arab" in e or "middle east" in e or "middle_eastern" in e:
-            return "Arabic"
         if "jewish" in e or "israel" in e:
             return "Jewish"
         if "portuguese" in e or "brazil" in e:

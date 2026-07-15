@@ -13,12 +13,10 @@ SIDEBAR_FRAME_WIDTH = 420
 ACTUAL_RACE_OPTIONS = [
     "Hispanic",
     "Indian/MENA",
-    "Indian",
     "Asian",
     "African American",
     "Black",
     "White",
-    "Arabic",
     "European",
     "Jewish",
     "Portuguese",

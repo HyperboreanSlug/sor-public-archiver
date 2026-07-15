@@ -69,13 +69,11 @@ class MisclassifyBuildMixin:
             return chip
 
         eth = _chip("Likely ethnicity")
+        from scraper.searcher_race import ETHNICITY_FILTER_UI
+
         ctk.CTkComboBox(
             eth, variable=self.misclass_ethnicity_var, width=200,
-            values=[
-                "all", "hispanic", "asian",
-                "indian/mena (merged)", "indian", "mena",
-                "african_american",
-            ],
+            values=["all", *ETHNICITY_FILTER_UI],
             fg_color=C["bg"], border_color=C["border"], button_color=C["elevated"],
             text_color=C["text"], dropdown_fg_color=C["panel"],
         ).pack(side="left", pady=2)

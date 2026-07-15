@@ -65,16 +65,14 @@ class DfrEthnicityMixin:
             # Map face labels to display options
             if "black" in face_l or "african" in face_l:
                 return "African American"
-            if "indian" in face_l:
-                return "Indian"
+            if "indian" in face_l or "middle" in face_l or "arab" in face_l:
+                return "Indian/MENA"
             if "asian" in face_l:
                 return "Asian"
             if "hispanic" in face_l or "latino" in face_l:
                 return "Hispanic"
             if "white" in face_l:
                 return "European"
-            if "middle" in face_l or "arab" in face_l:
-                return "Arabic"
             return face.replace("_", " ").title()
         return "Unknown"
 
