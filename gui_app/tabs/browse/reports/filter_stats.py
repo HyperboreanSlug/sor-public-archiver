@@ -59,9 +59,11 @@ class ReportsFilterStatsMixin:
             else results
         )
         from gui_app.tabs.browse.misclassify.constants import (
+            format_confidence_cell,
             format_deepface_cell,
             verification_label,
         )
+        from scraper.confidence_display import combine_name_face_confidence
         from scraper.crime_summary import summarize_crime
 
         # Bulk DeepFace scores for visible rows (one query)
@@ -104,7 +106,13 @@ class ReportsFilterStatsMixin:
             )
             rec["_misclass_expected_race"] = mc.expected_race
             rec["_misclass_likely"] = mc.likely_ethnicity
-            rec["_misclass_conf"] = mc.confidence
+            # Raw surname conf (for recompute); display conf may be combined.
+            try:
+                name_conf = float(mc.confidence)
+            except (TypeError, ValueError):
+                name_conf = 0.0
+            rec["_misclass_name_conf"] = name_conf
+            rec["name_confidence"] = name_conf
             # Surface analyzer ethnicity on the record for the sidebar picker
             if mc.likely_ethnicity and not rec.get("likely_ethnicity"):
                 rec["likely_ethnicity"] = mc.likely_ethnicity
@@ -124,7 +132,21 @@ class ReportsFilterStatsMixin:
                     "is_hit": scan.get("is_hit"),
                     "severity": scan.get("severity"),
                     "error": scan.get("error"),
+                    "face_detected": scan.get("face_detected"),
                 }
+            disp_conf, is_combined = combine_name_face_confidence(
+                name_conf,
+                name_ethnicity=str(mc.likely_ethnicity or ""),
+                deepface=rec.get("_deepface") if scan else None,
+            )
+            rec["_misclass_conf"] = disp_conf
+            rec["_misclass_conf_combined"] = is_combined
+            rec["confidence"] = disp_conf
+            conf_cell = format_confidence_cell(
+                name_conf,
+                name_ethnicity=str(mc.likely_ethnicity or ""),
+                deepface=rec.get("_deepface") if scan else None,
+            )
             df_cell = format_deepface_cell(scan)
             crime_raw = (
                 rec.get("crime")
@@ -148,7 +170,7 @@ class ReportsFilterStatsMixin:
                     name,
                     (mc.expected_race or "—")[:14],
                     (mc.likely_ethnicity or "")[:22],
-                    f"{mc.confidence:.3f}",
+                    conf_cell,
                     df_cell,
                     crime or "—",
                     conf_status,

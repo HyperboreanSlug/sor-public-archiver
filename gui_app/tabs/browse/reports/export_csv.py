@@ -91,8 +91,14 @@ class ReportsExportCsvMixin:
             w.writerow([
                 "verdict", "first_name", "middle_name", "last_name", "name",
                 "recorded_race", "likely_ethnicity", "confidence",
+                "confidence_combined",
                 "crime", "state", "matching_names", "photo_path", "source_url", "id",
             ])
+            from scraper.confidence_display import (
+                combine_name_face_confidence,
+                format_display_confidence,
+            )
+
             for mc, verdict, rec in self._reports_iter_export_rows():
                 first = (rec.get("first_name") or "").strip()
                 middle = (rec.get("middle_name") or "").strip()
@@ -100,6 +106,20 @@ class ReportsExportCsvMixin:
                 name = (
                     " ".join(p for p in (first, middle, last) if p)
                     or (rec.get("full_name") or "")
+                )
+                try:
+                    name_c = float(
+                        rec.get("_misclass_name_conf")
+                        if rec.get("_misclass_name_conf") is not None
+                        else mc.confidence
+                        or 0
+                    )
+                except (TypeError, ValueError):
+                    name_c = 0.0
+                disp, is_comb = combine_name_face_confidence(
+                    name_c,
+                    name_ethnicity=str(mc.likely_ethnicity or ""),
+                    deepface=rec.get("_deepface") if isinstance(rec.get("_deepface"), dict) else None,
                 )
                 w.writerow([
                     verdict,
@@ -109,7 +129,8 @@ class ReportsExportCsvMixin:
                     name,
                     mc.expected_race,
                     mc.likely_ethnicity,
-                    f"{mc.confidence:.4f}",
+                    format_display_confidence(disp, is_comb, digits=4),
+                    "yes" if is_comb else "no",
                     self._reports_summarize_crime(self._reports_crime_text(rec), max_len=200),
                     _format_state_display(rec),
                     "; ".join(mc.matching_names or []),

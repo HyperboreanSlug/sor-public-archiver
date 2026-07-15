@@ -42,6 +42,31 @@ def format_deepface_cell(scan: Optional[Dict[str, Any]]) -> str:
     lab_s = lab.replace("_", " ")[:12] if lab else "?"
     return f"{lab_s} {conf:.2f}"
 
+
+def format_confidence_cell(
+    name_confidence: Any,
+    *,
+    name_ethnicity: str = "",
+    deepface: Optional[Dict[str, Any]] = None,
+    digits: int = 3,
+) -> str:
+    """Confidence for the tree/sidebar; marks name+DeepFace blend as combined."""
+    from scraper.confidence_display import (
+        combine_name_face_confidence,
+        format_display_confidence,
+    )
+
+    try:
+        name_c = float(name_confidence)
+    except (TypeError, ValueError):
+        name_c = 0.0
+    score, is_combined = combine_name_face_confidence(
+        name_c,
+        name_ethnicity=name_ethnicity or "",
+        deepface=deepface,
+    )
+    return format_display_confidence(score, is_combined, digits=digits)
+
 # Sidebar actual-race picker (coarse + Indian/MENA for SOR work)
 MISCLASS_ACTUAL_RACES = [
     "White",

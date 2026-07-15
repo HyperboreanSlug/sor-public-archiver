@@ -28,6 +28,7 @@
 | Report HTTP | `scraper/reports/fetcher_*.py` |
 | Surname engine | `scraper/searcher_*.py`, `ethnic_names_*.py` (Indian/MENA = South Asian + Arabic lists) |
 | Appearance signals | `scraper/searcher_appearance.py` — eye/hair (brown eyes + brown hair, etc.) for misclass conf |
+| Display confidence | `scraper/confidence_display.py` — name-only or name+DeepFace combined (marked) |
 | Misclassify confirm | `gui_app/shared/record_sidebar*.py`, `verdict_persist.py`, `tabs/browse/misclassify/` |
 | CLI | `scraper/cli.py` → `cli_parser.py` + `cli_cmds_*.py` |
 

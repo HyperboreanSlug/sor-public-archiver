@@ -145,8 +145,10 @@ class ReportsGridTileMixin:
         verdict: str,
         border: str,
         index: int,
+        conf_text: str = "",
     ):
         """Grid tile: max photo fills box; checkbox + Export (single card)."""
+        conf_label = (conf_text or "").strip() or f"{float(conf or 0):.2f}"
         # Photo takes most of the tile; chrome stays compact under it
         _W, _H = 180, 340
         _PHOTO_H = 220
@@ -227,7 +229,7 @@ class ReportsGridTileMixin:
         meta_row.pack_propagate(False)
         ctk.CTkLabel(
             meta_row,
-            text=f"{conf:.2f} · {state}",
+            text=f"{conf_label} · {state}",
             font=("Segoe UI", 9),
             text_color=C["muted"],
             anchor="w",

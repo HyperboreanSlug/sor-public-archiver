@@ -94,13 +94,38 @@ class RecordSidebarActionsMixin:
                 alt = record.get("_misclass_likely")
                 if alt:
                     value = str(alt)
-            if label == "Confidence" and value == "—":
-                alt = record.get("_misclass_conf")
-                if alt is not None:
-                    try:
-                        value = f"{float(alt):.3f}"
-                    except (TypeError, ValueError):
-                        value = str(alt)
+            if label == "Confidence":
+                # Prefer name + DeepFace combined when a scan is on the record.
+                try:
+                    from scraper.confidence_display import display_confidence_for_record
+
+                    _score, _comb, conf_text = display_confidence_for_record(
+                        record,
+                        name_confidence=(
+                            record.get("_misclass_name_conf")
+                            if record.get("_misclass_name_conf") is not None
+                            else None
+                        ),
+                        name_ethnicity=(
+                            record.get("_misclass_likely")
+                            or record.get("likely_ethnicity")
+                            or ""
+                        ),
+                    )
+                    if conf_text and conf_text != "—":
+                        value = conf_text
+                    elif value == "—":
+                        alt = record.get("_misclass_conf")
+                        if alt is not None:
+                            value = f"{float(alt):.3f}"
+                except Exception:
+                    if value == "—":
+                        alt = record.get("_misclass_conf")
+                        if alt is not None:
+                            try:
+                                value = f"{float(alt):.3f}"
+                            except (TypeError, ValueError):
+                                value = str(alt)
             if value != "—":
                 lines.append(f"{label}: {value}")
         err = record.get("scrape_error")

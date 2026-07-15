@@ -68,7 +68,29 @@ class ReportsCardsAddMixin:
         race_raw = (mc.expected_race or rec.get("race") or "—")
         race = _format_race_display(race_raw) or str(race_raw)
         eth = mc.likely_ethnicity or "—"
-        conf = float(mc.confidence or 0.0)
+        try:
+            from scraper.confidence_display import (
+                combine_name_face_confidence,
+                format_display_confidence,
+            )
+
+            name_c = float(
+                rec.get("_misclass_name_conf")
+                if rec.get("_misclass_name_conf") is not None
+                else mc.confidence
+                or 0.0
+            )
+            df_pre = rec.get("_deepface") if isinstance(rec.get("_deepface"), dict) else None
+            conf, conf_combined = combine_name_face_confidence(
+                name_c,
+                name_ethnicity=str(mc.likely_ethnicity or ""),
+                deepface=df_pre,
+            )
+            conf_text = format_display_confidence(conf, conf_combined, digits=2)
+        except Exception:
+            conf = float(mc.confidence or 0.0)
+            conf_combined = False
+            conf_text = f"{conf:.2f}"
         photo_path = (rec.get("photo_path") or "").strip()
         has_photo = bool(photo_path and Path(photo_path).is_file())
         crime = self._reports_crime_text(rec)
@@ -85,6 +107,7 @@ class ReportsCardsAddMixin:
                 parent, mc, rec,
                 first=first, middle=middle, last=last,
                 state=state, race=race, conf=conf,
+                conf_text=conf_text,
                 crime=crime, df=df, photo_path=photo_path, has_photo=has_photo,
                 verdict=verdict, border=border, index=index,
             )
@@ -194,10 +217,10 @@ class ReportsCardsAddMixin:
         except Exception:
             pass
 
-        # Confidence · state (restored)
+        # Confidence · state (combined when DeepFace present)
         ctk.CTkLabel(
             body,
-            text=f"{conf:.2f} · {state}",
+            text=f"{conf_text} · {state}",
             font=FONT_SM,
             text_color=C["muted"],
             anchor="w",
@@ -321,7 +344,7 @@ class ReportsCardsAddMixin:
             url_disp = url_raw or "—"
         copy_blob = (
             f"{name}\nLISTED AS: {race}\nSurname ethnicity: {eth}"
-            f"{crime_line}\nConf {conf:.3f} · {state}\n"
+            f"{crime_line}\nConf {conf_text} · {state}\n"
             f"HTML: {html_raw or '—'}\n"
             f"URL: {url_disp}"
         )

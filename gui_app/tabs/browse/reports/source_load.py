@@ -143,12 +143,22 @@ class ReportsSourceLoadMixin:
                     if n not in names:
                         names.append(n)
                 mc.matching_names = names
-                # Prefer higher of name-conf vs face-conf for sort; keep name ethnicity
+                # Blend name + DeepFace into displayed confidence when face scan exists.
                 try:
-                    face_c = float(df_payload.get("top_confidence") or 0)
-                    if face_c > float(mc.confidence or 0):
-                        # Keep surname ethnicity as primary label; conf reflects stronger signal
-                        mc.confidence = max(float(mc.confidence or 0), face_c)
+                    from scraper.confidence_display import combine_name_face_confidence
+
+                    name_c = float(mc.confidence or 0)
+                    rec["_misclass_name_conf"] = name_c
+                    disp, is_comb = combine_name_face_confidence(
+                        name_c,
+                        name_ethnicity=str(mc.likely_ethnicity or ""),
+                        deepface=df_payload,
+                    )
+                    mc.confidence = disp
+                    rec["_misclass_conf"] = disp
+                    rec["_misclass_conf_combined"] = is_comb
+                    rec["confidence"] = disp
+                    rec["name_confidence"] = name_c
                 except (TypeError, ValueError):
                     pass
                 mc.record = rec
