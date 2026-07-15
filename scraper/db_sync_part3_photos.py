@@ -18,16 +18,21 @@ def download_needed_photos(
     project_root: Path,
     local_photo_parts: Dict[str, str],
     log: Optional[Callable[[str], None]],
+    progress: Optional[Any] = None,
+    extract_weight: int = 0,
 ) -> Tuple[int, int, Optional[SyncResult]]:
     """
     Download/extract photo parts. Returns (extracted_count, bytes_written, error_or_None).
     """
     photos_extracted = 0
     bytes_written = 0
+    n_parts = max(1, len(need_photos))
+    extract_each = max(0, int(extract_weight) // n_parts) if need_photos else 0
     for spec in need_photos:
         name = str(spec["name"])
         url = extra_urls.get(name) or f"{base}/{name}"
         part_path = tmp_dir / name
+        weight = int(spec.get("size_bytes") or 0) or 50_000_000
         _log(log, f"Downloading mugshots {name} …")
         try:
             digest = _http_download_file(
@@ -37,10 +42,14 @@ def download_needed_photos(
                 expected_sha256=spec.get("sha256"),
                 log=log,
                 label=name,
+                progress=progress,
+                progress_weight=weight,
             )
         except HTTPError as e:
             if e.code == 404:
                 _log(log, f"  Skipping missing photo asset {name}")
+                if progress is not None and weight:
+                    progress.advance(weight, f"Skipped missing {name}")
                 continue
             return (
                 photos_extracted,
@@ -58,6 +67,8 @@ def download_needed_photos(
         bytes_written += part_path.stat().st_size
         try:
             photos_extracted += _extract_photo_zip(part_path, project_root, log=log)
+            if progress is not None and extract_each:
+                progress.advance(extract_each, f"Extracted {name}")
         except Exception as e:
             return (
                 photos_extracted,

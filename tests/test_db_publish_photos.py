@@ -10,15 +10,21 @@ from scraper.db_publish_photos import (
     shard_for_arc,
     write_photo_parts,
     TARGET_PHOTO_PART_BYTES,
+    MAX_SHARDS,
+    MIN_SHARDS,
 )
 
 
 class PhotoShardTests(unittest.TestCase):
     def test_shard_count_bounds(self):
-        self.assertGreaterEqual(choose_shard_count(0), 8)
+        self.assertGreaterEqual(choose_shard_count(0), MIN_SHARDS)
         n = choose_shard_count(TARGET_PHOTO_PART_BYTES * 20)
-        self.assertLessEqual(n, 48)
-        self.assertGreaterEqual(n, 8)
+        self.assertLessEqual(n, MAX_SHARDS)
+        self.assertGreaterEqual(n, MIN_SHARDS)
+        # 50 MiB target: ~4 GiB archive fits under MAX_SHARDS
+        n_big = choose_shard_count(4 * 1024 * 1024 * 1024)
+        self.assertGreaterEqual(n_big, 64)
+        self.assertLessEqual(n_big, MAX_SHARDS)
 
     def test_stable_shard_for_path(self):
         a = shard_for_arc("data/report_pages/FL/photos/a.jpg", 16)

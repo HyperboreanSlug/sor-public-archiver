@@ -17,6 +17,7 @@ def apply_pending_deltas(
     tmp_dir: Path,
     apply_delta_zip: Callable,
     log: Optional[Callable[[str], None]],
+    progress: Optional[Any] = None,
 ) -> Tuple[int, int, List[str], Optional[SyncResult]]:
     """
     Returns (deltas_applied, bytes_written, applied_names, error_or_None).
@@ -28,6 +29,7 @@ def apply_pending_deltas(
         name = str(spec["name"])
         url = extra_urls.get(name) or f"{base}/{name}"
         part = tmp_dir / name
+        weight = int(spec.get("size_bytes") or 0) or 2_000_000
         _log(log, f"Downloading delta {name} …")
         try:
             _http_download_file(
@@ -37,6 +39,8 @@ def apply_pending_deltas(
                 expected_sha256=spec.get("sha256"),
                 log=log,
                 label=name,
+                progress=progress,
+                progress_weight=weight,
             )
         except Exception as e:
             return (

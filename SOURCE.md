@@ -58,7 +58,7 @@ data/        # offenders.db, report_pages, settings (runtime)
 | `shell.py` | Window, tabs, init |
 | `shell_sync*.py` | GitHub DB sync/publish (header progress; auto-upload at threshold) |
 | `db_publish_pending` / `db_publish_run` | Pending listing change counter + publisher upload runner |
-| `db_publish_photos` | Stable ~400 MiB path-hash photo shards; skip unchanged parts |
+| `db_publish_photos` | Stable ~50 MiB path-hash photo shards; skip unchanged parts |
 | `shell_header.py` | Path + counts (async COUNT, never blocks UI) |
 | `shell_ops.py` | Log, sash, close, tab change |
 | `process_lifecycle.py` | Hard shutdown: cancel flags, quit Tk, force-exit leftover threads |
@@ -106,8 +106,9 @@ data/        # offenders.db, report_pages, settings (runtime)
 | `cli_cmds_*` + `cli_parser` | CLI commands |
 | `paths.py` + `app_settings.py` | Install-root path resolution; portable `db_path` across machines |
 | `mugshot_ethnicity/` | still denser — split next pass |
-| `db_sync*` | GitHub public DB sync (base + deltas + selective photos) |
-| `db_publish_*` | Publisher-only: gate, row index, delta package (this machine) |
+| `db_sync*` | GitHub public DB sync (base + deltas + selective photos; overall % progress) |
+| `db_sync_progress` | Byte-weighted overall progress for sync/publish UI |
+| `db_publish_*` | Publisher-only: gate, row index, delta package, selective upload (this machine) |
 
 ---
 

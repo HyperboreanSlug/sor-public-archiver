@@ -5,7 +5,7 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, List, Optional
 
 from scraper.db_publish_gate import is_publish_allowed
 from scraper.db_publish_pending import clear_pending_listings
@@ -31,6 +31,7 @@ def run_database_publish(
     Package + upload public DB. Requires ``data/db_publish.allow``.
 
     Uses ``scripts/publish_database_release.py`` so CLI and GUI share one path.
+    Streams stdout so the header progress bar can show overall ``(N%)``.
     """
     root = Path(root) if root else project_root()
 
@@ -60,32 +61,41 @@ def run_database_publish(
     if full_base:
         cmd.append("--full-base")
 
-    _log("Publishing public database to GitHub…")
+    _log("Publishing public database to GitHub… (0%)")
+    lines: List[str] = []
     try:
-        proc = subprocess.run(
+        proc = subprocess.Popen(
             cmd,
             cwd=str(root),
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=3600 * 6,
+            bufsize=1,
         )
+        assert proc.stdout is not None
+        for raw in proc.stdout:
+            line = raw.strip()
+            if not line:
+                continue
+            lines.append(line)
+            _log(line[:240])
+        rc = proc.wait(timeout=3600 * 6)
     except subprocess.TimeoutExpired:
+        try:
+            proc.kill()
+        except Exception:
+            pass
         return PublishRunResult(False, "Publish timed out", 1)
     except Exception as e:
         return PublishRunResult(False, f"Publish failed: {e}", 1)
 
-    out = (proc.stdout or "") + ("\n" + proc.stderr if proc.stderr else "")
-    for line in out.splitlines():
-        line = line.strip()
-        if line:
-            _log(line[:240])
-
-    if proc.returncode != 0:
-        tail = out.strip().splitlines()[-3:] if out.strip() else []
-        detail = " | ".join(tail) if tail else f"exit {proc.returncode}"
-        return PublishRunResult(False, f"Publish failed: {detail}", proc.returncode)
+    if rc != 0:
+        tail = lines[-3:] if lines else []
+        detail = " | ".join(tail) if tail else f"exit {rc}"
+        return PublishRunResult(False, f"Publish failed: {detail}", rc)
 
     clear_pending_listings(root)
+    _log("Published public database to GitHub (100%)")
     return PublishRunResult(True, "Published public database to GitHub", 0)

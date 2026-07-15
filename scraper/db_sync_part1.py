@@ -33,8 +33,14 @@ def _http_download_file(
     expected_sha256: Optional[str] = None,
     log: Optional[Callable[[str], None]] = None,
     label: str = "asset",
+    progress: Optional[Any] = None,
+    progress_weight: Optional[int] = None,
 ) -> str:
-    """Stream *url* to *dest*; return lowercase hex SHA-256 of the file."""
+    """Stream *url* to *dest*; return lowercase hex SHA-256 of the file.
+
+    When *progress* (``OverallProgress``) is set, log lines include **overall**
+    completion ``(N%)`` for the header progress bar.
+    """
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_suffix(dest.suffix + ".partial")
     if tmp.exists():
@@ -46,12 +52,18 @@ def _http_download_file(
     h = hashlib.sha256()
     written = 0
     last_log = 0
+    weight = int(progress_weight or 0)
+    if progress is not None and weight > 0:
+        progress.begin_file(weight)
     with urlopen(req, timeout=timeout) as resp:
         total = None
         try:
             total = int(resp.headers.get("Content-Length") or 0) or None
         except Exception:
             total = None
+        if progress is not None and weight <= 0 and total:
+            weight = int(total)
+            progress.begin_file(weight)
         with open(tmp, "wb") as f:
             while True:
                 chunk = resp.read(1024 * 1024)
@@ -60,17 +72,24 @@ def _http_download_file(
                 f.write(chunk)
                 h.update(chunk)
                 written += len(chunk)
-                if written - last_log >= 50 * 1024 * 1024:
-                    last_log = written
+                if written - last_log < 8 * 1024 * 1024 and written != total:
+                    continue
+                last_log = written
+                if total:
+                    detail = (
+                        f"{label}: {written / (1024 ** 2):.0f}/"
+                        f"{total / (1024 ** 2):.0f} MB"
+                    )
+                else:
+                    detail = f"{label}: {written / (1024 ** 2):.0f} MB…"
+                if progress is not None:
+                    progress.update_file(written, total, detail)
+                else:
                     if total:
                         pct = 100.0 * written / total
-                        _log(
-                            log,
-                            f"  {label}: {written / (1024 ** 2):.0f}/"
-                            f"{total / (1024 ** 2):.0f} MB ({pct:.0f}%)",
-                        )
+                        _log(log, f"  {detail} ({pct:.0f}%)")
                     else:
-                        _log(log, f"  {label}: {written / (1024 ** 2):.0f} MB…")
+                        _log(log, f"  {detail}")
     digest = h.hexdigest()
     if expected_sha256 and digest.lower() != str(expected_sha256).lower():
         try:
@@ -82,6 +101,8 @@ def _http_download_file(
             f"(got {digest[:16]}… expected {str(expected_sha256)[:16]}…)"
         )
     os.replace(str(tmp), str(dest))
+    if progress is not None:
+        progress.finish_file(f"{label}: download complete")
     return digest
 
 

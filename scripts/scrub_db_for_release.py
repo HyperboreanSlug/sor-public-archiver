@@ -6,7 +6,7 @@ Outputs under ``releases/``:
   - offenders.photos.NNN.zip      (mugshots under data/report_pages/*/photos/)
   - MANIFEST.json                 (sha256, sizes, photo part list)
 
-Photo zips use path-hash shards (~400 MiB target) under GitHub's ~2 GiB limit.
+Photo zips use path-hash shards (~50 MiB target) under GitHub's ~2 GiB limit.
 Unchanged shards keep their SHA so clients re-download only dirty parts.
 Only files referenced by ``offenders.photo_path`` are included.
 """
@@ -110,7 +110,7 @@ def collect_referenced_photos(db_path: Path) -> list[Path]:
 
 
 def write_photo_parts(files: list[Path], *, force_rebuild: bool = False) -> list[dict]:
-    """Zip mugshots into stable path-hash photo parts (~400 MiB target)."""
+    """Zip mugshots into stable path-hash photo parts (~50 MiB target)."""
     from scraper.db_publish_photos import write_photo_parts as _write
 
     return _write(ROOT, files, out_dir=OUT_DIR, force_rebuild=force_rebuild)

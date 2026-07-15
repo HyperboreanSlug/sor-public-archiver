@@ -15,13 +15,14 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 # Soft target size per part (clients re-download whole parts when SHA changes).
-TARGET_PHOTO_PART_BYTES = 400 * 1024 * 1024  # 400 MiB
+TARGET_PHOTO_PART_BYTES = 50 * 1024 * 1024  # 50 MiB
 # Hard ceiling under GitHub's ~2 GiB release-asset limit.
 MAX_PHOTO_PART_BYTES = 1_800_000_000
 # Minimum number of path-hash shards (keeps cold-start request count reasonable).
 MIN_SHARDS = 8
 # Cap shards so cold-start does not open hundreds of HTTP downloads.
-MAX_SHARDS = 48
+# ~4 GiB mugshots / 50 MiB ≈ 80 parts; headroom for growth.
+MAX_SHARDS = 128
 
 PHOTO_PREFIX = "offenders.photos."
 SHARD_STATE_REL = Path("releases") / "publish_state" / "photo_shards.json"

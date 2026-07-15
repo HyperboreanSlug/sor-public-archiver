@@ -21,6 +21,7 @@ from scraper.db_sync_part2 import (
 )
 from scraper.db_sync_part3_deltas import apply_pending_deltas
 from scraper.db_sync_part3_photos import download_needed_photos
+from scraper.db_sync_progress import OverallProgress, estimate_sync_weights
 
 
 def _write_stamp(
@@ -103,7 +104,6 @@ def _count_offenders(db_path: Path) -> Optional[int]:
     except Exception:
         return None
 
-
 def run_db_sync(
     dest: Path,
     *,
@@ -168,6 +168,25 @@ def run_db_sync(
         local_photo_parts = {}
     n = 0
 
+    base_weight, delta_weights, photo_weights, extract_weight, install_weight = (
+        estimate_sync_weights(
+            need_base=need_base,
+            remote=remote,
+            pending=pending,
+            need_photos=need_photos,
+        )
+    )
+    progress = OverallProgress(
+        base_weight
+        + sum(delta_weights)
+        + sum(photo_weights)
+        + extract_weight
+        + install_weight,
+        log=log,
+    )
+    if progress.total > 0:
+        progress.report("Starting database sync", force=True)
+
     try:
         if need_base:
             zip_path = tmp_dir / "offenders.db.zip"
@@ -180,12 +199,16 @@ def run_db_sync(
                     expected_sha256=remote_sha,
                     log=log,
                     label="database zip",
+                    progress=progress,
+                    progress_weight=base_weight,
                 )
             except Exception as e:
                 return SyncResult(False, "error", f"Base download failed: {e}")
             bytes_written += zip_path.stat().st_size
             try:
                 n = _install_base_from_zip(zip_path, dest, log)
+                if install_weight:
+                    progress.advance(install_weight, "Installed base database")
             except Exception as e:
                 return SyncResult(False, "error", f"Base install failed: {e}")
             applied_deltas = []
@@ -196,6 +219,12 @@ def run_db_sync(
                     for d in remote["deltas"]
                     if isinstance(d, dict) and d.get("name")
                 ]
+                # Recompute delta weights if full base brought the whole chain
+                extra = sum(
+                    int(d.get("size_bytes") or 0) or 2_000_000 for d in pending
+                )
+                if extra:
+                    progress.add_total(extra)
         else:
             n = _count_offenders(dest) or int(stamp.get("local_record_count") or 0)
 
@@ -207,6 +236,7 @@ def run_db_sync(
             tmp_dir=tmp_dir,
             apply_delta_zip=apply_delta_zip,
             log=log,
+            progress=progress,
         )
         if derr is not None:
             return derr
@@ -225,6 +255,8 @@ def run_db_sync(
             project_root=project_root,
             local_photo_parts=local_photo_parts,
             log=log,
+            progress=progress,
+            extract_weight=extract_weight,
         )
         if err is not None:
             return err
@@ -253,7 +285,7 @@ def run_db_sync(
         if not need_base and not deltas_applied and not photos_extracted:
             msg = "Local database is up to date"
             action = "skipped"
-        _log(log, msg)
+        progress.complete(msg)
         return SyncResult(
             ok=True,
             action=action,
