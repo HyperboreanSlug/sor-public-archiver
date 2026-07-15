@@ -24,10 +24,106 @@ class MisclassifySidebarActionsMixin:
         ):
             self._fill_detail_drawer(self.misclass_detail, rec)
 
+    def _misclass_next_target_after(
+        self, record: Dict[str, Any], *, drop_current: bool
+    ) -> Optional[Dict[str, Any]]:
+        """Pick the next tree row to review after confirming *record*.
+
+        Prefer the following row; if none, the previous. When *drop_current*
+        (confirmed correct), the following row lands at the current index after
+        rebuild.
+        """
+        tree = getattr(self, "misclass_tree", None)
+        by_iid = getattr(self, "_misclass_records_by_iid", None) or {}
+        if tree is None:
+            return None
+        kids = list(tree.get_children(""))
+        if not kids:
+            return None
+
+        # Locate current row by selection or by id/url match
+        cur_iid = None
+        sel = tree.selection()
+        if sel:
+            cur_iid = sel[0]
+        if cur_iid not in by_iid:
+            cur_iid = None
+            rid = record.get("id")
+            url = str(record.get("source_url") or "")
+            for iid, rec in by_iid.items():
+                if rid is not None and rec.get("id") == rid:
+                    cur_iid = iid
+                    break
+                if url and rec.get("source_url") == url:
+                    cur_iid = iid
+                    break
+        if cur_iid is None or cur_iid not in kids:
+            return None
+        pos = kids.index(cur_iid)
+        if drop_current:
+            # Current will leave the list → old next becomes index *pos*
+            candidates = []
+            if pos + 1 < len(kids):
+                candidates.append(kids[pos + 1])
+            if pos - 1 >= 0:
+                candidates.append(kids[pos - 1])
+        else:
+            # Stay in list → advance past current
+            candidates = []
+            if pos + 1 < len(kids):
+                candidates.append(kids[pos + 1])
+            if pos - 1 >= 0:
+                candidates.append(kids[pos - 1])
+        for iid in candidates:
+            rec = by_iid.get(iid)
+            if rec:
+                return dict(rec)
+        return None
+
+    def _misclass_select_record(self, target: Optional[Dict[str, Any]]) -> None:
+        """Select tree row matching *target* and load the sidebar."""
+        tree = getattr(self, "misclass_tree", None)
+        by_iid = getattr(self, "_misclass_records_by_iid", None) or {}
+        if tree is None:
+            return
+        if not target:
+            try:
+                tree.selection_remove(*tree.selection())
+            except Exception:
+                pass
+            self._misclass_show_sidebar(None)
+            return
+
+        rid = target.get("id")
+        url = str(target.get("source_url") or "")
+        pick_iid = None
+        for iid, rec in by_iid.items():
+            if rid is not None and rec.get("id") == rid:
+                pick_iid = iid
+                break
+            if url and rec.get("source_url") == url:
+                pick_iid = iid
+                break
+        if pick_iid is None:
+            self._misclass_show_sidebar(None)
+            return
+        try:
+            tree.selection_set(pick_iid)
+            tree.focus(pick_iid)
+            tree.see(pick_iid)
+        except Exception:
+            pass
+        rec = by_iid.get(pick_iid) or target
+        self._misclass_show_sidebar(rec)
+
     def _misclass_sidebar_verdict(self, record: Dict[str, Any], verdict: str) -> None:
         label = (
             "confirmed correct" if verdict == "correct" else "confirmed incorrect"
         )
+        # Capture next target *before* tree rebuild (iids change)
+        drop = verdict == "correct"
+        next_target = self._misclass_next_target_after(record, drop_current=drop)
+
         db_path = str(getattr(self, "db_path", None) or "data/offenders.db")
         ok, err, record = apply_misclass_verdict(
             db_path=db_path,
@@ -87,10 +183,24 @@ class MisclassifySidebarActionsMixin:
             except Exception:
                 pass
 
-        if verdict == "incorrect" and getattr(self, "misclass_sidebar", None):
-            self.misclass_sidebar.show(record)
-        elif verdict == "correct" and getattr(self, "misclass_sidebar", None):
-            self.misclass_sidebar.clear("Marked correct — select another row.")
+        # Advance to next row for continuous review
+        self._misclass_select_record(next_target)
+        if next_target is None and getattr(self, "misclass_sidebar", None):
+            msg = (
+                "Marked correct — no more rows."
+                if verdict == "correct"
+                else "Marked incorrect — no more rows."
+            )
+            try:
+                self.misclass_sidebar.clear(msg)
+            except Exception:
+                pass
+        if next_target is not None and hasattr(self, "misclass_status"):
+            try:
+                cur = self.misclass_status.cget("text") or ""
+                self.misclass_status.configure(text=f"{cur} · next selected")
+            except Exception:
+                pass
 
     def _misclass_sidebar_actual_race(
         self, record: Dict[str, Any], actual: str
