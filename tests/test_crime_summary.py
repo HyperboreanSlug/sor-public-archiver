@@ -23,11 +23,16 @@ class CrimeSummaryTests(unittest.TestCase):
         self.assertIn("Sexual battery", out)
         self.assertIn("under 12", out.lower())
         self.assertIn("unclothed genitals", out.lower())
-        self.assertIn("Lewd/lascivious", out)
+        self.assertNotIn("lewd", out.lower())
+        self.assertNotIn("lascivious", out.lower())
         self.assertNotIn("Commission of", out)
         self.assertNotIn("800.04", out)
         self.assertNotIn("(", out)
         self.assertNotIn(")", out)
+        self.assertEqual(
+            out,
+            "Sexual battery · Victim under 12/force · Unclothed genitals",
+        )
 
     def test_fl_short_codes(self):
         raw = (
@@ -121,7 +126,9 @@ class CrimeSummaryTests(unittest.TestCase):
             "finds the use of force or coercion."
         )
         out = summarize_crime(raw)
-        self.assertEqual(out, "Lewd/lascivious — under 12/force")
+        self.assertEqual(out, "Victim under 12/force")
+        self.assertNotIn("lewd", out.lower())
+        self.assertNotIn("lascivious", out.lower())
 
 
 if __name__ == "__main__":

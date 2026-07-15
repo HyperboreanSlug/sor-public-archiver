@@ -12,11 +12,11 @@ CODE_MAP = [
     (_rx(r"SEX\s*BAT\s*/?\s*INJ\s*NOT\s*LIKELY"), "Sexual battery — injury not likely"),
     (
         _rx(r"LEWD\s*ASLT\s*/?\s*SEX\s*BAT\s*VCTM\s*<?\s*16"),
-        "Lewd assault / sex bat — victim under 16",
+        "Sexual battery — victim under 16",
     ),
     (
         _rx(r"LEWD,?\s*LASCIVIOUS\s*(?:CHILD\s*)?U/?16"),
-        "Lewd/lascivious — child under 16",
+        "Victim under 16",
     ),
     (_rx(r"SEXUAL\s*BATTERY\s*BY\s*ADULT\s*ON\s*ADULT"), "Sexual battery — adult on adult"),
     (_rx(r"FAIL(?:URE)?\s*TO\s*REGIST|FAIL\s*COMPLY\s*REG|RE-?REGISTR"), "Fail to register"),

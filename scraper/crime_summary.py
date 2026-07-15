@@ -47,8 +47,7 @@ def summarize_crime(text: Optional[str], *, max_len: int = 200) -> str:
         s. 800.04(4)(b); Lewd/lascivious ... under 12 ... force...;
         s. 800.04(5)(c)1; Lewd/lascivious ... unclothed genitals...;
 
-        → Sexual battery · Lewd/lascivious — under 12/force
-          · Lewd/lascivious — unclothed genitals
+        → Sexual battery · Victim under 12/force · Unclothed genitals
     """
     raw = norm(text or "")
     if not raw:
@@ -78,6 +77,9 @@ def summarize_crime(text: Optional[str], *, max_len: int = 200) -> str:
         if cleaned and is_junk_label(cleaned):
             cleaned = ""
         cleaned = strip_parentheses(cleaned).replace("(", "").replace(")", "")
+        # Never print lewd/lascivious on cards
+        cleaned = re.sub(r"(?i)\blewd/?\s*lascivious\b", " ", cleaned)
+        cleaned = re.sub(r"(?i)\blewd\b|\blascivious\b", " ", cleaned)
         cleaned = re.sub(r"\s{2,}", " ", cleaned).strip(" ·;,")
         if cleaned and len(cleaned) <= max_len:
             return cleaned
@@ -95,19 +97,17 @@ def summarize_crime(text: Optional[str], *, max_len: int = 200) -> str:
         if CITY_STATE.fullmatch(x) or COUNTY_LOC.fullmatch(x):
             continue
         polished = clean_label(strip_location_junk(x))
-        if polished and len(polished) >= 3 and not is_junk_label(polished):
-            cleaned_labels.append(polished)
+        if not polished or len(polished) < 3 or is_junk_label(polished):
+            continue
+        # Hard ban on lewd/lascivious wording in card output
+        if re.search(r"(?i)\blewd\b|\blascivious\b", polished):
+            polished = re.sub(r"(?i)\blewd/?\s*lascivious\b\s*[—\-]?\s*", "", polished)
+            polished = re.sub(r"(?i)\blewd\b|\blascivious\b", "", polished)
+            polished = re.sub(r"\s{2,}", " ", polished).strip(" ·;,|—-")
+            if not polished or len(polished) < 3:
+                continue
+        cleaned_labels.append(polished)
     labels = _dedupe_preserve(cleaned_labels)
-
-    # Prefer qualified lewd labels over bare "Lewd/lascivious"
-    lewd_qual = [
-        x
-        for x in labels
-        if x.casefold().startswith("lewd/lascivious —")
-        or x.casefold().startswith("lewd/lascivious -")
-    ]
-    if lewd_qual:
-        labels = [x for x in labels if x.casefold() != "lewd/lascivious"]
 
     has_sb_qual = any(
         x.casefold().startswith("sexual battery —")

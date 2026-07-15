@@ -90,41 +90,54 @@ def title_offense(s: str) -> str:
     return s[0].upper() + s[1:] if len(s) > 1 else s.upper()
 
 
-def summarize_lewd_clause(clause: str) -> str:
-    """Compress long FL lewd/lascivious boilerplate into a short qualifier label.
+def summarize_lewd_clause(clause: str) -> Optional[str]:
+    """Compress FL lewd/lascivious boilerplate to short card labels.
+
+    Never includes the words lewd/lascivious — only victim age and acts.
 
     Examples::
 
         … victim is under 12 or … force or coercion
-          → Lewd/lascivious — under 12/force
+          → Victim under 12/force
         … molestation involving unclothed genitals
-          → Lewd/lascivious — unclothed genitals
+          → Unclothed genitals
     """
     low = (clause or "").lower()
-    parts: List[str] = []
-    if re.search(r"under\s*12|victim\s+is\s+under\s*12|u/?12|< ?12|vctm\s*under\s*12", low):
-        parts.append("under 12")
-    elif re.search(r"less\s+than\s*16|under\s*16|12-15|u/?16|< ?16|vctm\s*<?\s*16", low):
-        parts.append("under 16")
-    if re.search(r"force|coercion", low):
-        parts.append("force")
-    if re.search(r"unclothed\s+genitals?", low):
-        parts.append("unclothed genitals")
-    if re.search(r"molest", low) and "unclothed genitals" not in parts:
-        parts.append("molestation")
-    if re.search(r"exhibition", low):
-        parts.append("exhibition")
-    if re.search(r"\bconduct\b", low) and not parts:
-        parts.append("conduct")
-    if re.search(r"battery|batt\b", low) and not parts:
-        parts.append("battery")
-    if not parts:
-        return "Lewd/lascivious"
-    if "under 12" in parts and "force" in parts:
-        return "Lewd/lascivious — under 12/force"
-    if "unclothed genitals" in parts:
-        return "Lewd/lascivious — unclothed genitals"
-    return "Lewd/lascivious — " + "/".join(parts)
+    under12 = bool(
+        re.search(
+            r"under\s*12|victim\s+is\s+under\s*12|u/?12|< ?12|vctm\s*under\s*12",
+            low,
+        )
+    )
+    under16 = bool(
+        re.search(
+            r"less\s+than\s*16|under\s*16|12-15|u/?16|< ?16|vctm\s*<?\s*16",
+            low,
+        )
+    )
+    force = bool(re.search(r"force|coercion", low))
+    unclothed = bool(re.search(r"unclothed\s+genitals?", low))
+    molest = bool(re.search(r"molest", low))
+    exhibition = bool(re.search(r"exhibition", low))
+
+    if under12 and force:
+        return "Victim under 12/force"
+    if under12:
+        return "Victim under 12"
+    if unclothed:
+        return "Unclothed genitals"
+    if molest and under16:
+        return "Molestation — victim under 16"
+    if molest:
+        return "Molestation"
+    if under16:
+        return "Victim under 16"
+    if exhibition:
+        return "Indecent exhibition"
+    if force:
+        return "Force or coercion"
+    # No useful qualifier — omit rather than print lewd/lascivious
+    return None
 
 
 def extract_from_clause(clause: str) -> Optional[str]:
