@@ -83,7 +83,12 @@ class SettingsDbSyncMixin:
             or "HyperboreanSlug/SORPA"
         ).strip()
         tag = str((self.app_settings or {}).get("db_sync_tag") or "database-latest")
-        db_path = Path(self.db_path)
+        try:
+            from scraper.paths import resolve_under_root
+
+            db_path = resolve_under_root(self.db_path)
+        except Exception:
+            db_path = Path(self.db_path)
 
         def worker():
             from scraper.db_sync import download_and_install_db

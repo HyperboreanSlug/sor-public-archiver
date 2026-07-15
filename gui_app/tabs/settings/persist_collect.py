@@ -115,10 +115,13 @@ class SettingsCollectMixin:
 
 
     def _settings_apply_to_app(self, settings: Dict[str, Any]) -> None:
-        from scraper.app_settings import normalize_settings
+        from scraper.app_settings import normalize_settings, resolved_db_path
 
         self.app_settings = normalize_settings(settings)
-        self.db_path = str(self.app_settings["db_path"])
+        try:
+            self.db_path = str(resolved_db_path(self.app_settings))
+        except Exception:
+            self.db_path = str(self.app_settings["db_path"])
         self.nsopw_db_path = self.db_path
         self._refresh_header_db_path()
         # Refresh NSOPW estimate if built

@@ -23,7 +23,13 @@ def download_and_install_db(
     the project root beside ``data/``. Writes a ``.sync.json`` stamp beside the DB.
     """
     dest = Path(dest) if dest else DEFAULT_DB_REL
-    dest = dest if dest.is_absolute() else (Path.cwd() / dest)
+    if not dest.is_absolute():
+        try:
+            from scraper.paths import resolve_under_root
+
+            dest = resolve_under_root(dest, default=str(DEFAULT_DB_REL))
+        except Exception:
+            dest = (Path.cwd() / dest).resolve()
     dest.parent.mkdir(parents=True, exist_ok=True)
     project_root = project_root_for_db(dest)
 
@@ -170,7 +176,34 @@ def download_and_install_db(
         if tmp_dest.exists():
             tmp_dest.unlink()
         shutil.copy2(extracted, tmp_dest)
-        os.replace(str(tmp_dest), str(dest))
+        try:
+            os.replace(str(tmp_dest), str(dest))
+        except OSError as e:
+            # Windows: cannot replace while another process holds the file open
+            try:
+                tmp_dest.unlink()
+            except OSError:
+                pass
+            return SyncResult(
+                False,
+                "error",
+                f"Could not install database (file in use?): {e}. "
+                "Close other SORPA windows and try again.",
+            )
+        # Drop leftover WAL/SHM so SQLite does not pair a new main file with
+        # an old journal (looks like "database failed to load" / empty / corrupt).
+        try:
+            from scraper.paths import clear_sqlite_sidecars
+
+            clear_sqlite_sidecars(dest)
+        except Exception:
+            for suffix in ("-wal", "-shm"):
+                side = dest.parent / f"{dest.name}{suffix}"
+                try:
+                    if side.is_file():
+                        side.unlink()
+                except OSError:
+                    pass
 
         stamp = {
             "remote_sha256": (remote or {}).get("sha256"),

@@ -46,16 +46,37 @@ class SchemaMixin:
                 ":memory:", check_same_thread=False, timeout=timeout_s
             )
         else:
-            self.db_path = Path(db_path) if db_path else Path(DEFAULT_DB_PATH)
+            raw = db_path if db_path else DEFAULT_DB_PATH
+            try:
+                from scraper.paths import resolve_under_root
+
+                self.db_path = resolve_under_root(raw, default=str(DEFAULT_DB_PATH))
+            except Exception:
+                p = Path(raw)
+                self.db_path = p if p.is_absolute() else (Path.cwd() / p).resolve()
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
-            self._conn = sqlite3.connect(
-                str(self.db_path), check_same_thread=False, timeout=timeout_s
-            )
+            try:
+                self._conn = sqlite3.connect(
+                    str(self.db_path), check_same_thread=False, timeout=timeout_s
+                )
+            except sqlite3.Error as e:
+                raise sqlite3.Error(
+                    f"Failed to open database at {self.db_path}: {e}"
+                ) from e
         self._conn.row_factory = sqlite3.Row
-        self._conn.execute("PRAGMA journal_mode=WAL")  # Better concurrency
-        self._conn.execute("PRAGMA foreign_keys=ON")
-        self._conn.execute(f"PRAGMA busy_timeout={int(busy_timeout_ms)}")
-        self._init_schema()
+        try:
+            self._conn.execute("PRAGMA journal_mode=WAL")  # Better concurrency
+            self._conn.execute("PRAGMA foreign_keys=ON")
+            self._conn.execute(f"PRAGMA busy_timeout={int(busy_timeout_ms)}")
+            self._init_schema()
+        except sqlite3.Error as e:
+            try:
+                self._conn.close()
+            except Exception:
+                pass
+            raise sqlite3.Error(
+                f"Failed to initialize database at {self.db_path}: {e}"
+            ) from e
 
     def _init_schema(self):
         """Create tables if they don't exist."""

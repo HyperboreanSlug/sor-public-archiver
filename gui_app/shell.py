@@ -81,10 +81,16 @@ class ArchiverApp(
         self._nsopw_runtime_lock = threading.Lock()
         self._nsopw_runtime: Dict[str, Any] = {}
 
-        from scraper.app_settings import load_settings
+        from scraper.app_settings import load_settings, resolved_db_path
 
         self.app_settings = load_settings()
-        self.db_path = str(self.app_settings.get("db_path") or "data/offenders.db")
+        # Portable relative in settings; absolute resolved path for openers.
+        try:
+            self.db_path = str(resolved_db_path(self.app_settings))
+        except Exception:
+            self.db_path = str(
+                ROOT / (self.app_settings.get("db_path") or "data/offenders.db")
+            )
         self._report_verdicts_path = ROOT / "data" / "report_verdicts.json"
         self._load_report_verdicts()
 

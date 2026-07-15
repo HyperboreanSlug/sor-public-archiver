@@ -23,7 +23,7 @@
 | Export card | `gui_app/shared/export_card*.py` |
 | Crime summary | `scraper/crime_summary*.py` (clause parse + docket strip) |
 | Detail drawer | `gui_app/shared/detail_drawer/` |
-| SQLite | `scraper/database/` |
+| SQLite | `scraper/database/` · path helpers in `scraper/paths.py` |
 | NSOPW pipeline | `scraper/nsopw/` (`builder_*.py`, `client_*.py`) |
 | Report HTTP | `scraper/reports/fetcher_*.py` |
 | Surname engine | `scraper/searcher_*.py`, `ethnic_names_*.py` |
@@ -101,6 +101,7 @@ data/        # offenders.db, report_pages, settings (runtime)
 | `searcher_*` | race helpers + core/analyze/export |
 | `ethnic_names_*` | load, signals, classify, confidence |
 | `cli_cmds_*` + `cli_parser` | CLI commands |
+| `paths.py` + `app_settings.py` | Install-root path resolution; portable `db_path` across machines |
 | `mugshot_ethnicity/` | still denser — split next pass |
 | `db_sync*` | GitHub public DB sync parts |
 

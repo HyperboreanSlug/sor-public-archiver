@@ -177,7 +177,14 @@ class ShellOpsMixin:
                 raw = self._settings_collect()
                 save_settings(raw)
                 self.app_settings = normalize_settings(raw)
-                self.db_path = str(self.app_settings.get("db_path") or self.db_path)
+                try:
+                    from scraper.app_settings import resolved_db_path
+
+                    self.db_path = str(resolved_db_path(self.app_settings))
+                except Exception:
+                    self.db_path = str(
+                        self.app_settings.get("db_path") or self.db_path
+                    )
             except Exception:
                 pass
 

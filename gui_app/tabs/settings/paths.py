@@ -60,7 +60,13 @@ class SettingsPathsMixin:
             initialfile=Path(self.settings_db_path.get() or "offenders.db").name,
         )
         if path:
-            self.settings_db_path.set(path)
+            # Store project-relative when under install root (portable across machines).
+            try:
+                from scraper.paths import portable_path_str
+
+                self.settings_db_path.set(portable_path_str(path))
+            except Exception:
+                self.settings_db_path.set(path)
 
 
     def _settings_browse_backup_dir(self) -> None:
@@ -71,7 +77,14 @@ class SettingsPathsMixin:
             initialdir=self.settings_backup_dir.get() or "data",
         )
         if path:
-            self.settings_backup_dir.set(path)
+            try:
+                from scraper.paths import portable_path_str
+
+                self.settings_backup_dir.set(
+                    portable_path_str(path, default="data/backups")
+                )
+            except Exception:
+                self.settings_backup_dir.set(path)
 
 
     def _settings_open_backup_dir(self) -> None:
@@ -97,8 +110,17 @@ class SettingsPathsMixin:
             n = len(files)
             if files:
                 latest = files[0].name
-        dbp = Path(self.settings_db_path.get() or self.db_path)
-        db_info = f"{dbp} ({dbp.stat().st_size // 1024} KB)" if dbp.is_file() else f"{dbp} (not created yet)"
+        try:
+            from scraper.paths import resolve_under_root
+
+            dbp = resolve_under_root(self.settings_db_path.get() or self.db_path)
+        except Exception:
+            dbp = Path(self.settings_db_path.get() or self.db_path)
+        db_info = (
+            f"{dbp} ({dbp.stat().st_size // 1024} KB)"
+            if dbp.is_file()
+            else f"{dbp} (not created yet)"
+        )
         if hasattr(self, "settings_backup_status"):
             self.settings_backup_status.configure(
                 text=f"DB: {db_info}  ·  {n} backup(s)  ·  latest: {latest}"
@@ -132,10 +154,21 @@ class SettingsPathsMixin:
     ):
         from scraper.database import backup_database_file
 
-        src = Path(db_path or self.db_path)
+        try:
+            from scraper.paths import resolve_under_root
+
+            src = resolve_under_root(db_path or self.db_path)
+            bdir = resolve_under_root(
+                backup_dir or self.app_settings.get("backup_dir") or "data/backups",
+                default="data/backups",
+            )
+        except Exception:
+            src = Path(db_path or self.db_path)
+            bdir = Path(
+                backup_dir or self.app_settings.get("backup_dir") or "data/backups"
+            )
         if not src.exists():
             raise FileNotFoundError(f"Database not found: {src}")
-        bdir = Path(backup_dir or self.app_settings.get("backup_dir") or "data/backups")
         try:
             keep = int(
                 max_backups

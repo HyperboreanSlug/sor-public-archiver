@@ -1,7 +1,8 @@
 """
 Persistent app settings for the SOR Public Archiver GUI.
 
-Stored as JSON under data/app_settings.json (next to the default DB).
+Stored as JSON under ``<install>/data/app_settings.json`` (next to the default DB).
+Paths are install-root-relative so another machine or folder move still loads.
 """
 
 from __future__ import annotations
@@ -11,11 +12,20 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-DEFAULT_SETTINGS_PATH = Path("data/app_settings.json")
+from scraper.paths import (
+    DEFAULT_DB_REL,
+    DEFAULT_SETTINGS_REL,
+    project_root,
+    sanitize_db_path,
+    settings_path,
+)
+
+# Backward-compatible name (relative); load/save resolve against install root.
+DEFAULT_SETTINGS_PATH = Path(DEFAULT_SETTINGS_REL)
 
 DEFAULTS: Dict[str, Any] = {
     # Database
-    "db_path": "data/offenders.db",
+    "db_path": DEFAULT_DB_REL,
     # Backups (optional — off by default; use Settings → Backup now or enable on-close)
     "backup_on_close": False,
     "backup_dir": "data/backups",
@@ -51,7 +61,12 @@ DEFAULTS: Dict[str, Any] = {
 
 def load_settings(path: Optional[Path] = None) -> Dict[str, Any]:
     """Load settings from disk, merging with defaults."""
-    p = Path(path) if path else DEFAULT_SETTINGS_PATH
+    p = Path(path) if path else settings_path()
+    # Legacy: relative path next to old cwd-based installs
+    if not p.is_file() and path is None:
+        legacy = Path.cwd() / DEFAULT_SETTINGS_REL
+        if legacy.is_file() and legacy.resolve() != p.resolve():
+            p = legacy
     settings = deepcopy(DEFAULTS)
     if p.is_file():
         try:
@@ -67,10 +82,9 @@ def load_settings(path: Optional[Path] = None) -> Dict[str, Any]:
 
 def save_settings(settings: Dict[str, Any], path: Optional[Path] = None) -> Path:
     """Write settings to disk (only known keys). Returns path written."""
-    p = Path(path) if path else DEFAULT_SETTINGS_PATH
+    p = Path(path) if path else settings_path()
     p.parent.mkdir(parents=True, exist_ok=True)
     clean = normalize_settings({**DEFAULTS, **(settings or {})})
-    # Only persist known keys
     out = {k: clean[k] for k in DEFAULTS}
     p.write_text(json.dumps(out, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     return p
@@ -80,10 +94,32 @@ def normalize_settings(s: Dict[str, Any]) -> Dict[str, Any]:
     out = deepcopy(DEFAULTS)
     out.update({k: s[k] for k in DEFAULTS if k in s})
 
-    out["db_path"] = str(out.get("db_path") or DEFAULTS["db_path"]).strip() or DEFAULTS["db_path"]
-    out["backup_dir"] = (
-        str(out.get("backup_dir") or DEFAULTS["backup_dir"]).strip() or DEFAULTS["backup_dir"]
+    root = project_root()
+    out["db_path"] = sanitize_db_path(
+        out.get("db_path") or DEFAULTS["db_path"],
+        default=DEFAULTS["db_path"],
+        root=root,
     )
+    # backup_dir: portable under root; drop dead foreign absolutes
+    bdir_raw = str(out.get("backup_dir") or DEFAULTS["backup_dir"]).strip() or DEFAULTS[
+        "backup_dir"
+    ]
+    bdir_p = Path(bdir_raw).expanduser()
+    if bdir_p.is_absolute():
+        try:
+            br = bdir_p.resolve()
+            try:
+                out["backup_dir"] = br.relative_to(root.resolve()).as_posix()
+            except ValueError:
+                if br.is_dir() or br.parent.is_dir():
+                    out["backup_dir"] = str(br)
+                else:
+                    out["backup_dir"] = DEFAULTS["backup_dir"]
+        except OSError:
+            out["backup_dir"] = DEFAULTS["backup_dir"]
+    else:
+        out["backup_dir"] = Path(bdir_raw).as_posix()
+
     out["backup_on_close"] = bool(out.get("backup_on_close", False))
     out["nsopw_compact_prefixes"] = bool(out.get("nsopw_compact_prefixes", True))
     out["deepface_auto_setup"] = bool(out.get("deepface_auto_setup", True))
@@ -126,3 +162,11 @@ def normalize_settings(s: Dict[str, Any]) -> Dict[str, Any]:
     out["nsopw_min_combined_len"] = max(3, min(mcl, 10))
 
     return out
+
+
+def resolved_db_path(settings: Optional[Dict[str, Any]] = None) -> Path:
+    """Absolute SQLite path for the active settings (install-root anchored)."""
+    from scraper.paths import resolve_under_root
+
+    s = settings if settings is not None else load_settings()
+    return resolve_under_root(s.get("db_path") or DEFAULTS["db_path"])

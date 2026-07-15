@@ -28,12 +28,14 @@ class ShellSyncMixin:
         except Exception:
             sett = dict(self.app_settings or {})
 
-        db_path = Path(self.db_path)
         try:
+            from scraper.paths import resolve_under_root
+
+            db_path = resolve_under_root(self.db_path)
+        except Exception:
+            db_path = Path(self.db_path)
             if not db_path.is_absolute():
                 db_path = (Path.cwd() / db_path).resolve()
-        except Exception:
-            pass
 
         if should_prompt_first_run(sett, db_path):
             try:
@@ -72,7 +74,12 @@ class ShellSyncMixin:
         sett = getattr(self, "app_settings", {}) or {}
         repo = str(sett.get("db_sync_repo") or "HyperboreanSlug/SORPA")
         tag = str(sett.get("db_sync_tag") or "database-latest")
-        db_path = Path(self.db_path)
+        try:
+            from scraper.paths import resolve_under_root
+
+            db_path = resolve_under_root(self.db_path)
+        except Exception:
+            db_path = Path(self.db_path)
 
         def worker() -> None:
             from scraper.db_sync import download_and_install_db

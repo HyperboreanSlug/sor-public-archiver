@@ -38,19 +38,21 @@ class ShellHeaderMixin:
     def _refresh_header_db_path(self) -> None:
         """Show active SQLite path; count runs via background job queue."""
         try:
-            p = Path(self.db_path)
-            if not p.is_absolute():
-                p = (Path.cwd() / p).resolve()
-            else:
-                p = p.resolve()
+            from scraper.paths import project_root, resolve_under_root
+
+            p = resolve_under_root(
+                getattr(self, "db_path", None) or "data/offenders.db"
+            )
+            root = project_root()
             try:
-                show = str(p.relative_to(Path.cwd()))
+                show = str(p.relative_to(root))
             except ValueError:
                 show = str(p)
             if len(show) > 48:
                 show = "…" + show[-46:]
         except Exception:
             show = str(getattr(self, "db_path", "data/offenders.db"))
+            p = Path(show)
 
         cached = getattr(self, "_header_record_count", None)
         n = f"  ·  {cached:,} records" if cached is not None else ""
@@ -63,7 +65,16 @@ class ShellHeaderMixin:
         if getattr(self, "_header_count_busy", False):
             return
         self._header_count_busy = True
-        db_path = str(getattr(self, "db_path", None) or "data/offenders.db")
+        try:
+            from scraper.paths import resolve_under_root
+
+            db_path = str(
+                resolve_under_root(
+                    getattr(self, "db_path", None) or "data/offenders.db"
+                )
+            )
+        except Exception:
+            db_path = str(getattr(self, "db_path", None) or "data/offenders.db")
         path_show = show
 
         def work():
@@ -84,6 +95,16 @@ class ShellHeaderMixin:
             c = self._header_record_count
             if c is not None:
                 n2 = f"  ·  {c:,} records"
+            elif error is not None:
+                err = str(error).strip().replace("\n", " ")
+                if len(err) > 40:
+                    err = err[:37] + "…"
+                n2 = f"  ·  load failed ({err})" if err else "  ·  load failed"
+                try:
+                    if hasattr(self, "log_queue"):
+                        self.log_queue.put(f"Database load error: {error}")
+                except Exception:
+                    pass
             if hasattr(self, "header_db_label"):
                 try:
                     self.header_db_label.configure(text=f"DB: {path_show}{n2}")
@@ -101,12 +122,17 @@ class ShellHeaderMixin:
                 apply(result=None, error=e)
 
     def _open_data_folder_header(self) -> None:
-        path = Path("data")
-        path.mkdir(parents=True, exist_ok=True)
         try:
-            dbp = Path(self.db_path)
+            from scraper.paths import project_root, resolve_under_root
+
+            path = project_root() / "data"
+            path.mkdir(parents=True, exist_ok=True)
+            dbp = resolve_under_root(
+                getattr(self, "db_path", None) or "data/offenders.db"
+            )
             if dbp.parent.is_dir():
                 path = dbp.parent
         except Exception:
-            pass
+            path = Path("data")
+            path.mkdir(parents=True, exist_ok=True)
         self._open_path(path)
