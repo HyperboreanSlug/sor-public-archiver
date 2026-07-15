@@ -744,7 +744,10 @@ class EthnicAndSearchTests(unittest.TestCase):
         try:
             s.db.insert_offenders_batch([
                 # White + Hispanic surname, no ethnicity field → mismatch
-                {"first_name": "Juan", "last_name": "Garcia", "race": "WHITE", "state": "FL"},
+                {
+                    "first_name": "Juan", "last_name": "Garcia", "race": "WHITE",
+                    "state": "FL", "eye_color": "BROWN", "hair_color": "BROWN",
+                },
                 # White + ethnicity Hispanic → OK
                 {
                     "first_name": "Sofia", "last_name": "Lopez", "race": "WHITE",
@@ -762,6 +765,15 @@ class EthnicAndSearchTests(unittest.TestCase):
             self.assertIn("Martinez", hisp_names)
             self.assertNotIn("Lopez", hisp_names)  # White + ethnicity Hispanic
             self.assertNotIn("Rodriguez", hisp_names)  # race Hispanic
+            garcia = next(m for m in h if m.record["last_name"] == "Garcia")
+            self.assertTrue(
+                any("appearance:" in n for n in (garcia.matching_names or [])),
+                garcia.matching_names,
+            )
+            self.assertIn(
+                "brown eyes + brown hair",
+                garcia.record.get("_appearance_note") or "",
+            )
             martinez = next(m for m in h if m.record["last_name"] == "Martinez")
             self.assertEqual(martinez.expected_race, "Black")
             a = s.find_asian_misclassifications()
@@ -776,6 +788,30 @@ class EthnicAndSearchTests(unittest.TestCase):
             self.assertEqual(names, {"Garcia", "Lopez", "Rodriguez", "Martinez"})
         finally:
             s.close()
+
+    def test_appearance_eye_hair_signals(self):
+        from scraper.searcher_appearance import (
+            appearance_adjustment,
+            apply_appearance_signals,
+            normalize_color,
+        )
+
+        self.assertEqual(normalize_color("BRO", kind="eye"), "brown")
+        self.assertEqual(normalize_color("BLK", kind="hair"), "black")
+        d_up, tags = appearance_adjustment("hispanic", "WHITE", "brown", "brown")
+        self.assertGreater(d_up, 0)
+        self.assertTrue(any("brown" in t for t in tags))
+        d_down, _ = appearance_adjustment("indian", "WHITE", "blue", "blond")
+        self.assertLess(d_down, 0)
+        conf, names, _ = apply_appearance_signals(
+            {"race": "White", "eye_color": "Brown", "hair_color": "Black"},
+            "Indian (high confidence)",
+            0.72,
+            ["Patel"],
+            family="indian",
+        )
+        self.assertGreater(conf, 0.72)
+        self.assertTrue(any("appearance:" in n for n in names))
 
     def test_hispanic_white_needs_ethnicity_field(self):
         """White alone is a mismatch; White + ethnicity Hispanic is OK."""

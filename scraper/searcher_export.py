@@ -44,7 +44,9 @@ class SearcherExportMixin:
 
         headers = [
             "first_name", "middle_name", "last_name", "full_name", "race",
-            "likely_ethnicity", "confidence", "matching_names", "state", "county",
+            "likely_ethnicity", "confidence", "matching_names",
+            "eye_color", "hair_color", "appearance",
+            "state", "county",
             "address", "age", "gender", "offense_type",
         ]
 
@@ -53,21 +55,25 @@ class SearcherExportMixin:
             writer.writeheader()
 
             for mc in misclassifications:
+                rec = mc.record or {}
                 row = {
-                    "first_name": mc.record.get("first_name"),
-                    "middle_name": mc.record.get("middle_name") or _middle_name_from_record(mc.record or {}),
-                    "last_name": mc.record.get("last_name"),
-                    "full_name": mc.record.get("full_name"),
+                    "first_name": rec.get("first_name"),
+                    "middle_name": rec.get("middle_name") or _middle_name_from_record(rec),
+                    "last_name": rec.get("last_name"),
+                    "full_name": rec.get("full_name"),
                     "race": mc.expected_race,
                     "likely_ethnicity": mc.likely_ethnicity,
                     "confidence": round(mc.confidence, 3),
                     "matching_names": "; ".join(mc.matching_names),
-                    "state": mc.record.get("state"),
-                    "county": mc.record.get("county"),
-                    "address": mc.record.get("address"),
-                    "age": mc.record.get("age"),
-                    "gender": mc.record.get("gender"),
-                    "offense_type": mc.record.get("offense_type"),
+                    "eye_color": rec.get("eye_color") or rec.get("eyes") or "",
+                    "hair_color": rec.get("hair_color") or rec.get("hair") or "",
+                    "appearance": rec.get("_appearance_note") or "",
+                    "state": rec.get("state"),
+                    "county": rec.get("county"),
+                    "address": rec.get("address"),
+                    "age": rec.get("age"),
+                    "gender": rec.get("gender"),
+                    "offense_type": rec.get("offense_type"),
                 }
                 writer.writerow(row)
 

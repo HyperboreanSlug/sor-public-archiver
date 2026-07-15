@@ -27,6 +27,7 @@
 | NSOPW pipeline | `scraper/nsopw/` (`builder_*.py`, `client_*.py`) |
 | Report HTTP | `scraper/reports/fetcher_*.py` |
 | Surname engine | `scraper/searcher_*.py`, `ethnic_names_*.py` (Indian/MENA = South Asian + Arabic lists) |
+| Appearance signals | `scraper/searcher_appearance.py` — eye/hair (brown eyes + brown hair, etc.) for misclass conf |
 | Misclassify confirm | `gui_app/shared/record_sidebar*.py`, `verdict_persist.py`, `tabs/browse/misclassify/` |
 | CLI | `scraper/cli.py` → `cli_parser.py` + `cli_cmds_*.py` |
 
@@ -101,7 +102,7 @@ data/        # offenders.db, report_pages, settings (runtime)
 | `database/` | schema, inserts, queries, `dedupe_*`, `csv_*`, sources, deepface_scans |
 | `nsopw/` | `client_*`, `builder_*` (requeue_inc + requeue_work), search_plan, parallel (same-jurisdiction concurrency) |
 | `reports/` | `fetcher_*`, util, photos, parse_html |
-| `searcher_*` | race helpers + core/analyze/export |
+| `searcher_*` | race helpers + core/analyze/export + appearance (eye/hair) |
 | `ethnic_names_*` | load, signals, classify, confidence |
 | `cli_cmds_*` + `cli_parser` | CLI commands |
 | `paths.py` + `app_settings.py` | Install-root path resolution; portable `db_path` across machines |

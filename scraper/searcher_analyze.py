@@ -97,6 +97,19 @@ class SearcherAnalyzeMixin:
             ):
                 continue
 
+            # Eye/hair (e.g. brown eyes + brown hair) corroborates or weakens
+            from scraper.searcher_appearance import apply_appearance_signals
+
+            confidence, matching_names, _meta = apply_appearance_signals(
+                record,
+                likely_eth,
+                confidence,
+                matching_names,
+                family=family,
+            )
+            if confidence < min_confidence:
+                continue
+
             misclassifications.append(Misclassification(
                 record=record,
                 # Canonical display (White/WHITE → White) for stats + table
