@@ -84,9 +84,10 @@ def load_state_record_stats(db_path: str) -> Dict[str, Tuple[int, int]]:
 def format_state_option(
     code: str, *, scrape: str, enriched: int, total: int
 ) -> str:
+    pct = (100.0 * enriched / total) if total else 0.0
     return (
         f"{code} · scrape:{scrape} · "
-        f"{enriched:,} enriched / {total:,} total"
+        f"{enriched:,} enriched ({pct:.1f}%) / {total:,} total"
     )
 
 
@@ -115,8 +116,10 @@ def build_state_dropdown_values(
 
     total_enr = sum(e for e, _ in stats.values())
     total_n = sum(t for _, t in stats.values())
+    all_pct = (100.0 * total_enr / total_n) if total_n else 0.0
     all_label = (
-        f"All · scrape:mixed · {total_enr:,} enriched / {total_n:,} total"
+        f"All · scrape:mixed · "
+        f"{total_enr:,} enriched ({all_pct:.1f}%) / {total_n:,} total"
     )
     values = [all_label]
     mapping: Dict[str, Optional[List[str]]] = {all_label: None}

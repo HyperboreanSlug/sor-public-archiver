@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 from .build import NsopwBuildMixin
+from .enrich_build import NsopwEnrichBuildMixin
+from .enrich_list import NsopwEnrichListMixin
+from .enrich_run import NsopwEnrichRunMixin
 from .options_ethnicity import NsopwEthnicityMixin
 from .options_runtime import NsopwRuntimeMixin
 from .options_state import NsopwStateMixin
@@ -15,6 +18,9 @@ from .tree_rows import NsopwTreeRowsMixin
 
 class NsopwTabMixin(
     NsopwBuildMixin,
+    NsopwEnrichBuildMixin,
+    NsopwEnrichListMixin,
+    NsopwEnrichRunMixin,
     NsopwEthnicityMixin,
     NsopwStateMixin,
     NsopwRuntimeMixin,
@@ -25,7 +31,7 @@ class NsopwTabMixin(
     NsopwCancelMixin,
     NsopwStartMixin,
 ):
-    """NSOPW ethnic-surname harvest UI."""
+    """NSOPW Search harvest + Enrich (state-scoped report backfill)."""
 
 
 __all__ = ["NsopwTabMixin"]

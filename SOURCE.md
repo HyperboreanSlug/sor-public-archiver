@@ -80,7 +80,7 @@ data/        # offenders.db, report_pages, settings (runtime)
 | `tabs/browse/reports/` | verdict_*, filter_*, source_*, cards_*, grid_*, export_csv/html/grid |
 | `shared/export_card_grid.py` | Watermarked 1×2 / 2×2 card collages (mapa seal + @DoDeportations) |
 | `tabs/browse/deepface_reports/` | build, data_*, photo_*, actions_*, review_* |
-| `tabs/nsopw/` | build, options_* (incl. state filter), state_stats, progress_*, tree_*, run_* |
+| `tabs/nsopw/` | build (Search/Enrich tabs), enrich_*, options_* (state on Enrich), state_stats, progress_*, tree_*, run_* |
 | `tabs/deepface/` | scan_*, setup_* |
 | `tabs/settings/` | build, captcha, cookies_*, paths, persist_* |
 | `tabs/scrape/` | build, select, run, import_csv, dedupe (under Settings → Scrape) |

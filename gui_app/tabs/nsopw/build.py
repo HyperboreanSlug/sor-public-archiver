@@ -51,11 +51,36 @@ from gui_app.widgets import (
 
 class NsopwBuildMixin:
     def _build_nsopw(self, tab):
-        """NSOPW tab: options column (left) + full-height live inserts (right)."""
+        """NSOPW host: Search (surname harvest) + Enrich (state-scoped backfill)."""
+        tab.configure(fg_color=C["surface"])
+        self.nsopw_db_path = self.db_path
+        self.nsopw_html_dir = "data/report_pages"
+        self._nsopw_insert_count = 0
+
+        host = ctk.CTkTabview(
+            tab,
+            fg_color=C["surface"],
+            segmented_button_fg_color=C["elevated"],
+            segmented_button_selected_color=C["accent_dim"],
+            segmented_button_selected_hover_color=C["border"],
+            segmented_button_unselected_color=C["elevated"],
+            segmented_button_unselected_hover_color=C["border"],
+            text_color=C["text"],
+        )
+        host.pack(fill="both", expand=True, padx=4, pady=4)
+        self._nsopw_host_tabs = host
+        search_tab = host.add("Search")
+        enrich_tab = host.add("Enrich")
+        self._build_nsopw_search(search_tab)
+        if hasattr(self, "_build_nsopw_enrich"):
+            self._build_nsopw_enrich(enrich_tab)
+
+    def _build_nsopw_search(self, tab):
+        """Search sub-tab: options column (left) + live inserts (right)."""
         tab.configure(fg_color=C["surface"])
         # Horizontal split: narrow options · wide results (uses empty width)
         split = _hpaned(tab)
-        split.pack(fill="both", expand=True, padx=4, pady=4)
+        split.pack(fill="both", expand=True, padx=2, pady=2)
         self._nsopw_split = split
 
         opts_host = ctk.CTkFrame(split, fg_color=C["surface"], corner_radius=0)
@@ -66,9 +91,6 @@ class NsopwBuildMixin:
 
         # First-name letters: default full A–Z; Indian abbreviated is optional
         self.nsopw_first_mode_var = ctk.StringVar(value="initials")
-        self.nsopw_db_path = self.db_path
-        self.nsopw_html_dir = "data/report_pages"
-        self._nsopw_insert_count = 0
 
         # StringVars (blank max = unlimited)
         self.nsopw_max_searches = ctk.StringVar(value="40")
@@ -236,9 +258,6 @@ class NsopwBuildMixin:
         )
         self.nsopw_surname_count_label.pack(fill="x", pady=(6, 0))
         self._nsopw_refresh_subcategories()
-        # State filter: every jurisdiction + scrape access + enriched/total
-        if hasattr(self, "_nsopw_build_state_filter"):
-            self._nsopw_build_state_filter(scope)
 
         # Limits & delays — 2×2 grid
         limits = _opt_card("Limits & delays")
