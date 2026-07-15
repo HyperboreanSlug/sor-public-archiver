@@ -27,6 +27,7 @@
 | NSOPW pipeline | `scraper/nsopw/` (`builder_*.py`, `client_*.py`) |
 | Report HTTP | `scraper/reports/fetcher_*.py` |
 | Surname engine | `scraper/searcher_*.py`, `ethnic_names_*.py` (Indian/MENA = South Asian + Arabic lists) |
+| Misclassify confirm | `gui_app/shared/record_sidebar*.py`, `verdict_persist.py`, `tabs/browse/misclassify/` |
 | CLI | `scraper/cli.py` → `cli_parser.py` + `cli_cmds_*.py` |
 
 ---

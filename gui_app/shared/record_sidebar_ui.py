@@ -7,8 +7,12 @@ import customtkinter as ctk
 
 from gui_app.theme import C, FONT_BOLD, FONT_SM
 
+# Default frame width — SORPA keeps a wider pane than MAPA's tight drawer.
+SIDEBAR_FRAME_WIDTH = 420
+
 ACTUAL_RACE_OPTIONS = [
     "Hispanic",
+    "Indian/MENA",
     "Indian",
     "Asian",
     "African American",
@@ -58,7 +62,9 @@ def first_field(record: dict, keys: tuple[str, ...]) -> str:
 
 def build_sidebar_widgets(sidebar: Any, parent: Any, photo_size: tuple[int, int]) -> None:
     """Attach widget attributes onto *sidebar* (RecordSidebar instance)."""
-    sidebar.frame = ctk.CTkFrame(parent, fg_color=C["panel"], width=380, corner_radius=10)
+    sidebar.frame = ctk.CTkFrame(
+        parent, fg_color=C["panel"], width=SIDEBAR_FRAME_WIDTH, corner_radius=10
+    )
     sidebar.frame.grid_propagate(False)
     sidebar.frame.grid_columnconfigure(0, weight=1)
 
@@ -66,8 +72,15 @@ def build_sidebar_widgets(sidebar: Any, parent: Any, photo_size: tuple[int, int]
         sidebar.frame, text="Details", font=FONT_BOLD, text_color=C["text"]
     ).grid(row=0, column=0, sticky="w", padx=12, pady=(10, 2))
 
+    # Host keeps a stable colored box; mugshot is centered and never larger than it.
+    sidebar.photo_host = ctk.CTkFrame(
+        sidebar.frame, fg_color=C["elevated"], corner_radius=8
+    )
+    sidebar.photo_host.grid(row=1, column=0, padx=10, pady=(2, 6), sticky="nsew")
+    sidebar.photo_host.grid_columnconfigure(0, weight=1)
+    sidebar.photo_host.grid_rowconfigure(0, weight=1)
     sidebar.photo = ctk.CTkLabel(
-        sidebar.frame,
+        sidebar.photo_host,
         text="Select a record",
         text_color=C["muted"],
         width=photo_size[0],
@@ -75,7 +88,7 @@ def build_sidebar_widgets(sidebar: Any, parent: Any, photo_size: tuple[int, int]
         fg_color=C["elevated"],
         corner_radius=8,
     )
-    sidebar.photo.grid(row=1, column=0, padx=10, pady=(2, 6), sticky="nsew")
+    sidebar.photo.grid(row=0, column=0, sticky="")
 
     btn_row = ctk.CTkFrame(sidebar.frame, fg_color="transparent")
     btn_row.grid(row=2, column=0, sticky="ew", padx=12, pady=(0, 4))
@@ -143,7 +156,7 @@ def build_sidebar_widgets(sidebar: Any, parent: Any, photo_size: tuple[int, int]
         wrap="word", activate_scrollbars=True, height=140,
     )
     sidebar.details.grid(row=8, column=0, sticky="nsew", padx=12, pady=(0, 10))
-    sidebar.details.insert("end", "Select a row to preview mugshot and booking fields.")
+    sidebar.details.insert("end", "Select a row to preview mugshot and fields.")
     sidebar.details.configure(state="disabled")
 
     sidebar.frame.grid_rowconfigure(1, weight=3)

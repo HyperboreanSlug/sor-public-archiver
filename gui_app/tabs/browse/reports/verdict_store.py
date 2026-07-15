@@ -165,12 +165,26 @@ class ReportsVerdictStoreMixin:
 
 
     def _verdict_for_mc(self, mc) -> str:
-        """Resolve verdict; prefer non-unreviewed if any alias key has a decision."""
+        """Resolve verdict; prefer non-unreviewed if any alias key has a decision.
+
+        Also reads ``ethnicity_review`` from offenders.flags when set via the
+        Misclassify sidebar confirm buttons.
+        """
+        try:
+            from scraper.ethnicity_review import ethnicity_review_verdict
+
+            flag_v = ethnicity_review_verdict(getattr(mc, "record", None))
+            if flag_v in ("correct", "incorrect"):
+                return flag_v
+        except Exception:
+            pass
         found = "unreviewed"
         for k in self._report_verdict_lookup_keys(mc):
             v = (self._report_verdicts.get(k) or "").strip()
             if v in ("confirmed", "correct", "skip"):
                 return v
+            if v == "incorrect":
+                return "incorrect"
             if v == "unreviewed":
                 found = "unreviewed"
         return found

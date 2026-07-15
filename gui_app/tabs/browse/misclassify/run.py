@@ -1,21 +1,25 @@
-"""MisclassifyRunMixin — analysis off the UI thread."""
+"""MisclassifyRunMixin — analysis off the UI thread + row select."""
 from __future__ import annotations
 
 from tkinter import filedialog, messagebox
-from typing import Callable, Optional
+from typing import Any, Callable, Dict, Optional
 
 
 class MisclassifyRunMixin:
     def _misclass_on_select(self, _event=None):
-        """Show photo + detail for the selected mismatch row."""
+        """Show photo + sidebar for the selected mismatch row."""
         sel = self.misclass_tree.selection()
         if not sel:
+            if getattr(self, "misclass_sidebar", None) is not None:
+                self.misclass_sidebar.clear()
             return
         rec = self._misclass_records_by_iid.get(sel[0])
         if not rec:
             return
         iid = sel[0]
-        if rec.get("id") and not rec.get("photo_path"):
+        if rec.get("id") and (
+            not rec.get("photo_path") or rec.get("flags") in (None, "")
+        ):
             db_path = str(getattr(self, "db_path", None) or "data/offenders.db")
             oid = int(rec["id"])
             tags = {
@@ -44,14 +48,12 @@ class MisclassifyRunMixin:
                     result.update(tags)
                     self._misclass_records_by_iid[iid] = result
                     row = result
-                if getattr(self, "misclass_detail", None) is not None:
-                    self._fill_detail_drawer(self.misclass_detail, row)
+                self._misclass_show_sidebar(row)
 
             if hasattr(self, "run_bg"):
                 self.run_bg(work, done, name="misclass-row")
                 return
-        if getattr(self, "misclass_detail", None) is not None:
-            self._fill_detail_drawer(self.misclass_detail, rec)
+        self._misclass_show_sidebar(rec)
 
     def _run_misclassification(self, on_done: Optional[Callable[[], None]] = None):
         """Analyze ethnicities off the UI thread; optional callback when painted."""

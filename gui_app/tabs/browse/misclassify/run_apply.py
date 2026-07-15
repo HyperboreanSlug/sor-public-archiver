@@ -29,7 +29,12 @@ class MisclassifyApplyMixin:
             tree_results = stats_results
         n_filtered = len(stats_results) - len(tree_results)
 
-        if getattr(self, "misclass_detail", None) is not None:
+        if getattr(self, "misclass_sidebar", None) is not None:
+            try:
+                self.misclass_sidebar.clear("Select a row for photo and review.")
+            except Exception:
+                pass
+        elif getattr(self, "misclass_detail", None) is not None:
             try:
                 self._fill_detail_drawer(self.misclass_detail, None)
             except Exception:

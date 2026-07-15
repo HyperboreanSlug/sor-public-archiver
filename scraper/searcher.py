@@ -1,6 +1,9 @@
 """Sex offender search + misclassification (composed)."""
 from __future__ import annotations
 
+from typing import Optional
+
+from scraper.ethnicity_review import ethnicity_review_verdict  # noqa: F401
 from scraper.searcher_race import (  # noqa: F401
     SearchResults,
     Misclassification,
@@ -35,4 +38,14 @@ class SexOffenderSearcher(
 def get_searcher(db_path: Optional[str] = None) -> SexOffenderSearcher:
     """Get a searcher instance."""
     return SexOffenderSearcher(db_path=db_path)
+
+
+__all__ = [
+    "SexOffenderSearcher",
+    "get_searcher",
+    "ethnicity_review_verdict",
+    "format_race_label",
+    "Misclassification",
+    "SearchResults",
+]
 

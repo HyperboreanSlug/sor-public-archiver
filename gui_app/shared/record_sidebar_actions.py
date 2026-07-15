@@ -20,7 +20,6 @@ class RecordSidebarActionsMixin:
         if url:
             webbrowser.open(url)
             return
-        # Fall back to archived jurisdiction report HTML
         html = str(rec.get("report_html_path") or rec.get("html_path") or "").strip()
         if html:
             from pathlib import Path
@@ -82,6 +81,26 @@ class RecordSidebarActionsMixin:
             value = first_field(record, keys)
             if label == "Race" and value != "—":
                 value = format_race_label(value)
+            if label == "Crime" and value != "—":
+                try:
+                    from scraper.crime_summary import summarize_crime
+
+                    short = summarize_crime(value, max_len=200)
+                    if short:
+                        value = short
+                except Exception:
+                    pass
+            if label == "Likely ethnicity" and value == "—":
+                alt = record.get("_misclass_likely")
+                if alt:
+                    value = str(alt)
+            if label == "Confidence" and value == "—":
+                alt = record.get("_misclass_conf")
+                if alt is not None:
+                    try:
+                        value = f"{float(alt):.3f}"
+                    except (TypeError, ValueError):
+                        value = str(alt)
             if value != "—":
                 lines.append(f"{label}: {value}")
         err = record.get("scrape_error")
@@ -94,13 +113,22 @@ class RecordSidebarActionsMixin:
 
     def _set_photo(self, image: Any, text: str = "") -> None:
         self._image_ref = image
+        try:
+            w, h = self.photo_size
+            self.photo.configure(width=int(w), height=int(h))
+        except Exception:
+            pass
         if image is None:
             self.photo.configure(image="", text=text or "No photo")
         else:
             self.photo.configure(image=image, text="")
 
+    def _store_photo_source(self, pil_image: Any) -> None:
+        """Keep full-res RGB source so resize can re-fit without re-download."""
+        self._pil_source = pil_image
+
     def _load_photo(self, record: Dict[str, Any], token: int) -> None:
-        load_sidebar_photo(
+        kwargs = dict(
             record=record,
             token=token,
             photo_size=self.photo_size,
@@ -108,3 +136,26 @@ class RecordSidebarActionsMixin:
             schedule_fn=self._schedule,
             set_photo_fn=self._set_photo,
         )
+        try:
+            load_sidebar_photo(**kwargs, store_source_fn=self._store_photo_source)
+        except TypeError:
+            load_sidebar_photo(**kwargs)
+
+    def _refit_current_photo(self) -> None:
+        """Re-render the current mugshot into the latest photo_size box."""
+        try:
+            from gui_app.shared.record_sidebar_photo import render_fitted_ctk_image
+        except ImportError:
+            if self._record:
+                self._load_photo(self._record, self._load_token)
+            return
+        src = getattr(self, "_pil_source", None)
+        if src is None:
+            if self._record:
+                self._load_photo(self._record, self._load_token)
+            return
+        image = render_fitted_ctk_image(src, self.photo_size)
+        if image is not None:
+            self._set_photo(image)
+        elif self._record:
+            self._load_photo(self._record, self._load_token)

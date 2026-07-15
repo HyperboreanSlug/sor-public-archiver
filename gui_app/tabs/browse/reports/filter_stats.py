@@ -10,8 +10,17 @@ class ReportsFilterStatsMixin:
         src = list(results if results is not None else (self._misclass_results or []))
         out = []
         for mc in src:
-            if self._verdict_for_mc(mc) == "correct":
+            v = self._verdict_for_mc(mc) if hasattr(self, "_verdict_for_mc") else ""
+            if v in ("correct", "confirmed"):
                 continue
+            # Also honor offenders.flags ethnicity_review
+            try:
+                from scraper.ethnicity_review import ethnicity_review_verdict
+
+                if ethnicity_review_verdict(getattr(mc, "record", None)) == "correct":
+                    continue
+            except Exception:
+                pass
             out.append(mc)
         return out
 
@@ -43,11 +52,15 @@ class ReportsFilterStatsMixin:
             return
         self.misclass_tree.delete(*self.misclass_tree.get_children())
         self._misclass_records_by_iid = {}
+        self._misclass_mc_by_iid = {}
         display = (
             self._misclass_apply_display_filters(results)
             if hasattr(self, "_misclass_apply_display_filters")
             else results
         )
+        from gui_app.tabs.browse.misclassify.constants import verification_label
+        from scraper.crime_summary import summarize_crime
+
         for mc in display[:500]:
             rec = dict(mc.record or {})
             name = (
@@ -63,15 +76,35 @@ class ReportsFilterStatsMixin:
             rec["_misclass_expected_race"] = mc.expected_race
             rec["_misclass_likely"] = mc.likely_ethnicity
             rec["_misclass_conf"] = mc.confidence
+            # Surface analyzer ethnicity on the record for the sidebar picker
+            if mc.likely_ethnicity and not rec.get("likely_ethnicity"):
+                rec["likely_ethnicity"] = mc.likely_ethnicity
+            crime_raw = (
+                rec.get("crime")
+                or rec.get("offense_description")
+                or rec.get("offense_type")
+                or ""
+            )
+            crime = summarize_crime(str(crime_raw), max_len=72) if crime_raw else "—"
+            conf_status = verification_label(rec)
+            # Prefer JSON report verdict when set and flags empty
+            if conf_status == "Unverified" and hasattr(self, "_verdict_for_mc"):
+                v = self._verdict_for_mc(mc)
+                if v in ("correct", "confirmed"):
+                    conf_status = "Confirmed correct"
+                elif v == "incorrect":
+                    conf_status = "Confirmed incorrect"
             iid = self.misclass_tree.insert(
                 "",
                 "end",
                 values=(
                     name,
                     (mc.expected_race or "—")[:14],
-                    (mc.likely_ethnicity or "")[:18],
+                    (mc.likely_ethnicity or "")[:22],
                     f"{mc.confidence:.3f}",
-                    "; ".join(mc.matching_names[:3]),
+                    crime or "—",
+                    conf_status,
                 ),
             )
             self._misclass_records_by_iid[iid] = rec
+            self._misclass_mc_by_iid[iid] = mc

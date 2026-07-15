@@ -1,10 +1,16 @@
-"""MisclassifyBuildMixin — Analyze filters + results tree."""
+"""MisclassifyBuildMixin — Analyze filters + results tree + sidebar."""
 from __future__ import annotations
 
 from typing import Any, Dict
 
 import customtkinter as ctk
 
+from gui_app.shared.record_sidebar import RecordSidebar
+from gui_app.tabs.browse.misclassify.constants import (
+    MISCLASS_ACTUAL_RACES,
+    MISCLASS_COLS,
+    MISCLASS_LABELS,
+)
 from gui_app.theme import C, FONT_SM
 from gui_app.widgets import (
     _bind_tree_scroll_isolation,
@@ -159,9 +165,17 @@ class MisclassifyBuildMixin:
         mid.grid(row=1, column=0, sticky="nsew", padx=12, pady=(0, 4))
         left = ctk.CTkFrame(mid, fg_color="transparent")
         mid.add(left, minsize=360, stretch="always")
-        self.misclass_detail = self._make_detail_drawer(mid)
-        mid.add(self.misclass_detail, minsize=220, stretch="never")
-        self.after(160, lambda: self._set_sash(mid, 0, 0.72))
+
+        # MAPA-style confirm sidebar (wider pane kept for SORPA)
+        self.misclass_sidebar = RecordSidebar(mid, photo_size=(340, 340))
+        self.misclass_sidebar._actual_race_options = list(MISCLASS_ACTUAL_RACES)
+        self.misclass_sidebar.bind_after(self.after)
+        self.misclass_sidebar.bind_verdict(self._misclass_sidebar_verdict)
+        self.misclass_sidebar.bind_actual_race(self._misclass_sidebar_actual_race)
+        # Alias for any code that still expects misclass_detail
+        self.misclass_detail = self.misclass_sidebar.frame
+        mid.add(self.misclass_sidebar.frame, minsize=420, stretch="always")
+        self.after(160, lambda: self._set_sash(mid, 0, 0.62))
 
         results_card = _card(left)
         results_card.pack(fill="both", expand=True)
@@ -171,26 +185,30 @@ class MisclassifyBuildMixin:
         _muted(
             results_card,
             "Surname ethnicity does not match recorded race. "
-            "Select a row for photo · Statistics for charts · Reports for photo review.",
+            "Select a row → confirm classification in the sidebar.",
         ).pack(anchor="w", padx=14, pady=(0, 6))
 
         wrap, self.misclass_tree = _tree_frame(results_card)
         wrap.pack(fill="both", expand=True, padx=10, pady=(0, 8))
-        cols = ["name", "recorded_race", "likely_ethnicity", "confidence", "matching_names"]
+        cols = list(MISCLASS_COLS)
         self.misclass_tree.configure(columns=cols, show="headings")
-        _stretch_columns(self.misclass_tree, cols, [160, 110, 130, 90, 200])
+        _stretch_columns(self.misclass_tree, cols, [150, 100, 130, 80, 160, 120])
         _enable_tree_column_sort(
             self.misclass_tree,
             cols,
-            labels={c: c.replace("_", " ").upper() for c in cols},
+            labels=dict(MISCLASS_LABELS),
         )
         _bind_tree_scroll_isolation(self.misclass_tree, wrap)
         self.misclass_tree.bind("<<TreeviewSelect>>", self._misclass_on_select)
         self._misclass_records_by_iid: Dict[str, Dict[str, Any]] = {}
+        self._misclass_mc_by_iid: Dict[str, Any] = {}
 
         self.misclass_status = ctk.CTkLabel(
             tab,
-            text="Compare recorded race to surname ethnicity lists · click a name for photo",
+            text=(
+                "Compare recorded race to surname ethnicity · "
+                "sidebar: Classified correctly / incorrectly"
+            ),
             font=FONT_SM, text_color=C["muted"],
         )
         self.misclass_status.grid(row=2, column=0, sticky="w", padx=14, pady=(0, 10))

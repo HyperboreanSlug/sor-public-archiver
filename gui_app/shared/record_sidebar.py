@@ -30,6 +30,7 @@ class RecordSidebar(RecordSidebarActionsMixin, RecordSidebarShowMixin):
         build_sidebar_widgets(self, parent, photo_size)
 
         self._image_ref: Any = None
+        self._pil_source: Any = None  # full-res RGB for dynamic re-fit
         self._load_token = 0
         self._after: Optional[Callable[..., Any]] = None
         self._record: Optional[Dict[str, Any]] = None
@@ -40,6 +41,10 @@ class RecordSidebar(RecordSidebarActionsMixin, RecordSidebarShowMixin):
         self._syncing_actual = False
         self._resize_after: Any = None
         self.frame.bind("<Configure>", self._on_sidebar_configure)
+        try:
+            self.photo.bind("<Configure>", self._on_sidebar_configure)
+        except Exception:
+            pass
 
 
 __all__ = [

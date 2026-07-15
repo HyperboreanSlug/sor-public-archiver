@@ -30,7 +30,8 @@ class RecordSidebarShowMixin:
     def _emit_verdict(self, verdict: str) -> None:
         if not self._record or not self._on_verdict:
             return
-        self._on_verdict(dict(self._record), verdict)
+        self._on_verdict(self._record, verdict)  # live record, not a copy
+        self._apply_verdict_status(self._record)
 
     def _emit_actual_race(self, choice: str) -> None:
         if self._syncing_actual or not self._record or not self._on_actual_race:
@@ -42,22 +43,24 @@ class RecordSidebarShowMixin:
 
     @staticmethod
     def review_label(record: Optional[Dict[str, Any]]) -> str:
-        flags = (record or {}).get("flags")
-        if isinstance(flags, str):
-            try:
-                import json
+        from scraper.ethnicity_review import ethnicity_review_verdict
 
-                flags = json.loads(flags)
-            except Exception:
-                flags = {}
-        if not isinstance(flags, dict):
-            return ""
-        review = str(flags.get("ethnicity_review") or "").strip().lower()
+        review = ethnicity_review_verdict(record)
         if review == "correct":
             return "Marked: classified correctly"
         if review == "incorrect":
             return "Marked: classified incorrectly"
         return ""
+
+    def _apply_verdict_status(self, record: Optional[Dict[str, Any]]) -> None:
+        label = self.review_label(record)
+        if "incorrect" in label:
+            color = C["danger"]
+        elif "correct" in label:
+            color = C["success"]
+        else:
+            color = C["muted"]
+        self.verdict_status.configure(text=label or "", text_color=color)
 
     def _pump_ui(self) -> None:
         try:
@@ -83,28 +86,34 @@ class RecordSidebarShowMixin:
                 self.frame.after_cancel(self._resize_after)
             except Exception:
                 pass
-        self._resize_after = self.frame.after(120, self._apply_photo_slot_size)
+        self._resize_after = self.frame.after(80, self._apply_photo_slot_size)
 
     def _apply_photo_slot_size(self) -> None:
         self._resize_after = None
         size = self._target_photo_size()
-        if size == self.photo_size:
-            return
+        changed = size != getattr(self, "photo_size", None)
         self.photo_size = size
-        self.photo.configure(width=size[0], height=size[1])
-        if self._record:
-            self._load_photo(self._record, self._load_token)
+        try:
+            self.photo.configure(width=size[0], height=size[1])
+        except Exception:
+            pass
+        if self._record and (changed or getattr(self, "_pil_source", None)):
+            if hasattr(self, "_refit_current_photo"):
+                self._refit_current_photo()
+            else:
+                self._load_photo(self._record, self._load_token)
 
     def _target_photo_size(self) -> tuple[int, int]:
+        """Photo box from sidebar geometry (width-driven square)."""
         try:
-            fw = int(self.frame.winfo_width())
-            fh = int(self.frame.winfo_height())
+            fw, fh = int(self.frame.winfo_width()), int(self.frame.winfo_height())
         except Exception:
-            return self.photo_size
-        if fw < 80 or fh < 80:
-            return self.photo_size
-        side = min(fw - 20, max(180, fh - 360))
-        side = max(200, min(side, 480))
+            return getattr(self, "photo_size", (320, 320))
+        if fw < 60:
+            return getattr(self, "photo_size", (320, 320))
+        max_w = max(120, fw - 24)
+        max_h = max(120, fh - 340) if fh >= 120 else max_w
+        side = max(140, min(int(min(max_w, max_h)), 520))
         return (side, side)
 
     @staticmethod
@@ -122,6 +131,7 @@ class RecordSidebarShowMixin:
         self._load_token += 1
         self._record = None
         self._image_ref = None
+        self._pil_source = None
         self.photo.configure(image="", text=message)
         self.open_btn.configure(state="disabled")
         self.open_photo_btn.configure(state="disabled")
@@ -148,7 +158,14 @@ class RecordSidebarShowMixin:
         self._fill_text(self._record)
         self.race_banner.configure(text=self._marked_race_text(self._record))
         has_url = bool(str(self._record.get("source_url") or "").strip())
-        self.open_btn.configure(state="normal" if has_url else "disabled")
+        has_html = bool(
+            str(
+                self._record.get("report_html_path")
+                or self._record.get("html_path")
+                or ""
+            ).strip()
+        )
+        self.open_btn.configure(state="normal" if (has_url or has_html) else "disabled")
         photo_path = resolve_photo_path(self._record.get("photo_path"))
         self.open_photo_btn.configure(
             state="normal" if photo_path and photo_path.is_file() else "disabled"
@@ -157,24 +174,25 @@ class RecordSidebarShowMixin:
         enabled = "normal" if self._on_verdict else "disabled"
         self.correct_btn.configure(state=enabled)
         self.incorrect_btn.configure(state=enabled)
-        label = self.review_label(self._record)
-        if "incorrect" in label:
-            self.verdict_status.configure(text=label, text_color=C["danger"])
-        elif "correct" in label:
-            self.verdict_status.configure(text=label, text_color=C["success"])
-        else:
-            self.verdict_status.configure(text=label or "", text_color=C["muted"])
-        likely = (
+        self._apply_verdict_status(self._record)
+        likely_raw = (
             str(
                 self._record.get("likely_ethnicity")
+                or self._record.get("_misclass_likely")
                 or self._record.get("race")
                 or "Unknown"
             ).strip()
             or "Unknown"
         )
-        opts = list(ACTUAL_RACE_OPTIONS)
+        opts = list(getattr(self, "_actual_race_options", None) or ACTUAL_RACE_OPTIONS)
+        try:
+            from gui_app.tabs.browse.misclassify.constants import picker_actual_race
+
+            likely = picker_actual_race(likely_raw, opts)
+        except Exception:
+            likely = opts[0] if opts else "Unknown"
         if likely not in opts:
-            opts = [likely] + opts
+            likely = opts[0] if opts else "Unknown"
         self._syncing_actual = True
         try:
             self.actual_race.configure(

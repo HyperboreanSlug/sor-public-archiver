@@ -826,6 +826,33 @@ class EthnicAndSearchTests(unittest.TestCase):
             _is_compatible("Indian/MENA (india)", "Asian")
         )
 
+    def test_ethnicity_review_flags_persist(self):
+        """Sidebar confirmations store correct/incorrect on offenders.flags."""
+        import tempfile
+        from pathlib import Path
+
+        from gui_app.shared.verdict_persist import persist_ethnicity_verdict
+        from gui_app.tabs.browse.misclassify.constants import verification_label
+        from scraper.database import Database
+        from scraper.ethnicity_review import ethnicity_review_verdict
+
+        p = Path(tempfile.mkdtemp()) / "rev.db"
+        db = Database(str(p))
+        try:
+            db.insert_offenders_batch(
+                [{"first_name": "A", "last_name": "Patel", "race": "White", "state": "FL"}]
+            )
+            rec = list(db.iter_offenders(limit=1))[0]
+        finally:
+            db.close()
+        ok, _, err = persist_ethnicity_verdict(str(p), rec, "incorrect")
+        self.assertTrue(ok, err)
+        self.assertEqual(ethnicity_review_verdict(rec), "incorrect")
+        self.assertEqual(verification_label(rec), "Confirmed incorrect")
+        ok2, _, err2 = persist_ethnicity_verdict(str(p), rec, "correct")
+        self.assertTrue(ok2, err2)
+        self.assertEqual(verification_label(rec), "Confirmed correct")
+
     def test_indian_other_and_other_asian_not_mismatch(self):
         from scraper.searcher import (
             _is_compatible,
