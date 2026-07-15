@@ -240,6 +240,24 @@ INDIAN_MENA_MERGED_FILTERS = frozenset({
     "indian_mena_merged",
 })
 
+# Families treated as non-white for the aggregate Misclassify filter
+# (excludes european / jewish / portuguese — typically White-coded on registries)
+NON_WHITE_FAMILIES = frozenset({
+    "hispanic",
+    "asian",
+    "indian",
+    "mena",
+    "african_american",
+    "african",
+    "native_american",
+})
+NON_WHITE_FILTERS = frozenset({
+    "non-white",
+    "non_white",
+    "nonwhite",
+    "non white",
+})
+
 # Canonical dropdown values (no abandoned / duplicate labels)
 ETHNICITY_FILTER_UI = (
     "hispanic",
@@ -254,12 +272,16 @@ ETHNICITY_FILTER_UI = (
     "native_american",
     "european",
 )
+# Misclassify: non-white aggregate first, then the individual lists
+ETHNICITY_FILTER_UI_MISCLASS = ("non-white",) + ETHNICITY_FILTER_UI
 # CLI accepts the same set plus legacy aliases for scripts
 ETHNICITY_FILTER_CLI = tuple(
     dict.fromkeys(
-        ("all",)
+        ("all", "non-white")
         + ETHNICITY_FILTER_UI
         + (
+            "non_white",
+            "nonwhite",
             "indian/mena",
             "merged",
             "arabic",  # → mena
@@ -326,6 +348,8 @@ def ethnicity_filter_matches(
     if not key or key == "all":
         return True
     fam = (family or "").strip().lower()
+    if key in NON_WHITE_FILTERS:
+        return fam in NON_WHITE_FAMILIES
     if key in INDIAN_MENA_MERGED_FILTERS:
         return fam in ("indian", "mena")
     if key in INDIAN_ONLY_FILTERS:

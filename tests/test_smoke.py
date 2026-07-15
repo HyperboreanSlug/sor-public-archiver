@@ -841,6 +841,14 @@ class EthnicAndSearchTests(unittest.TestCase):
         self.assertFalse(ethnicity_filter_matches("mena", "indian"))
         self.assertTrue(ethnicity_filter_matches("mena", "mena"))
         self.assertFalse(ethnicity_filter_matches("indian", "mena"))
+        # non-white aggregate: POC lists only (not european / jewish)
+        self.assertTrue(ethnicity_filter_matches("hispanic", "non-white"))
+        self.assertTrue(ethnicity_filter_matches("asian", "non-white"))
+        self.assertTrue(ethnicity_filter_matches("indian", "non-white"))
+        self.assertTrue(ethnicity_filter_matches("mena", "non-white"))
+        self.assertTrue(ethnicity_filter_matches("african_american", "non-white"))
+        self.assertFalse(ethnicity_filter_matches("european", "non-white"))
+        self.assertFalse(ethnicity_filter_matches("jewish", "non-white"))
 
     def test_ethnicity_review_flags_persist(self):
         """Sidebar confirmations store correct/incorrect on offenders.flags."""

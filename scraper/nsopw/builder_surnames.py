@@ -47,11 +47,12 @@ class BuilderSurnamesMixin:
         def group_cap() -> int:
             return cap if unlimited else max(3, cap // 3)
 
-        if eth in ("all", "hispanic"):
+        nw = eth in ("non-white", "non_white", "nonwhite", "non white")
+        if eth in ("all", "hispanic") or nw:
             if not sub:  # flat list — no subcategory filter
                 take(self.ethnic_db.hispanic_surnames, "Hispanic", cap)
         # East / Southeast Asian only (not Indian / South Asian)
-        if eth in ("all", "asian"):
+        if eth in ("all", "asian") or nw:
             for group, names in sorted(self.ethnic_db.asian_surnames.items()):
                 if sub and group.lower() != sub:
                     continue
@@ -62,11 +63,11 @@ class BuilderSurnamesMixin:
             "all", "indian", "indian/mena", "indian_mena", "merged",
             "indian/mena (merged)", "indian_high_confidence",
             "high_confidence_indian", "indian_hc",
-        )
+        ) or nw
         want_mena = eth in (
             "all", "mena", "arabic", "indian/mena", "indian_mena", "merged",
             "indian/mena (merged)", "middle_eastern", "middle eastern",
-        )
+        ) or nw
         # sub=arabic → MENA list only (even under merged eth)
         if sub == "arabic":
             take(self.ethnic_db.arabic_surnames, "Indian/MENA (arabic)", cap)
@@ -87,13 +88,13 @@ class BuilderSurnamesMixin:
                 take(self.ethnic_db.arabic_surnames, "Indian/MENA (arabic)", cap)
         elif want_mena:
             take(self.ethnic_db.arabic_surnames, "Indian/MENA (arabic)", cap)
-        if eth in ("all", "african_american") and not sub:
+        if (eth in ("all", "african_american") or nw) and not sub:
             take(self.ethnic_db.african_american_surnames, "African American", cap)
         if eth in ("all", "jewish") and not sub:
             take(self.ethnic_db.jewish_surnames, "Jewish", cap)
         if eth in ("all", "portuguese") and not sub:
             take(self.ethnic_db.portuguese_surnames, "Portuguese", cap)
-        if eth in ("all", "native_american") and not sub:
+        if (eth in ("all", "native_american") or nw) and not sub:
             take(self.ethnic_db.native_american_surnames, "Native American", cap)
         if eth in ("all", "european"):
             for country, names in sorted(self.ethnic_db.european_surnames.items()):
@@ -101,7 +102,7 @@ class BuilderSurnamesMixin:
                     continue
                 n = cap if unlimited else max(2, cap // 4)
                 take(names, f"European ({country})", n)
-        if eth in ("all", "african"):
+        if eth in ("all", "african") or nw:
             for region, names in sorted(self.ethnic_db.african_surnames.items()):
                 if sub and region.lower() != sub:
                     continue

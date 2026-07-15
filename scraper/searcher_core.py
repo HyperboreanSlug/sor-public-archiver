@@ -92,9 +92,23 @@ class SearcherCoreMixin:
             INDIAN_MENA_MERGED_FILTERS,
             INDIAN_ONLY_FILTERS,
             MENA_ONLY_FILTERS,
+            NON_WHITE_FILTERS,
         )
 
-        if eth in INDIAN_MENA_MERGED_FILTERS:
+        if eth in NON_WHITE_FILTERS:
+            pool: list = []
+            pool.extend(self.ethnic_db.hispanic_surnames or [])
+            for names in (self.ethnic_db.asian_surnames or {}).values():
+                pool.extend(names)
+            pool.extend(self.ethnic_db.indian_surnames or [])
+            pool.extend(self.ethnic_db.indian_high_confidence_surnames or [])
+            pool.extend(self.ethnic_db.arabic_surnames or [])
+            pool.extend(self.ethnic_db.african_american_surnames or [])
+            for names in (self.ethnic_db.african_surnames or {}).values():
+                pool.extend(names)
+            pool.extend(self.ethnic_db.native_american_surnames or [])
+            surnames = _unique(pool)
+        elif eth in INDIAN_MENA_MERGED_FILTERS:
             surnames = _unique(
                 list(self.ethnic_db.indian_surnames or [])
                 + list(self.ethnic_db.indian_high_confidence_surnames or [])
@@ -120,6 +134,12 @@ class SearcherCoreMixin:
             surnames = list(self.ethnic_db.portuguese_surnames or [])
         elif eth == "native_american":
             surnames = list(self.ethnic_db.native_american_surnames or [])
+        elif eth == "african":
+            for names in (self.ethnic_db.african_surnames or {}).values():
+                surnames.extend(names)
+        elif eth == "european":
+            for names in (self.ethnic_db.european_surnames or {}).values():
+                surnames.extend(names)
         records = self.db.search_by_surname_list(surnames, state=state, limit=limit)
         elapsed_ms = (time.time() - start) * 1000
         return SearchResults(
