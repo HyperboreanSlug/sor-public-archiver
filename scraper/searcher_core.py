@@ -123,21 +123,18 @@ class SearcherCoreMixin:
                 pool.extend(names)
             surnames = _unique(pool)
         elif eth in INDIAN_MENA_MERGED_FILTERS:
+            # Indic + MENA only (East/SE Asian has its own "asian" filter)
             pool = (
                 list(self.ethnic_db.indian_surnames or [])
                 + list(self.ethnic_db.indian_high_confidence_surnames or [])
                 + list(self.ethnic_db.arabic_surnames or [])
             )
-            for names in (self.ethnic_db.asian_surnames or {}).values():
-                pool.extend(names)
             surnames = _unique(pool)
         elif eth in INDIAN_ONLY_FILTERS:
-            # Indic + East/SE Asian (asian folded into indian bucket)
+            # Indic only — East/SE Asian is separate under "asian"
             pool = list(self.ethnic_db.indian_surnames or []) + list(
                 self.ethnic_db.indian_high_confidence_surnames or []
             )
-            for names in (self.ethnic_db.asian_surnames or {}).values():
-                pool.extend(names)
             surnames = _unique(pool)
         elif eth in MENA_ONLY_FILTERS:
             surnames = _unique(list(self.ethnic_db.arabic_surnames or []))

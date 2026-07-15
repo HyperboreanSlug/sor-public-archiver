@@ -244,15 +244,18 @@ INDIAN_MENA_MERGED_FILTERS = frozenset({
 # white ← european, jewish, portuguese, native_american
 # black ← african_american, african
 # hispanic ← hispanic
-# indian ← indian (+ east/SE asian folded here)
+# indian ← Indic only (East/SE Asian is separate)
+# asian ← East/SE Asian
 # mena ← mena / arabic
 WHITE_FILTERS = frozenset({"white", "european", "jewish", "portuguese", "native_american"})
 WHITE_FAMILIES = frozenset({"european", "jewish", "portuguese", "native_american", "white"})
 BLACK_FILTERS = frozenset({"black", "african_american", "african"})
 BLACK_FAMILIES = frozenset({"african_american", "african", "black"})
 HISPANIC_FILTERS = frozenset({"hispanic"})
-# East/SE Asian surnames fold into indian for Misclassify
-INDIAN_BUCKET_FAMILIES = frozenset({"indian", "asian"})
+# Indic surnames only — do not fold East/SE Asian into indian
+INDIAN_BUCKET_FAMILIES = frozenset({"indian"})
+ASIAN_FILTERS = frozenset({"asian", "east_asian", "southeast_asian"})
+ASIAN_FAMILIES = frozenset({"asian"})
 
 NON_WHITE_FAMILIES = frozenset({
     "hispanic", "asian", "indian", "mena",
@@ -276,11 +279,12 @@ ETHNICITY_FILTER_UI = (
     "native_american",
     "european",
 )
-# Misclassify likely ethnicity — only the five coarse buckets
+# Misclassify likely ethnicity — coarse buckets with Asian separate from Indian
 ETHNICITY_FILTER_UI_MISCLASS = (
     "white",
     "black",
     "hispanic",
+    "asian",
     "indian",
     "mena",
 )
@@ -355,8 +359,9 @@ def ethnicity_filter_matches(
 ) -> bool:
     """True when *family* (from ``_ethnicity_family``) matches a UI/CLI filter.
 
-    Misclassify coarse keys fold fine families:
-    white / black / hispanic / indian / mena.
+    Misclassify coarse keys:
+    white / black / hispanic / asian / indian / mena.
+    Asian and Indian are separate — East/SE Asian does not match ``indian``.
     """
     key = (filter_key or "").strip().lower() or None
     if not key or key == "all":
@@ -370,10 +375,12 @@ def ethnicity_filter_matches(
         return fam in BLACK_FAMILIES
     if key in HISPANIC_FILTERS:
         return fam == "hispanic"
+    if key in ASIAN_FILTERS:
+        return fam in ASIAN_FAMILIES
     if key in INDIAN_MENA_MERGED_FILTERS:
-        return fam in ("indian", "mena", "asian")
+        # Indic + MENA only (not East/SE Asian)
+        return fam in ("indian", "mena")
     if key in INDIAN_ONLY_FILTERS:
-        # Indic + East/SE Asian (asian folded into indian bucket)
         return fam in INDIAN_BUCKET_FAMILIES
     if key in MENA_ONLY_FILTERS:
         return fam == "mena"

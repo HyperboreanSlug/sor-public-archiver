@@ -884,7 +884,11 @@ class EthnicAndSearchTests(unittest.TestCase):
         self.assertTrue(ethnicity_filter_matches("african_american", "black"))
         self.assertTrue(ethnicity_filter_matches("african", "black"))
         self.assertTrue(ethnicity_filter_matches("hispanic", "hispanic"))
-        self.assertTrue(ethnicity_filter_matches("asian", "indian"))  # folded
+        # Asian is separate from Indian in Misclassify
+        self.assertFalse(ethnicity_filter_matches("asian", "indian"))
+        self.assertTrue(ethnicity_filter_matches("asian", "asian"))
+        self.assertFalse(ethnicity_filter_matches("indian", "asian"))
+        self.assertFalse(ethnicity_filter_matches("asian", "indian/mena (merged)"))
         self.assertFalse(ethnicity_filter_matches("hispanic", "white"))
         self.assertFalse(ethnicity_filter_matches("european", "black"))
 
