@@ -841,14 +841,16 @@ class EthnicAndSearchTests(unittest.TestCase):
         self.assertFalse(ethnicity_filter_matches("mena", "indian"))
         self.assertTrue(ethnicity_filter_matches("mena", "mena"))
         self.assertFalse(ethnicity_filter_matches("indian", "mena"))
-        # non-white aggregate: POC lists only (not european / jewish)
-        self.assertTrue(ethnicity_filter_matches("hispanic", "non-white"))
-        self.assertTrue(ethnicity_filter_matches("asian", "non-white"))
-        self.assertTrue(ethnicity_filter_matches("indian", "non-white"))
-        self.assertTrue(ethnicity_filter_matches("mena", "non-white"))
-        self.assertTrue(ethnicity_filter_matches("african_american", "non-white"))
-        self.assertFalse(ethnicity_filter_matches("european", "non-white"))
-        self.assertFalse(ethnicity_filter_matches("jewish", "non-white"))
+        # Misclassify coarse buckets fold fine families
+        self.assertTrue(ethnicity_filter_matches("european", "white"))
+        self.assertTrue(ethnicity_filter_matches("jewish", "white"))
+        self.assertTrue(ethnicity_filter_matches("portuguese", "white"))
+        self.assertTrue(ethnicity_filter_matches("african_american", "black"))
+        self.assertTrue(ethnicity_filter_matches("african", "black"))
+        self.assertTrue(ethnicity_filter_matches("hispanic", "hispanic"))
+        self.assertTrue(ethnicity_filter_matches("asian", "indian"))  # folded
+        self.assertFalse(ethnicity_filter_matches("hispanic", "white"))
+        self.assertFalse(ethnicity_filter_matches("european", "black"))
 
     def test_ethnicity_review_flags_persist(self):
         """Sidebar confirmations store correct/incorrect on offenders.flags."""

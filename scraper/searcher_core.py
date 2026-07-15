@@ -89,10 +89,12 @@ class SearcherCoreMixin:
             return out
 
         from scraper.searcher_race import (
+            BLACK_FILTERS,
             INDIAN_MENA_MERGED_FILTERS,
             INDIAN_ONLY_FILTERS,
             MENA_ONLY_FILTERS,
             NON_WHITE_FILTERS,
+            WHITE_FILTERS,
         )
 
         if eth in NON_WHITE_FILTERS:
@@ -108,17 +110,35 @@ class SearcherCoreMixin:
                 pool.extend(names)
             pool.extend(self.ethnic_db.native_american_surnames or [])
             surnames = _unique(pool)
+        elif eth in WHITE_FILTERS:
+            pool = list(self.ethnic_db.jewish_surnames or [])
+            pool.extend(self.ethnic_db.portuguese_surnames or [])
+            pool.extend(self.ethnic_db.native_american_surnames or [])
+            for names in (self.ethnic_db.european_surnames or {}).values():
+                pool.extend(names)
+            surnames = _unique(pool)
+        elif eth in BLACK_FILTERS:
+            pool = list(self.ethnic_db.african_american_surnames or [])
+            for names in (self.ethnic_db.african_surnames or {}).values():
+                pool.extend(names)
+            surnames = _unique(pool)
         elif eth in INDIAN_MENA_MERGED_FILTERS:
-            surnames = _unique(
+            pool = (
                 list(self.ethnic_db.indian_surnames or [])
                 + list(self.ethnic_db.indian_high_confidence_surnames or [])
                 + list(self.ethnic_db.arabic_surnames or [])
             )
+            for names in (self.ethnic_db.asian_surnames or {}).values():
+                pool.extend(names)
+            surnames = _unique(pool)
         elif eth in INDIAN_ONLY_FILTERS:
-            surnames = _unique(
-                list(self.ethnic_db.indian_surnames or [])
-                + list(self.ethnic_db.indian_high_confidence_surnames or [])
+            # Indic + East/SE Asian (asian folded into indian bucket)
+            pool = list(self.ethnic_db.indian_surnames or []) + list(
+                self.ethnic_db.indian_high_confidence_surnames or []
             )
+            for names in (self.ethnic_db.asian_surnames or {}).values():
+                pool.extend(names)
+            surnames = _unique(pool)
         elif eth in MENA_ONLY_FILTERS:
             surnames = _unique(list(self.ethnic_db.arabic_surnames or []))
         elif eth == "hispanic":

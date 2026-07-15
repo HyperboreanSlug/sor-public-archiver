@@ -240,25 +240,29 @@ INDIAN_MENA_MERGED_FILTERS = frozenset({
     "indian_mena_merged",
 })
 
-# Families treated as non-white for the aggregate Misclassify filter
-# (excludes european / jewish / portuguese — typically White-coded on registries)
+# --- Misclassify coarse buckets (all other surname families fold into these) ---
+# white ← european, jewish, portuguese, native_american
+# black ← african_american, african
+# hispanic ← hispanic
+# indian ← indian (+ east/SE asian folded here)
+# mena ← mena / arabic
+WHITE_FILTERS = frozenset({"white", "european", "jewish", "portuguese", "native_american"})
+WHITE_FAMILIES = frozenset({"european", "jewish", "portuguese", "native_american", "white"})
+BLACK_FILTERS = frozenset({"black", "african_american", "african"})
+BLACK_FAMILIES = frozenset({"african_american", "african", "black"})
+HISPANIC_FILTERS = frozenset({"hispanic"})
+# East/SE Asian surnames fold into indian for Misclassify
+INDIAN_BUCKET_FAMILIES = frozenset({"indian", "asian"})
+
 NON_WHITE_FAMILIES = frozenset({
-    "hispanic",
-    "asian",
-    "indian",
-    "mena",
-    "african_american",
-    "african",
-    "native_american",
+    "hispanic", "asian", "indian", "mena",
+    "african_american", "african", "native_american",
 })
 NON_WHITE_FILTERS = frozenset({
-    "non-white",
-    "non_white",
-    "nonwhite",
-    "non white",
+    "non-white", "non_white", "nonwhite", "non white",
 })
 
-# Canonical dropdown values (no abandoned / duplicate labels)
+# Full list for Search / NSOPW / Integrity (fine-grained harvest)
 ETHNICITY_FILTER_UI = (
     "hispanic",
     "asian",
@@ -272,12 +276,18 @@ ETHNICITY_FILTER_UI = (
     "native_american",
     "european",
 )
-# Misclassify: non-white aggregate first, then the individual lists
-ETHNICITY_FILTER_UI_MISCLASS = ("non-white",) + ETHNICITY_FILTER_UI
-# CLI accepts the same set plus legacy aliases for scripts
+# Misclassify likely ethnicity — only the five coarse buckets
+ETHNICITY_FILTER_UI_MISCLASS = (
+    "white",
+    "black",
+    "hispanic",
+    "indian",
+    "mena",
+)
+# CLI accepts coarse + fine + legacy aliases
 ETHNICITY_FILTER_CLI = tuple(
     dict.fromkeys(
-        ("all", "non-white")
+        ("all", "white", "black", "non-white")
         + ETHNICITY_FILTER_UI
         + (
             "non_white",
@@ -343,17 +353,28 @@ def ethnicity_filter_matches(
     family: str,
     filter_key: Optional[str],
 ) -> bool:
-    """True when *family* (from ``_ethnicity_family``) matches a UI/CLI filter."""
+    """True when *family* (from ``_ethnicity_family``) matches a UI/CLI filter.
+
+    Misclassify coarse keys fold fine families:
+    white / black / hispanic / indian / mena.
+    """
     key = (filter_key or "").strip().lower() or None
     if not key or key == "all":
         return True
     fam = (family or "").strip().lower()
     if key in NON_WHITE_FILTERS:
         return fam in NON_WHITE_FAMILIES
+    if key in WHITE_FILTERS:
+        return fam in WHITE_FAMILIES
+    if key in BLACK_FILTERS:
+        return fam in BLACK_FAMILIES
+    if key in HISPANIC_FILTERS:
+        return fam == "hispanic"
     if key in INDIAN_MENA_MERGED_FILTERS:
-        return fam in ("indian", "mena")
+        return fam in ("indian", "mena", "asian")
     if key in INDIAN_ONLY_FILTERS:
-        return fam == "indian"
+        # Indic + East/SE Asian (asian folded into indian bucket)
+        return fam in INDIAN_BUCKET_FAMILIES
     if key in MENA_ONLY_FILTERS:
         return fam == "mena"
     return fam == key
