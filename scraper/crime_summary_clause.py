@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import re
-from typing import Optional
+from typing import List, Optional
 
 from scraper.crime_summary_junk import (
     is_junk_label,
@@ -90,6 +90,43 @@ def title_offense(s: str) -> str:
     return s[0].upper() + s[1:] if len(s) > 1 else s.upper()
 
 
+def summarize_lewd_clause(clause: str) -> str:
+    """Compress long FL lewd/lascivious boilerplate into a short qualifier label.
+
+    Examples::
+
+        … victim is under 12 or … force or coercion
+          → Lewd/lascivious — under 12/force
+        … molestation involving unclothed genitals
+          → Lewd/lascivious — unclothed genitals
+    """
+    low = (clause or "").lower()
+    parts: List[str] = []
+    if re.search(r"under\s*12|victim\s+is\s+under\s*12|u/?12|< ?12|vctm\s*under\s*12", low):
+        parts.append("under 12")
+    elif re.search(r"less\s+than\s*16|under\s*16|12-15|u/?16|< ?16|vctm\s*<?\s*16", low):
+        parts.append("under 16")
+    if re.search(r"force|coercion", low):
+        parts.append("force")
+    if re.search(r"unclothed\s+genitals?", low):
+        parts.append("unclothed genitals")
+    if re.search(r"molest", low) and "unclothed genitals" not in parts:
+        parts.append("molestation")
+    if re.search(r"exhibition", low):
+        parts.append("exhibition")
+    if re.search(r"\bconduct\b", low) and not parts:
+        parts.append("conduct")
+    if re.search(r"battery|batt\b", low) and not parts:
+        parts.append("battery")
+    if not parts:
+        return "Lewd/lascivious"
+    if "under 12" in parts and "force" in parts:
+        return "Lewd/lascivious — under 12/force"
+    if "unclothed genitals" in parts:
+        return "Lewd/lascivious — unclothed genitals"
+    return "Lewd/lascivious — " + "/".join(parts)
+
+
 def extract_from_clause(clause: str) -> Optional[str]:
     c = norm(clause)
     if not c or len(c) < 3 or DROP_CLAUSE.match(c) or is_statute_or_docket(c):
@@ -107,8 +144,6 @@ def extract_from_clause(clause: str) -> Optional[str]:
     m = re.search(r"CHILD\s+MOLESTATION[- ]?(\d)", src, re.I)
     if m:
         return f"Child molestation {m.group(1)}"
-    if re.search(r"\blewd\b|\blascivious\b", src, re.I):
-        return None
 
     m = re.search(r"—\s*(.+)$", c)
     if m and len(m.group(1)) > 8:
@@ -117,8 +152,6 @@ def extract_from_clause(clause: str) -> Optional[str]:
     if m and len(m.group(1)) > 8:
         c = norm(m.group(1))
 
-    if re.search(r"\blewd\b|\blascivious\b", c, re.I):
-        return None
     if is_statute_or_docket(c) or is_junk_label(c):
         return None
 
@@ -132,6 +165,12 @@ def extract_from_clause(clause: str) -> Optional[str]:
             extra.append("injury not likely")
         base = "Sexual battery"
         return f"{base} — {', '.join(extra)}" if extra else base
+
+    # Long-form lewd/lascivious (keep victim age / molestation qualifiers)
+    if re.search(r"\blewd\b|\blascivious\b", src, re.I) or re.search(
+        r"\blewd\b|\blascivious\b", c, re.I
+    ):
+        return summarize_lewd_clause(src)
 
     for pat, lab in OFFENSE_MAP:
         if re.search(pat, c, re.I):

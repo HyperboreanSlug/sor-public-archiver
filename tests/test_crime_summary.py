@@ -8,6 +8,7 @@ from scraper.crime_summary import summarize_crime
 
 class CrimeSummaryTests(unittest.TestCase):
     def test_fl_boilerplate_preferred_example(self):
+        """CHRISTOPHER SINGH-style FL dump keeps victim-age lewd details."""
         raw = (
             "Commission of OR Attempt, Solicit, or Conspire to Commit; "
             "Chapter 794; Sexual Battery *Excluding subsections 794.011(10); "
@@ -19,10 +20,14 @@ class CrimeSummaryTests(unittest.TestCase):
             "molestation involving unclothed genitals.; s. 800.04(5)(d)"
         )
         out = summarize_crime(raw)
-        # Lewd/lascivious clauses omitted from report summaries
-        self.assertEqual(out, "Sexual battery")
-        self.assertNotIn("lewd", out.lower())
-        self.assertNotIn("lascivious", out.lower())
+        self.assertIn("Sexual battery", out)
+        self.assertIn("under 12", out.lower())
+        self.assertIn("unclothed genitals", out.lower())
+        self.assertIn("Lewd/lascivious", out)
+        self.assertNotIn("Commission of", out)
+        self.assertNotIn("800.04", out)
+        self.assertNotIn("(", out)
+        self.assertNotIn(")", out)
 
     def test_fl_short_codes(self):
         raw = (
@@ -108,6 +113,15 @@ class CrimeSummaryTests(unittest.TestCase):
             out = summarize_crime(raw)
             self.assertNotIn("(", out, msg=raw)
             self.assertNotIn(")", out, msg=raw)
+
+    def test_lewd_under_12_not_dropped(self):
+        raw = (
+            "Lewd/lascivious offenses committed upon or in the presence of persons "
+            "less than 16 years of age, where the victim is under 12 or the court "
+            "finds the use of force or coercion."
+        )
+        out = summarize_crime(raw)
+        self.assertEqual(out, "Lewd/lascivious — under 12/force")
 
 
 if __name__ == "__main__":

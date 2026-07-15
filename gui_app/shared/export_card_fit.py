@@ -88,7 +88,7 @@ def draw_crime_block(
 
     if anchor_bottom:
         # Guaranteed bottom band so name/race/location never erase crime
-        band = max(min_height, min(180, bottom_limit - max(0, top)))
+        band = max(min_height, min(220, bottom_limit - max(0, top)))
         if band < 50:
             band = min_height
         plan_top = bottom_limit - band

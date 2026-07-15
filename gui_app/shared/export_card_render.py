@@ -83,8 +83,9 @@ def render_export_card(record: Mapping[str, Any]) -> Image.Image:
     crime_margin = max(28, margin - 16)
     crime_text_w = _CARD_W - crime_margin * 2
     crime_bottom = _CARD_H - margin - footer_reserve
-    # Hard-reserve bottom band so name/race/location never push crime off the card
-    crime_band = 120 if cr else 0
+    # Hard-reserve bottom band so name/race/location never push crime off the card.
+    # Multi-offense summaries (e.g. sexual battery + lewd under 12) need ~3 lines.
+    crime_band = 170 if cr else 0
     content_limit = crime_bottom - crime_band
 
     for line in wrap_text(draw, name, name_font, max_text_w)[:2]:

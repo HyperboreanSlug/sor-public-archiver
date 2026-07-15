@@ -37,16 +37,18 @@ def _dedupe_preserve(items: List[str]) -> List[str]:
     return out
 
 
-def summarize_crime(text: Optional[str], *, max_len: int = 140) -> str:
+def summarize_crime(text: Optional[str], *, max_len: int = 200) -> str:
     """
-    Return a short multi-offense summary for report cards.
+    Return a multi-offense summary for report/export cards.
 
-    Example::
+    Example (CHRISTOPHER SINGH-style FL dump)::
 
         Commission of OR Attempt...; Chapter 794; Sexual Battery *Excluding...;
         s. 800.04(4)(b); Lewd/lascivious ... under 12 ... force...;
+        s. 800.04(5)(c)1; Lewd/lascivious ... unclothed genitals...;
 
-        → Sexual battery
+        → Sexual battery · Lewd/lascivious — under 12/force
+          · Lewd/lascivious — unclothed genitals
     """
     raw = norm(text or "")
     if not raw:
@@ -90,14 +92,22 @@ def summarize_crime(text: Optional[str], *, max_len: int = 140) -> str:
 
     cleaned_labels: List[str] = []
     for x in labels:
-        if re.search(r"(?i)\blewd\b|\blascivious\b", x):
-            continue
         if CITY_STATE.fullmatch(x) or COUNTY_LOC.fullmatch(x):
             continue
         polished = clean_label(strip_location_junk(x))
         if polished and len(polished) >= 3 and not is_junk_label(polished):
             cleaned_labels.append(polished)
     labels = _dedupe_preserve(cleaned_labels)
+
+    # Prefer qualified lewd labels over bare "Lewd/lascivious"
+    lewd_qual = [
+        x
+        for x in labels
+        if x.casefold().startswith("lewd/lascivious —")
+        or x.casefold().startswith("lewd/lascivious -")
+    ]
+    if lewd_qual:
+        labels = [x for x in labels if x.casefold() != "lewd/lascivious"]
 
     has_sb_qual = any(
         x.casefold().startswith("sexual battery —")
