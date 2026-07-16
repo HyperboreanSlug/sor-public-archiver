@@ -66,5 +66,6 @@ class TagRecordSourceCsvMixin:
             html_verified=False,
             html_status="pending" if url else "no_url",
         )
-        attach_source_to_record(record, src, prefer_new_fields=True)
+        # Never clobber an existing html-verified chart race with bulk codes
+        attach_source_to_record(record, src, prefer_new_fields=False)
 

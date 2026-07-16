@@ -233,69 +233,26 @@ def merge_source_into_list(
     """
     Upsert *new_src* into *sources* by id (or matching url/external_id).
 
-    Field maps are unioned; on conflict for the same field key, keep both only
-    at the multi-source (list) level — within one source entry the newer value
-    wins when prefer_new_fields or old is empty.
+    CSV bulk and live report HTML are never collapsed into one chart entry
+    (same personId URL can exist on both). HTML-verified demographics are
+    protected from bulk overwrite. Within one source, newer wins when
+    prefer_new_fields or old is empty.
     """
+    from scraper.database.sources_merge import find_merge_index, merge_source_fields
+
     if not new_src:
         return list(sources)
     out = [dict(s) for s in sources if isinstance(s, dict)]
-    new_id = _norm_str(new_src.get("id")).lower()
-    new_url = _norm_str(new_src.get("source_url")).lower()
-    new_ext = _norm_str(new_src.get("external_id")).lower()
-
-    match_idx = None
-    for i, s in enumerate(out):
-        sid = _norm_str(s.get("id")).lower()
-        if new_id and sid == new_id:
-            match_idx = i
-            break
-        if new_url and _norm_str(s.get("source_url")).lower() == new_url:
-            match_idx = i
-            break
-        if (
-            new_ext
-            and _norm_str(s.get("external_id")).lower() == new_ext
-            and _norm_str(s.get("jurisdiction")).upper()
-            == _norm_str(new_src.get("jurisdiction")).upper()
-        ):
-            match_idx = i
-            break
-
+    match_idx = find_merge_index(out, new_src)
     if match_idx is None:
         out.append(dict(new_src))
         return out
-
-    cur = dict(out[match_idx])
-    # Merge scalar metadata
-    for key in (
-        "type", "jurisdiction", "label", "origin", "external_id", "source_url",
-        "html_path", "html_status",
-    ):
-        nv = new_src.get(key)
-        if nv is not None and str(nv).strip():
-            if prefer_new_fields or not _norm_str(cur.get(key)):
-                cur[key] = nv
-    if new_src.get("html_verified"):
-        cur["html_verified"] = True
-    elif "html_verified" in new_src and not cur.get("html_verified"):
-        cur["html_verified"] = bool(new_src.get("html_verified"))
-
-    # Merge field maps
-    cur_fields = dict(cur.get("fields") or {})
-    new_fields = dict(new_src.get("fields") or {})
-    for k, v in new_fields.items():
-        if v is None or (isinstance(v, str) and not str(v).strip()):
-            continue
-        old = cur_fields.get(k)
-        if prefer_new_fields or old is None or not str(old).strip():
-            cur_fields[k] = v
-        # else keep old (same source shouldn't flip-flop without prefer_new)
-    cur["fields"] = cur_fields
-    cur["updated_at"] = _utc_now_iso()
-    if new_src.get("id"):
-        cur["id"] = new_src["id"]
-    out[match_idx] = cur
+    out[match_idx] = merge_source_fields(
+        out[match_idx],
+        new_src,
+        prefer_new_fields=prefer_new_fields,
+        utc_now_iso=_utc_now_iso(),
+    )
     return out
 
 
@@ -312,26 +269,9 @@ def merge_sources_lists(
 
 def _race_key(val: str) -> str:
     """Loose canonical race key for conflict detection."""
-    t = re.sub(r"[^A-Z]+", " ", (val or "").upper()).strip()
-    aliases = {
-        "W": "WHITE",
-        "WHITE": "WHITE",
-        "CAUCASIAN": "WHITE",
-        "B": "BLACK",
-        "BLACK": "BLACK",
-        "AFRICAN AMERICAN": "BLACK",
-        "A": "ASIAN",
-        "ASIAN": "ASIAN",
-        "ASIAN OR PACIFIC ISLANDER": "ASIAN",
-        "ASIAN PACIFIC ISLANDER": "ASIAN",
-        "API": "ASIAN",
-        "I": "AMERICAN INDIAN",
-        "U": "UNKNOWN",
-        "UNKNOWN": "UNKNOWN",
-        "H": "HISPANIC",
-        "HISPANIC": "HISPANIC",
-    }
-    return aliases.get(t, t)
+    from scraper.database.sources_race_verify import race_key
+
+    return race_key(val)
 
 
 def collect_field_values(
@@ -416,10 +356,20 @@ def multi_source_display(
 
     if len(by_canon) == 1:
         only = next(iter(by_canon.values()))
+        # Single race confirmed by online scrape → mark verified
+        if only.get("html_verified") and field == "race":
+            from scraper.database.sources_race_verify import format_verified_race
+
+            return format_verified_race(only["value"])
         return only["value"]
 
+    # Verified online charts first so primary race is not buried under bulk CSV
+    ordered = sorted(
+        by_canon.values(),
+        key=lambda r: (0 if r.get("html_verified") else 1, str(r.get("value") or "")),
+    )
     parts: List[str] = []
-    for r in by_canon.values():
+    for r in ordered:
         jur = (r.get("jurisdiction") or "").strip().upper()
         st = str(r.get("type") or "").lower()
         kind = {
@@ -454,6 +404,19 @@ def apply_sources_to_record(record: Dict[str, Any]) -> Dict[str, Any]:
     if race_disp:
         record["race"] = race_disp
 
+    # When every online chart (html-verified) agrees, race is scrape-verified
+    from scraper.database.sources_race_verify import html_race_consensus
+
+    race_consensus = html_race_consensus(sources, require_verified=True)
+    if race_consensus:
+        # Prefer multi-tag display when bulk still disagrees; else mark ✓
+        if not race_disp or " | " not in str(race_disp):
+            from scraper.database.sources_race_verify import format_verified_race
+
+            record["race"] = format_verified_race(race_consensus)
+        elif race_disp:
+            record["race"] = race_disp
+
     # Fill blanks from best primary when empty
     for field in ("ethnicity", "gender", "height", "weight", "eye_color", "hair_color"):
         if not _norm_str(record.get(field)):
@@ -467,6 +430,7 @@ def apply_sources_to_record(record: Dict[str, Any]) -> Dict[str, Any]:
         if isinstance(flags_raw, list):
             flags_list = [str(x) for x in flags_raw]
             flags_mode = "list"
+            flags_dict: Dict[str, Any] = {}
         elif isinstance(flags_raw, dict):
             flags_list = [str(x) for x in (flags_raw.get("tags") or [])]
             flags_mode = "dict"
@@ -477,6 +441,7 @@ def apply_sources_to_record(record: Dict[str, Any]) -> Dict[str, Any]:
                 if isinstance(parsed, list):
                     flags_list = [str(x) for x in parsed]
                     flags_mode = "list"
+                    flags_dict = {}
                 elif isinstance(parsed, dict):
                     flags_list = [str(x) for x in (parsed.get("tags") or [])]
                     flags_mode = "dict"
@@ -484,9 +449,11 @@ def apply_sources_to_record(record: Dict[str, Any]) -> Dict[str, Any]:
                 else:
                     flags_list = [str(flags_raw)]
                     flags_mode = "list"
+                    flags_dict = {}
             except json.JSONDecodeError:
                 flags_list = [str(flags_raw)]
                 flags_mode = "list"
+                flags_dict = {}
         else:
             flags_list = []
             flags_mode = "list"
@@ -500,6 +467,10 @@ def apply_sources_to_record(record: Dict[str, Any]) -> Dict[str, Any]:
         if tag not in flags_list:
             flags_list.append(tag)
 
+    def _drop_tag(tag: str) -> None:
+        while tag in flags_list:
+            flags_list.remove(tag)
+
     _ensure_tag("multi_source")
     race_vals = collect_field_values(sources, "race")
     canons = {_race_key(r["value"]) for r in race_vals}
@@ -507,6 +478,16 @@ def apply_sources_to_record(record: Dict[str, Any]) -> Dict[str, Any]:
         _ensure_tag("multi_source_race")
     if any(not r.get("html_verified") for r in race_vals):
         _ensure_tag("source_html_unverified")
+    else:
+        _drop_tag("source_html_unverified")
+
+    if race_consensus:
+        _ensure_tag("race_html_verified")
+        # All online charts confirm the same race
+        if len(canons) <= 1:
+            _drop_tag("multi_source_race")
+    else:
+        _drop_tag("race_html_verified")
 
     if flags_mode == "dict":
         flags_dict["tags"] = flags_list

@@ -155,6 +155,123 @@ class MultiSourceTests(unittest.TestCase):
         self.assertGreaterEqual(len(srcs), 1)
         self.assertEqual(srcs[0].get("type"), "csv_bulk")
 
+    def test_csv_and_html_not_collapsed_by_url(self) -> None:
+        """Same FDLE URL must keep CSV W and HTML Black as separate charts."""
+        from scraper.database.sources import apply_sources_to_record, dumps_sources
+
+        url = "https://offender.fdle.state.fl.us/offender/sops/flyer.jsf?personId=59640"
+        rec = {
+            "first_name": "JACKSON",
+            "middle_name": "WILLIAM",
+            "last_name": "ALEXANDER",
+            "race": "W",
+            "external_id": "59640",
+            "state": "FL",
+            "source_url": url,
+        }
+        csv_src = make_source(
+            source_type="csv_bulk",
+            jurisdiction="FL",
+            origin="fl_sor",
+            external_id="59640",
+            source_url=url,
+            fields={"race": "W", "external_id": "59640"},
+            html_verified=False,
+            html_status="pending",
+        )
+        attach_source_to_record(rec, csv_src, prefer_new_fields=False)
+        html_src = make_source(
+            source_type="report_html",
+            jurisdiction="FL",
+            origin="report_fetch",
+            external_id="59640",
+            source_url=url,
+            fields={"race": "Black", "gender": "Male"},
+            html_verified=True,
+            html_status="ok",
+        )
+        attach_source_to_record(rec, html_src, prefer_new_fields=True)
+        srcs = parse_sources(rec["sources_json"])
+        self.assertEqual(len(srcs), 2)
+        types = {s.get("type") for s in srcs}
+        self.assertIn("csv_bulk", types)
+        self.assertIn("report_html", types)
+        races = {(s.get("type"), (s.get("fields") or {}).get("race")) for s in srcs}
+        self.assertIn(("csv_bulk", "W"), races)
+        self.assertIn(("report_html", "Black"), races)
+        disp = multi_source_display(srcs, "race")
+        self.assertIn("Black", disp)
+        self.assertIn("W", disp)
+        self.assertIn("✓", disp)
+        apply_sources_to_record(rec)
+        self.assertIn("race_html_verified", str(rec.get("flags") or ""))
+        # CSV re-tag must not wipe HTML Black
+        csv_again = make_source(
+            source_type="csv_bulk",
+            jurisdiction="FL",
+            origin="fl_sor",
+            external_id="59640",
+            source_url=url,
+            fields={"race": "W"},
+            html_verified=False,
+            html_status="pending",
+        )
+        attach_source_to_record(rec, csv_again, prefer_new_fields=True)
+        srcs2 = parse_sources(rec["sources_json"])
+        self.assertTrue(
+            any(
+                s.get("type") == "report_html"
+                and (s.get("fields") or {}).get("race") == "Black"
+                and s.get("html_verified")
+                for s in srcs2
+            )
+        )
+        self.assertIn("Black", str(rec.get("race") or ""))
+
+    def test_enrichment_recover_marks_verified_black(self) -> None:
+        import json
+
+        from scraper.database.sources_race_verify import (
+            recover_report_enrichment_into_sources,
+        )
+
+        url = "https://offender.fdle.state.fl.us/offender/sops/flyer.jsf?personId=59640"
+        rec = {
+            "first_name": "JACKSON",
+            "middle_name": "WILLIAM",
+            "last_name": "ALEXANDER",
+            "race": "W",
+            "external_id": "59640",
+            "state": "FL",
+            "source_url": url,
+            "raw_data_json": json.dumps(
+                {
+                    "report_enrichment": {
+                        "report_url": url,
+                        "report_final_url": url,
+                        "report_fetch_ok": True,
+                        "race": "Black",
+                        "gender": "Male",
+                    }
+                }
+            ),
+        }
+        csv_src = make_source(
+            source_type="csv_bulk",
+            jurisdiction="FL",
+            origin="fl_sor",
+            external_id="59640",
+            source_url=url,
+            fields={"race": "W"},
+            html_verified=False,
+        )
+        attach_source_to_record(rec, csv_src)
+        self.assertTrue(recover_report_enrichment_into_sources(rec))
+        self.assertIn("Black", str(rec.get("race") or ""))
+        self.assertIn("race_html_verified", str(rec.get("flags") or ""))
+        # Second recover is a no-op
+        self.assertFalse(recover_report_enrichment_into_sources(rec))
+
 
 if __name__ == "__main__":
     unittest.main()
