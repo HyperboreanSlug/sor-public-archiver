@@ -33,12 +33,12 @@ class SchemaMixin:
         self,
         db_path: Optional[str] = None,
         *,
-        busy_timeout_ms: int = 8000,
+        busy_timeout_ms: int = 30000,
     ):
         # check_same_thread=False: GUI workers + CLI importers share one connection
         # under application-level coordination (same pattern as mapa).
-        # Keep busy_timeout modest so a locked DB cannot freeze a thread for a minute
-        # (UI must not open connections on the main thread either).
+        # 30s busy_timeout: long enrich/requeue runs share the DB with the GUI;
+        # writers also use scraper.database.db_retry for multi-attempt backoff.
         timeout_s = max(0.5, float(busy_timeout_ms) / 1000.0)
         if db_path == ":memory:":
             self.db_path = Path(":memory:")

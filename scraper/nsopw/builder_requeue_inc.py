@@ -68,15 +68,31 @@ class BuilderRequeueIncMixin:
             # Over-fetch then filter so the final batch still reaches *limit*.
             fetch_limit = max(fetch_limit * 8, fetch_limit)
 
-        rows = self.db.find_incomplete_reports(
-            need_race=need_race,
-            need_crime=need_crime,
-            need_photo=need_photo,
-            need_html=need_html,
-            require_url=True,
-            limit=fetch_limit,
-            state=state,
-        )
+        from scraper.database.db_retry import retry_on_db_lock
+
+        def _load_rows():
+            return self.db.find_incomplete_reports(
+                need_race=need_race,
+                need_crime=need_crime,
+                need_photo=need_photo,
+                need_html=need_html,
+                require_url=True,
+                limit=fetch_limit,
+                state=state,
+            )
+
+        try:
+            rows = retry_on_db_lock(
+                _load_rows,
+                attempts=10,
+                base_delay=0.5,
+                max_delay=8.0,
+                log=_log,
+                what="load incomplete reports",
+            )
+        except Exception as e:
+            _log(f"Requeue aborted: could not read incomplete queue: {e}")
+            raise
         filtered, skipped_scope = filter_records_for_enrich(
             rows,
             source_scope=scope,

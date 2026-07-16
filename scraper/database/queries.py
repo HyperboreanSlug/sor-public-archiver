@@ -250,7 +250,11 @@ class QueryMixin:
         return dict(row) if row else None
 
     def update_offender(self, row_id: int, fields: Dict[str, Any]) -> bool:
-        """Update selected columns on an offender row. Returns True if a row changed."""
+        """Update selected columns on an offender row. Returns True if a row changed.
+
+        Retries automatically on SQLite ``database is locked`` / busy errors
+        (common during long NSOPW enrich while the GUI also holds the DB).
+        """
         if not fields:
             return False
         # Only allow known columns
@@ -261,12 +265,25 @@ class QueryMixin:
         sets = ", ".join(f"{c} = ?" for c in cols)
         vals = [fields[c] for c in cols]
         vals.append(int(row_id))
-        cur = self._conn.execute(
-            f"UPDATE offenders SET {sets} WHERE id = ?",
-            vals,
-        )
-        self._conn.commit()
-        changed = (cur.rowcount or 0) > 0
+
+        def _once() -> bool:
+            cur = self._conn.execute(
+                f"UPDATE offenders SET {sets} WHERE id = ?",
+                vals,
+            )
+            self._conn.commit()
+            return (cur.rowcount or 0) > 0
+
+        try:
+            from scraper.database.db_retry import retry_on_db_lock
+
+            changed = retry_on_db_lock(
+                _once,
+                what=f"update_offender id={row_id}",
+            )
+        except Exception:
+            # Preserve prior behavior for non-lock errors: let caller handle
+            raise
         if changed:
             try:
                 from scraper.db_publish_pending import add_pending_listings

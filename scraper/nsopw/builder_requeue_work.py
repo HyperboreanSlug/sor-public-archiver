@@ -45,23 +45,30 @@ class BuilderRequeueWorkMixin:
                 )
             except Exception as e:
                 summary["errors"] += 1
-                log(f"    ↳ error: {e}")
+                log(f"    ↳ fetch error: {e}")
                 self._requeue_progress(on_progress, summary["attempted"], total_q)
                 continue
-            record = dict(rec)
-            self._merge_demographics(record, demo)
-            if demo.get("report_html_path"):
-                record["report_html_path"] = demo["report_html_path"]
-            if demo.get("photo_path"):
-                record["photo_path"] = demo["photo_path"]
+            try:
+                record = dict(rec)
+                self._merge_demographics(record, demo)
+                if demo.get("report_html_path"):
+                    record["report_html_path"] = demo["report_html_path"]
+                if demo.get("photo_path"):
+                    record["photo_path"] = demo["photo_path"]
 
-            class _Hit:
-                image_uri = rec.get("photo_url") or ""
+                class _Hit:
+                    image_uri = rec.get("photo_url") or ""
 
-            self._ensure_photo(record, _Hit(), st)
-            self._requeue_apply_patch(
-                rec, record, demo, summary, log=log, on_update=on_update
-            )
+                self._ensure_photo(record, _Hit(), st)
+                self._requeue_apply_patch(
+                    rec, record, demo, summary, log=log, on_update=on_update
+                )
+            except Exception as e:
+                summary["errors"] += 1
+                log(
+                    f"    ↳ apply error id={rid}: {e} "
+                    "(continuing with next record)"
+                )
             self._requeue_progress(on_progress, summary["attempted"], total_q)
 
     def _requeue_parallel(
@@ -211,7 +218,34 @@ class BuilderRequeueWorkMixin:
                         patch[key] = new_v
 
         if patch and rid is not None:
-            ok = self.db.update_offender(int(rid), patch)
+            try:
+                from scraper.database.db_retry import retry_on_db_lock
+
+                lock = getattr(self, "_db_write_lock", None)
+
+                def _write() -> bool:
+                    if lock is not None:
+                        with lock:
+                            return self.db.update_offender(int(rid), patch)
+                    return self.db.update_offender(int(rid), patch)
+
+                # update_offender already retries; outer wrap + lock serializes
+                # parallel workers so one lock storm cannot abort the whole run.
+                ok = retry_on_db_lock(
+                    _write,
+                    attempts=8,
+                    base_delay=0.5,
+                    max_delay=10.0,
+                    log=log,
+                    what=f"requeue apply id={rid}",
+                )
+            except Exception as e:
+                summary["errors"] += 1
+                log(
+                    f"    ↳ DB update failed id={rid} after retries: {e} "
+                    "(continuing with next record)"
+                )
+                return
             if ok:
                 summary["updated"] += 1
                 merged = dict(rec)

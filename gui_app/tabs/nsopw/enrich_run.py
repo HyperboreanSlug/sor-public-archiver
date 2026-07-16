@@ -135,7 +135,15 @@ class NsopwEnrichRunMixin:
 
                 self.after(0, done)
             except Exception as e:
-                log(f"State enrich ERROR: {e}")
+                err_s = str(e)
+                log(f"State enrich ERROR: {err_s}")
+                if "locked" in err_s.lower() or "busy" in err_s.lower():
+                    log(
+                        "  Hint: another process may be writing the DB "
+                        "(Browse refresh, DeepFace, second enrich). "
+                        "Wait and re-run — per-record updates now retry "
+                        "automatically on lock."
+                    )
 
                 def fail():
                     self._nsopw_enrich_busy = False
@@ -143,8 +151,16 @@ class NsopwEnrichRunMixin:
                         self._set_running(False)
                     self.nsopw_enrich_start_btn.configure(state="normal")
                     self.nsopw_enrich_cancel_btn.configure(state="disabled")
-                    self.nsopw_enrich_progress.set(0)
-                    self.nsopw_enrich_status.configure(text=f"Error: {e}")
+                    # Keep progress bar where it was so partial work is visible
+                    short = err_s[:120] + ("…" if len(err_s) > 120 else "")
+                    self.nsopw_enrich_status.configure(
+                        text=f"Error (partial run may be saved): {short}"
+                    )
+                    if hasattr(self, "_nsopw_refresh_state_dropdown"):
+                        try:
+                            self._nsopw_refresh_state_dropdown()
+                        except Exception:
+                            pass
 
                 self.after(0, fail)
             finally:

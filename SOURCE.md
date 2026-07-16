@@ -100,9 +100,9 @@ data/        # offenders.db, report_pages, settings (runtime)
 
 | Package | Composition |
 |---------|-------------|
-| `database/` | schema, inserts, queries, `dedupe_*` (name+DOB uses normalize_dob; URL dedupe respects identity hard-reject), `csv_*` (incl. `csv_repair_fl_sor`), sources + `sources_merge` / `sources_race_verify` (HTML consensus = listed race; scrub wrong PERSON_NBR bulk race), deepface_scans |
+| `database/` | schema, inserts, queries, `db_retry` (SQLite locked/busy multi-retry), `dedupe_*` (name+DOB uses normalize_dob; URL dedupe respects identity hard-reject), `csv_*` (incl. `csv_repair_fl_sor`), sources + `sources_merge` / `sources_race_verify` (HTML consensus = listed race; scrub wrong PERSON_NBR bulk race), deepface_scans + `deepface_scan_hits` (recompute is_hit after race edits) |
 | `nsopw/` | `client_*`, `builder_*` (requeue_inc + requeue_work), search_plan, parallel (same-jurisdiction concurrency) |
-| `reports/` | `fetcher_*` (crime tables, PA PDF ethnicity), `pdf_fields`, util, photos; `public_links` (FDLE + MA URL fixes) |
+| `reports/` | `fetcher_*`, `identity_gate` + `identity_audit` (NUCLEAR: name+DOB+photo+link verification; never wrong person), `pdf_fields`, util, photos; `public_links` (FDLE + MA URL fixes). CLI: `scripts/verify_identity_full.py` |
 | `searcher_*` | race helpers + core/analyze/export + appearance (eye/hair) |
 | `ethnic_names_*` | load, signals, classify, confidence |
 | `cli_cmds_*` + `cli_parser` | CLI commands |

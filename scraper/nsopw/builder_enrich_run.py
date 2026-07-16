@@ -305,10 +305,30 @@ class BuilderEnrichRunMixin:
 
             if patch and rid is not None:
                 try:
-                    ok = self.db.update_offender(int(rid), patch)
+                    from scraper.database.db_retry import retry_on_db_lock
+
+                    lock = getattr(self, "_db_write_lock", None)
+
+                    def _write() -> bool:
+                        if lock is not None:
+                            with lock:
+                                return self.db.update_offender(int(rid), patch)
+                        return self.db.update_offender(int(rid), patch)
+
+                    ok = retry_on_db_lock(
+                        _write,
+                        attempts=8,
+                        base_delay=0.5,
+                        max_delay=10.0,
+                        log=_log,
+                        what=f"enrich apply id={rid}",
+                    )
                 except Exception as e:
                     summary["errors"] += 1
-                    _log(f"    ↳ DB update error: {e}")
+                    _log(
+                        f"    ↳ DB update error id={rid} after retries: {e} "
+                        "(continuing)"
+                    )
                     ok = False
                 if ok:
                     summary["updated"] += 1

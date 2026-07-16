@@ -20,6 +20,7 @@ from scraper.database.queries import QueryMixin
 from scraper.database.dedupe import DedupeMixin
 from scraper.database.csv_io import CsvMixin
 from scraper.database.deepface_scans import DeepfaceScanMixin, photo_fingerprint
+from scraper.database.db_retry import is_db_locked_error, retry_on_db_lock
 
 
 class Database(
@@ -42,6 +43,8 @@ __all__ = [
     "get_database",
     "backup_database_file",
     "photo_fingerprint",
+    "is_db_locked_error",
+    "retry_on_db_lock",
     "SCHEMA_VERSION",
     "DUPLICATE_STRATEGIES",
     "DEFAULT_DEDUPE_STRATEGIES",

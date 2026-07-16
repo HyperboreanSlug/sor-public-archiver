@@ -34,7 +34,8 @@ class BuilderInitMixin:
         # ever fetch from the same state website at the same time.
         report_threads: int = DEFAULT_REPORT_THREADS,
     ):
-        self.db = Database(db_path)
+        # Longer busy wait for enrich/requeue (GUI may also open the DB).
+        self.db = Database(db_path, busy_timeout_ms=60_000)
         self.ethnic_db = get_ethnic_database()
         search_delay = max(DEFAULT_MIN_SEARCH_INTERVAL, float(delay))
         report_delay = max(DEFAULT_MIN_REPORT_INTERVAL, float(report_delay))
@@ -46,6 +47,8 @@ class BuilderInitMixin:
             self.report_threads = DEFAULT_REPORT_THREADS
         # Guards BuildStats mutations made from report worker threads.
         self._stats_lock = threading.Lock()
+        # Serialize DB writes across parallel requeue apply paths.
+        self._db_write_lock = threading.Lock()
         # Avoid double-delay: either builder limiter OR client sleep, not both.
         client_search_sleep = search_delay if client_owned_delay else 0.0
         client_report_sleep = report_delay if client_owned_delay else 0.0
