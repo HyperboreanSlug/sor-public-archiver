@@ -401,27 +401,37 @@ def apply_sources_to_record(record: Dict[str, Any]) -> Dict[str, Any]:
 
     # Multi-source race representation
     race_disp = multi_source_display(sources, "race")
-    if race_disp:
-        record["race"] = race_disp
 
-    # When every online chart (html-verified) agrees, race is scrape-verified
-    from scraper.database.sources_race_verify import html_race_consensus
+    # When every online chart (html-verified) agrees, that is the listed race.
+    # Bulk CSV letters that disagree (often a wrong PERSON_NBR join) stay in
+    # sources_json for provenance only — they must not show as co-listed White.
+    from scraper.database.sources_race_verify import (
+        format_verified_race,
+        html_race_consensus,
+    )
 
     race_consensus = html_race_consensus(sources, require_verified=True)
     if race_consensus:
-        # Prefer multi-tag display when bulk still disagrees; else mark ✓
-        if not race_disp or " | " not in str(race_disp):
-            from scraper.database.sources_race_verify import format_verified_race
+        record["race"] = format_verified_race(race_consensus)
+    elif race_disp:
+        record["race"] = race_disp
 
-            record["race"] = format_verified_race(race_consensus)
-        elif race_disp:
-            record["race"] = race_disp
-
-    # Fill blanks from best primary when empty
+    # Fill blanks from best primary when empty (never treat race as ethnicity)
     for field in ("ethnicity", "gender", "height", "weight", "eye_color", "hair_color"):
         if not _norm_str(record.get(field)):
             pv = primary_field_value(sources, field)
             if pv:
+                # Guard: do not copy race codes into ethnicity
+                if field == "ethnicity" and _race_key(str(pv)) in (
+                    "WHITE", "BLACK", "ASIAN", "UNKNOWN", "AMERICAN INDIAN",
+                ):
+                    # Letter-only or pure race words are not ethnicity
+                    if re.fullmatch(
+                        r"(?i)W|B|A|I|U|White|Black|Asian|Unknown|Caucasian|"
+                        r"African American|Black or African American",
+                        str(pv).strip(),
+                    ):
+                        continue
                 record[field] = pv
 
     # Flags

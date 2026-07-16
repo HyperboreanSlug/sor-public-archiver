@@ -53,4 +53,61 @@ class DedupeFindFilterMixin:
         best = max(buckets.values(), key=len)
         return best if len(best) >= 2 else []
 
+    def _filter_hard_identity_members(
+        self,
+        members: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Keep richest row + members that do not hard-reject against it."""
+        from scraper.database.identity import score_identity_match
+
+        if len(members) < 2:
+            return list(members)
+        members = sorted(
+            members,
+            key=lambda r: (-self._row_richness(r), int(r.get("id") or 0)),
+        )
+        keep = members[0]
+        kept = [keep]
+        for m in members[1:]:
+            _sc, _reasons, hard = score_identity_match(keep, m)
+            if hard:
+                continue
+            kept.append(m)
+        return kept
+
+    def _filter_url_buckets_by_identity(
+        self,
+        raw_buckets: Dict[str, List[Dict[str, Any]]],
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """
+        Real flyer URLs: drop hard identity conflicts (wrong PERSON_NBR join).
+        Generic portal/CAPTCHA fan-out: keep full groups as unsafe clusters.
+        """
+        out: Dict[str, List[Dict[str, Any]]] = {}
+        for key, members in raw_buckets.items():
+            if len(members) < 2:
+                continue
+            sample_url = str(members[0].get("source_url") or key or "")
+            if self.is_generic_source_url(sample_url, group_count=len(members)):
+                out[key] = list(members)
+                continue
+            kept = self._filter_hard_identity_members(members)
+            if len(kept) >= 2:
+                out[key] = kept
+        return out
+
+    def _filter_ext_buckets_by_identity(
+        self,
+        raw_buckets: Dict[str, List[Dict[str, Any]]],
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """Always identity-filter external_id groups."""
+        out: Dict[str, List[Dict[str, Any]]] = {}
+        for key, members in raw_buckets.items():
+            if len(members) < 2:
+                continue
+            kept = self._filter_hard_identity_members(members)
+            if len(kept) >= 2:
+                out[key] = kept
+        return out
+
 

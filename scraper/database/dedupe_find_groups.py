@@ -103,7 +103,7 @@ class DedupeFindGroupsMixin:
             return self._groups_from_member_map(
                 "source_url",
                 "source_url (normalized)",
-                buckets,
+                self._filter_url_buckets_by_identity(buckets),
                 limit_groups=limit_groups,
                 include_unsafe=include_unsafe,
             )
@@ -121,7 +121,7 @@ class DedupeFindGroupsMixin:
             return self._groups_from_member_map(
                 "external_id",
                 "external_id (stable)",
-                buckets,
+                self._filter_ext_buckets_by_identity(buckets),
                 limit_groups=limit_groups,
                 include_unsafe=include_unsafe,
             )
@@ -141,7 +141,7 @@ class DedupeFindGroupsMixin:
         as ``06/09/1987`` vs ``1987-06-09`` (common FL CSV vs NSOPW).
         Only full 8-digit DOBs are used so year-only rows do not over-merge.
         """
-        from scraper.database.identity import normalize_dob, score_identity_match
+        from scraper.database.identity import normalize_dob
 
         s = (strategy or "").strip().lower()
         include_state = s == "name_state_dob"
@@ -179,24 +179,7 @@ class DedupeFindGroupsMixin:
                 key = f"{first}|{last}|{nd}"
             buckets[key].append(rec)
 
-        # Drop members that hard-reject against the richest row (middle/DOB)
-        filtered: Dict[str, List[Dict[str, Any]]] = {}
-        for key, members in buckets.items():
-            if len(members) < 2:
-                continue
-            members = sorted(
-                members,
-                key=lambda r: (-self._row_richness(r), int(r.get("id") or 0)),
-            )
-            keep = members[0]
-            kept = [keep]
-            for m in members[1:]:
-                _sc, _reasons, hard = score_identity_match(keep, m)
-                if hard:
-                    continue
-                kept.append(m)
-            if len(kept) >= 2:
-                filtered[key] = kept
+        filtered = self._filter_ext_buckets_by_identity(buckets)
 
         label = (
             "name+state+dob (normalized)"

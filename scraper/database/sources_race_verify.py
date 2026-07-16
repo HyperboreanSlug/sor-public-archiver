@@ -183,6 +183,61 @@ def sources_have_verified_race(sources: Sequence[Dict[str, Any]]) -> bool:
     return False
 
 
+def scrub_bulk_race_conflicting_with_html(record: Dict[str, Any]) -> bool:
+    """
+    Drop bulk CSV race when it conflicts with html-verified race *and* the bulk
+    source DOB conflicts with the record (wrong PERSON_NBR / flyer join).
+
+    Example: FL CSV PERSON_NBR 119449 = Josue Ferreira W / 1967 attached to
+    Antonio Jackson Black / 1983 whose flyer is personId=119449.
+
+    Returns True when sources_json was modified.
+    """
+    from scraper.database.identity import dobs_compatible
+    from scraper.database.sources import apply_sources_to_record, dumps_sources, parse_sources
+
+    sources = parse_sources(record.get("sources_json"))
+    if not sources:
+        return False
+    consensus = html_race_consensus(sources, require_verified=True)
+    if not consensus:
+        return False
+    ckey = race_key(consensus)
+    rec_dob = record.get("date_of_birth")
+    changed = False
+    for s in sources:
+        if not isinstance(s, dict):
+            continue
+        st = str(s.get("type") or "").strip().lower()
+        if st not in ("csv_bulk", "inferred", "nsopw"):
+            continue
+        if s.get("html_verified"):
+            continue
+        fields = dict(s.get("fields") or {})
+        br = fields.get("race")
+        if br is None or not str(br).strip():
+            continue
+        if race_key(str(br)) == ckey:
+            continue
+        bdob = fields.get("date_of_birth")
+        if not rec_dob or not bdob:
+            continue
+        if dobs_compatible(rec_dob, bdob) is not False:
+            continue
+        # Conflicting bulk demographics — not the same person as this listing
+        fields.pop("race", None)
+        s["fields"] = fields
+        origin = str(s.get("origin") or "").strip()
+        if "race_scrubbed" not in origin:
+            s["origin"] = f"{origin}+race_scrubbed" if origin else "race_scrubbed"
+        changed = True
+    if not changed:
+        return False
+    record["sources_json"] = dumps_sources(sources)
+    apply_sources_to_record(record)
+    return True
+
+
 def recover_report_enrichment_into_sources(record: Dict[str, Any]) -> bool:
     """
     Re-attach live-scrape race from raw_data_json.report_enrichment when

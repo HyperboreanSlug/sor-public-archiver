@@ -205,6 +205,13 @@ class MultiSourceTests(unittest.TestCase):
         self.assertIn("✓", disp)
         apply_sources_to_record(rec)
         self.assertIn("race_html_verified", str(rec.get("flags") or ""))
+        # Listed race is HTML consensus only — not "Black | White"
+        self.assertTrue(
+            str(rec.get("race") or "").startswith("Black"),
+            rec.get("race"),
+        )
+        self.assertNotIn("W", str(rec.get("race") or ""))
+        self.assertNotIn("White", str(rec.get("race") or ""))
         # CSV re-tag must not wipe HTML Black
         csv_again = make_source(
             source_type="csv_bulk",
@@ -227,6 +234,66 @@ class MultiSourceTests(unittest.TestCase):
             )
         )
         self.assertIn("Black", str(rec.get("race") or ""))
+        self.assertNotIn("W", str(rec.get("race") or ""))
+
+    def test_scrub_wrong_person_csv_race(self) -> None:
+        """Bulk W + foreign DOB scrubbed when HTML verifies Black."""
+        from scraper.database.sources_race_verify import (
+            scrub_bulk_race_conflicting_with_html,
+        )
+
+        url = "https://offender.fdle.state.fl.us/offender/sops/flyer.jsf?personId=119449"
+        rec = {
+            "first_name": "ANTONIO",
+            "middle_name": "DARRELL",
+            "last_name": "JACKSON",
+            "date_of_birth": "1983-06-19",
+            "race": "W",
+            "external_id": "119449",
+            "state": "FL",
+            "source_url": url,
+        }
+        attach_source_to_record(
+            rec,
+            make_source(
+                source_type="csv_bulk",
+                jurisdiction="FL",
+                origin="fl_sor",
+                external_id="119449",
+                source_url=url,
+                # Wrong person (Ferreira) demographics under same PERSON_NBR
+                fields={
+                    "race": "W",
+                    "date_of_birth": "06/18/1967",
+                    "height": "510",
+                    "weight": "170",
+                },
+            ),
+        )
+        attach_source_to_record(
+            rec,
+            make_source(
+                source_type="report_html",
+                jurisdiction="FL",
+                origin="report_fetch",
+                external_id="119449",
+                source_url=url,
+                fields={"race": "Black", "gender": "Male"},
+                html_verified=True,
+                html_status="ok",
+            ),
+            prefer_new_fields=True,
+        )
+        self.assertTrue(scrub_bulk_race_conflicting_with_html(rec))
+        self.assertTrue(str(rec.get("race") or "").startswith("Black"))
+        self.assertNotIn("W", str(rec.get("race") or ""))
+        srcs = parse_sources(rec["sources_json"])
+        csv_races = [
+            (s.get("fields") or {}).get("race")
+            for s in srcs
+            if s.get("type") == "csv_bulk"
+        ]
+        self.assertTrue(all(not r for r in csv_races))
 
     def test_enrichment_recover_marks_verified_black(self) -> None:
         import json

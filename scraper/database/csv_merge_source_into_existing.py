@@ -43,14 +43,17 @@ class MergeSourceIntoExistingCsvMixin:
         if not existing:
             return False
 
-        # Guard: never merge when DOB/middle conflict (even if caller passed id)
+        # Guard: never merge when DOB/middle/name conflict (even if caller passed id).
+        # FL PERSON_NBR can collide with flyer personId for a different person —
+        # hard reject must always win over shared external_id / URL.
         _ok, _sc, reasons = should_merge_records(incoming, existing, min_score=5)
         _s, _r, hard = score_identity_match(incoming, existing)
-        if hard or (not _ok and "external_id" not in (_r or [])):
-            # Allow same external_id path only when not hard-rejected
+        if hard:
+            return False
+        if not _ok and "external_id" not in (_r or []):
             ext_i = str(incoming.get("external_id") or "").strip()
             ext_e = str(existing.get("external_id") or "").strip()
-            if hard or not (ext_i and ext_e and ext_i.casefold() == ext_e.casefold()):
+            if not (ext_i and ext_e and ext_i.casefold() == ext_e.casefold()):
                 return False
 
         merged_sources = merge_sources_lists(
