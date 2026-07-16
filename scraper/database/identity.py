@@ -29,16 +29,20 @@ def normalize_dob(value: Any) -> str:
     """
     Normalize DOB to YYYYMMDD when possible, else digits-only.
 
-    Accepts ISO, US MM/DD/YYYY, and bare digit strings.
+    Accepts ISO, US MM/DD/YYYY, bare digit strings, and NH-style
+    ``5/26/1990 Age: 36`` (age suffix ignored).
     """
     raw = str(value or "").strip()
     if not raw:
         return ""
+    # Drop trailing age annotations (NH public pages, etc.)
+    raw = re.split(r"\s+Age\s*:", raw, maxsplit=1, flags=re.IGNORECASE)[0].strip()
+    raw = re.sub(r"\s+", " ", raw)
     # ISO date prefix
     m = re.match(r"^(\d{4})-(\d{2})-(\d{2})", raw)
     if m:
         return f"{m.group(1)}{m.group(2)}{m.group(3)}"
-    # US MM/DD/YYYY
+    # US MM/DD/YYYY (also M/D/YYYY)
     m = re.match(r"^(\d{1,2})[/=-](\d{1,2})[/=-](\d{4})", raw)
     if m:
         mo, d, y = int(m.group(1)), int(m.group(2)), m.group(3)

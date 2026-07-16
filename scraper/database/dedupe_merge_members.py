@@ -67,7 +67,16 @@ class DedupeMergeMembersMixin:
             pass
 
         # 1) Union multi-value / multi-listing fields
+        # Race/ethnicity are rewritten from sources_json above — do not string-union
+        # letter codes onto the multi-source display (e.g. "Black [FL·html✓] | B").
+        skip_union = set()
+        if "race" in updates or "sources_json" in updates:
+            skip_union.add("race")
+        if "sources_json" in updates:
+            skip_union.add("ethnicity")
         for col in _MERGE_UNION_FIELDS:
+            if col in skip_union:
+                continue
             merged = cls._union_field_values(*(r.get(col) for r in all_rows))
             cur = str(keep.get(col) or "").strip()
             if merged and merged != cur:

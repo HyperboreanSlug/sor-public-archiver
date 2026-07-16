@@ -22,6 +22,76 @@ class IdentityUnitTests(unittest.TestCase):
     def test_dob_conflict(self):
         self.assertIs(dobs_compatible("01/09/1978", "1973-10-29"), False)
         self.assertIs(dobs_compatible("1978-01-09", "01/09/1978"), True)
+        self.assertIs(dobs_compatible("06/09/1987", "1987-06-09"), True)
+
+    def test_name_dob_dedupe_normalizes_formats(self):
+        """US MM/DD/YYYY and ISO YYYY-MM-DD must group as one person."""
+        db = Database(":memory:")
+        try:
+            a = db.insert_offender(
+                {
+                    "first_name": "Jackson",
+                    "last_name": "Alexander",
+                    "date_of_birth": "06/09/1987",
+                    "state": "FL",
+                    "race": "B",
+                    "external_id": "70152",
+                    "height": "602",
+                    "weight": "180",
+                    "source_url": (
+                        "https://offender.fdle.state.fl.us/offender/sops/"
+                        "flyer.jsf?personId=70152"
+                    ),
+                }
+            )
+            b = db.insert_offender(
+                {
+                    "first_name": "JACKSON",
+                    "middle_name": "WILLIAM",
+                    "last_name": "ALEXANDER",
+                    "date_of_birth": "1987-06-09",
+                    "state": "FL",
+                    "race": "Black",
+                    "external_id": "59640",
+                    "height": "6'02\"",
+                    "weight": "180 lbs",
+                    "photo_path": "data/photos/j.jpg",
+                    "report_html_path": "data/html/j.html",
+                    "source_url": (
+                        "https://offender.fdle.state.fl.us/offender/sops/"
+                        "flyer.jsf?personId=59640"
+                    ),
+                }
+            )
+            groups = db.find_duplicate_groups("name_dob")
+            self.assertEqual(len(groups), 1)
+            ids = set(groups[0]["ids"])
+            self.assertEqual(ids, {a, b})
+            # Prefer richer HTML/photo row as survivor
+            self.assertEqual(groups[0]["keep_id"], b)
+            live = db.remove_duplicates(
+                "name_dob", dry_run=False, merge_fields=True, safe_only=True
+            )
+            self.assertEqual(live["deleted"], 1)
+            self.assertEqual(db.get_total_count(), 1)
+            kept = db.get_offender_by_id(b)
+            assert kept is not None
+            self.assertEqual(kept.get("id"), b)
+            # DOB still present (either format OK)
+            self.assertTrue(dobs_compatible(kept.get("date_of_birth"), "06/09/1987"))
+            # Both registry ids retained
+            ext = str(kept.get("external_id") or "")
+            self.assertIn("59640", ext)
+            self.assertIn("70152", ext)
+        finally:
+            db.close()
+
+    def test_normalize_dob_strips_age_suffix(self):
+        from scraper.database.identity import normalize_dob
+
+        self.assertEqual(normalize_dob("5/26/1990 Age: 36"), "19900526")
+        self.assertEqual(normalize_dob("06/09/1987"), "19870609")
+        self.assertEqual(normalize_dob("1987-06-09"), "19870609")
 
     def test_fl_vs_co_patel_not_merged(self):
         fl = {

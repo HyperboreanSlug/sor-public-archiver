@@ -127,6 +127,89 @@ class DedupeFindGroupsMixin:
             )
         raise ValueError(f"Normalized grouping not defined for {strategy!r}")
 
+    def _find_duplicate_groups_normalized_name_dob(
+        self,
+        strategy: str,
+        *,
+        limit_groups: Optional[int] = None,
+        include_unsafe: bool = True,
+    ) -> List[Dict[str, Any]]:
+        """
+        Group by first+last(+state)+DOB using normalize_dob.
+
+        SQL ``LOWER(TRIM(date_of_birth))`` misses the same calendar day written
+        as ``06/09/1987`` vs ``1987-06-09`` (common FL CSV vs NSOPW).
+        Only full 8-digit DOBs are used so year-only rows do not over-merge.
+        """
+        from scraper.database.identity import normalize_dob, score_identity_match
+
+        s = (strategy or "").strip().lower()
+        include_state = s == "name_state_dob"
+        if s not in ("name_dob", "name_state_dob"):
+            raise ValueError(f"Name/DOB normalized grouping not defined for {strategy!r}")
+
+        rows = self._conn.execute(
+            """
+            SELECT * FROM offenders
+            WHERE first_name IS NOT NULL AND TRIM(first_name) != ''
+              AND last_name IS NOT NULL AND TRIM(last_name) != ''
+              AND date_of_birth IS NOT NULL AND TRIM(date_of_birth) != ''
+            """
+        ).fetchall()
+        buckets: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+        for row in rows:
+            rec = dict(row)
+            first = str(rec.get("first_name") or "").strip().casefold()
+            last = str(rec.get("last_name") or "").strip().casefold()
+            nd = normalize_dob(rec.get("date_of_birth"))
+            if not first or not last or len(nd) != 8:
+                continue
+            if include_state:
+                st = (
+                    str(rec.get("state") or rec.get("source_state") or "")
+                    .strip()
+                    .upper()
+                )
+                if " | " in st:
+                    st = st.split(" | ", 1)[0].strip()
+                if not st:
+                    continue
+                key = f"{first}|{last}|{st}|{nd}"
+            else:
+                key = f"{first}|{last}|{nd}"
+            buckets[key].append(rec)
+
+        # Drop members that hard-reject against the richest row (middle/DOB)
+        filtered: Dict[str, List[Dict[str, Any]]] = {}
+        for key, members in buckets.items():
+            if len(members) < 2:
+                continue
+            members = sorted(
+                members,
+                key=lambda r: (-self._row_richness(r), int(r.get("id") or 0)),
+            )
+            keep = members[0]
+            kept = [keep]
+            for m in members[1:]:
+                _sc, _reasons, hard = score_identity_match(keep, m)
+                if hard:
+                    continue
+                kept.append(m)
+            if len(kept) >= 2:
+                filtered[key] = kept
+
+        label = (
+            "name+state+dob (normalized)"
+            if include_state
+            else "name+dob (normalized)"
+        )
+        return self._groups_from_member_map(
+            s,
+            label,
+            filtered,
+            limit_groups=limit_groups,
+            include_unsafe=include_unsafe,
+        )
 
     def find_duplicate_groups(
         self,
@@ -145,10 +228,15 @@ class DedupeFindGroupsMixin:
 
         ``source_url`` / ``external_id`` use normalized identity keys so
         session tokens (e.g. ``uid=``) do not split the same person.
+        ``name_dob`` / ``name_state_dob`` normalize DOB formats (US vs ISO).
         """
         s = (strategy or "source_url").strip().lower()
         if s in ("source_url", "external_id"):
             return self._find_duplicate_groups_normalized_url(
+                s, limit_groups=limit_groups, include_unsafe=include_unsafe
+            )
+        if s in ("name_dob", "name_state_dob"):
+            return self._find_duplicate_groups_normalized_name_dob(
                 s, limit_groups=limit_groups, include_unsafe=include_unsafe
             )
 
