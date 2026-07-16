@@ -160,6 +160,23 @@ class FetcherFetchMixin:
                 except ValueError:
                     pass
 
+            # PDF public reports (PA Megan's Law "View Report")
+            if raw_bytes[:4] == b"%PDF" or "pdf" in content_type:
+                from scraper.reports.pdf_fields import (
+                    extract_pdf_text,
+                    fields_from_pdf_text,
+                    merge_pdf_fields,
+                )
+
+                pdf_fields = fields_from_pdf_text(extract_pdf_text(raw_bytes))
+                merge_pdf_fields(result, pdf_fields, overwrite=False)
+                result["report_fetch_ok"] = self._has_demographics(result)
+                if result["report_fetch_ok"]:
+                    result["report_page_fetched"] = True
+                    result["report_source"] = "pdf"
+                self._pace()
+                return result
+
             text = raw_bytes.decode("utf-8", errors="replace")
             block = self._page_block_reason(text)
             if block and ("captcha" in block or "waf" in block):
@@ -186,6 +203,10 @@ class FetcherFetchMixin:
                 )
                 if dedicated:
                     result["photo_url"] = dedicated[0]
+            # PA: ethnicity only appears on the "View Report" PDF, not PhysDesc HTML
+            self._enrich_from_pa_public_pdf(
+                result, text, report_url, jurisdiction
+            )
             result["report_fetch_ok"] = self._has_demographics(result)
             if resp.status_code == 200 and len(text) > 500:
                 result["report_page_fetched"] = True
@@ -288,9 +309,17 @@ class FetcherFetchMixin:
             return True
         if "search-agreement" in url_l or "/terms" in url_l or "agreement.jsf" in url_l:
             return True
+        # PA Megan's Law terms gate
+        if "termsandconditions" in url_l or "acceptterms" in url_l:
+            return True
+        if "meganslaw.psp.pa.gov" in url_l and "terms" in low and "accept" in low:
+            if "physdesc" not in url_l and "offenderdetails" not in url_l:
+                return True
         if 'name="agree"' in low or "name='agree'" in low or 'id="agree"' in low:
             if re.search(r"continue|i agree|terms\s*&\s*conditions|disclaimer", low):
                 return True
+        if "termsaccepted" in low and ("acceptterms" in low or "accept" in low):
+            return True
         if "you must agree to the terms" in low:
             return True
         if "you must click on the" in low and "continue" in low and "disclaimer" in low:
@@ -332,5 +361,49 @@ class FetcherFetchMixin:
         except Exception:
             pass
         return resp
+
+    def _enrich_from_pa_public_pdf(
+        self,
+        result: Dict[str, Any],
+        html: str,
+        report_url: str,
+        jurisdiction: str,
+    ) -> None:
+        """Merge PA View Report PDF fields (ethnicity is PDF-only)."""
+        try:
+            from scraper.reports.pdf_fields import (
+                load_pa_public_report_fields,
+                merge_pdf_fields,
+                should_try_pa_public_report,
+            )
+
+            base_u = str(result.get("report_final_url") or report_url)
+            if not should_try_pa_public_report(html, base_u, jurisdiction):
+                return
+            need_eth = not str(result.get("ethnicity") or "").strip()
+
+            def _pdf_bytes(u: str):
+                r, _ = self._get_with_https_fallback(u)
+                passed = self._click_through_disclaimers(r, max_hops=3)
+                if passed is not None:
+                    r = passed
+                    body0 = getattr(r, "content", b"") or b""
+                    ct = (
+                        (getattr(r, "headers", {}) or {}).get("Content-Type", "") or ""
+                    ).lower()
+                    if body0[:4] != b"%PDF" and "pdf" not in ct:
+                        r, _ = self._get_with_https_fallback(u)
+                body = getattr(r, "content", None) or b""
+                return body if body[:4] == b"%PDF" else None
+
+            pdf_fields = load_pa_public_report_fields(_pdf_bytes, html, base_u)
+            if not pdf_fields:
+                return
+            merge_pdf_fields(result, pdf_fields, overwrite=False)
+            if need_eth and pdf_fields.get("ethnicity"):
+                result["ethnicity"] = pdf_fields["ethnicity"]
+            result["pa_pdf_enriched"] = True
+        except Exception:
+            return
 
 

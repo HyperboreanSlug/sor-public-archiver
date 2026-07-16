@@ -101,11 +101,17 @@ class FetcherDisclaimerMixin:
         candidates = []
         for form in soup.find_all("form"):
             inputs = form.find_all("input")
+            buttons = form.find_all("button")
+            action = (form.get("action") or "").lower()
             blob = " ".join(
                 f"{(i.get('name') or '')} {(i.get('id') or '')} {(i.get('value') or '')} "
                 f"{(i.get('type') or '')}"
                 for i in inputs
             ).lower()
+            blob += " " + " ".join(
+                (b.get_text(" ", strip=True) or "") for b in buttons
+            ).lower()
+            blob += " " + action
             score = 0
             if re.search(r"\bagree\b|\baccept\b|\bterms\b", blob):
                 score += 2
@@ -119,6 +125,8 @@ class FetcherDisclaimerMixin:
                 score += 3
             if "acceptform" in blob or "submitlogin" in blob.replace(":", ""):
                 score += 2
+            if "acceptterms" in action or "termsaccepted" in blob:
+                score += 3
             if score >= 2:
                 candidates.append((score, form))
         if not candidates:
@@ -184,6 +192,22 @@ class FetcherDisclaimerMixin:
             # Rare text fields
             if name.lower() in ("agree", "accept"):
                 data[name] = val or "1"
+
+        # <button type="submit">Accept</button> (PA Megan's Law — no name attr)
+        if not submit_picked:
+            for btn in form.find_all("button"):
+                btype = (btn.get("type") or "submit").lower()
+                if btype not in ("submit", ""):
+                    continue
+                btext = (btn.get_text(" ", strip=True) or "").lower()
+                bname = (btn.get("name") or "").strip()
+                if re.search(r"do\s*not|don't|disagree|decline|cancel", btext):
+                    continue
+                if re.search(r"accept|agree|continue|enter|yes|proceed|ok", btext):
+                    if bname:
+                        data[bname] = btn.get("value") or btn.get_text(" ", strip=True) or "Accept"
+                    submit_picked = True
+                    break
 
         # Ensure agree + continue exist (WatchSystems pattern)
         keys_l = {k.lower() for k in data}

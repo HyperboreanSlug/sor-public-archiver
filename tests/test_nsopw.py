@@ -243,6 +243,52 @@ class ReportFetcherTests(unittest.TestCase):
             Database.normalize_identity_url(bad),
         )
 
+    def test_pa_pdf_ethnicity_fields(self):
+        """PA public report PDF text exposes Ethnicity not present on PhysDesc HTML."""
+        from scraper.reports.pdf_fields import (
+            fields_from_pdf_text,
+            find_pa_public_report_url,
+            should_try_pa_public_report,
+        )
+
+        pdf_text = """
+        PEDRO ALVAREZ
+        Height : 
+        5'10"
+        Eyes : 
+        BROWN
+        Ethnicity : 
+        HISPANIC OR 
+        LATINO
+        Race:
+        Gender:
+        WHITE
+        MALE
+        1988
+        Year of Birth :
+        """
+        fields = fields_from_pdf_text(pdf_text)
+        self.assertEqual(fields.get("ethnicity"), "HISPANIC OR LATINO")
+        self.assertEqual(fields.get("race"), "WHITE")
+        self.assertEqual(fields.get("gender"), "MALE")
+        self.assertEqual(fields.get("date_of_birth"), "1988")
+
+        html = (
+            '<a class="btn" href="/Reports/MegansOffenderReports'
+            '?OffenderID=34711&amp;ReportName=OffenderPublicRpt">View Report</a>'
+        )
+        url = find_pa_public_report_url(
+            html, "https://www.meganslaw.psp.pa.gov/OffenderDetails/PhysDesc/34711"
+        )
+        self.assertIsNotNone(url)
+        self.assertIn("OffenderID=34711", url or "")
+        self.assertTrue(
+            should_try_pa_public_report(html, "https://www.meganslaw.psp.pa.gov/x", "PA")
+        )
+        self.assertTrue(
+            should_try_pa_public_report(html, "https://x", "PA | FL")
+        )
+
     def test_fl_border_panel_cells(self):
         """Florida FDLE flyer: alternating borderPanelCell label/value."""
         html = """
