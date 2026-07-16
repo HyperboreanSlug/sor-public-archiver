@@ -44,6 +44,10 @@ KNOWN_CHROME_MD5: Set[str] = {
     "d8c95963fee283a4ad2a87bb1b5620f7",
     # SC HTML chrome: blue/green speech-bubble "?" help icon (108×109)
     "a94c8c8a42da56b64bdf75a7a47bbd49",
+    # iCrimeWatch / multi-state "NO PHOTO AVAILABLE" stub (200×200, ~4.4 KB)
+    "9850c1a72ea77853428c9bf906c57f44",
+    # WV State Police badge embedded on every HTML page (420×413 PNG, ~90 KB)
+    "9ef0a2a39dad28f396d92f84a355ac8b",
     # FL FDLE flyer QR codes (link / mobile app) — 125×125 B/W modules
     "8ab6b91a5184c1aae0f58836d0896250",
     "58ecc7edf31667e3570bc0718a6af97b",
@@ -56,6 +60,8 @@ _CHROME_URL_RE = re.compile(
     r"header|footer|nav|seal|badge|favicon|clear\.gif|blank\.gif|"
     r"help|question|chat|speech|tooltip|info\.gif|info\.png|"
     r"qr[_-]?code|/qr/|\.qr\b|"
+    r"noimage|nophoto|no[_-]?photo|photo[_-]?unavailable|unavailable[_-]?photo|"
+    r"default[_-]?photo|missing[_-]?photo|photo[_-]?not[_-]?available|"
     r"/offices/|app_themes|webresource\.axd)",
     re.I,
 )
@@ -107,6 +113,14 @@ def url_looks_like_chrome(url: str) -> bool:
         return True
     if url_has_empty_image_id(low):
         return True
+    # Explicit no-photo stubs always win (even on otherwise "image" hosts)
+    if re.search(
+        r"noimage|nophoto|no[_-]?photo|photo[_-]?unavailable|"
+        r"unavailable[_-]?photo|default[_-]?photo|missing[_-]?photo|"
+        r"photo[_-]?not[_-]?available",
+        low,
+    ):
+        return True
     if _CHROME_URL_RE.search(low):
         # Dedicated mugshot endpoints still win even if path is noisy
         if any(
@@ -133,6 +147,9 @@ def url_looks_like_chrome(url: str) -> bool:
                     "favicon",
                     "help",
                     "question",
+                    "badge",
+                    "noimage",
+                    "nophoto",
                 )
             ):
                 return True

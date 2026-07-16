@@ -11,7 +11,11 @@ from scraper.mugshot_ethnicity.labels import (
     normalize_face_label,
 )
 from scraper.mugshot_ethnicity.models import FaceEthnicityScore, GrossMisclassHit
-from scraper.mugshot_ethnicity.photo_quality import is_placeholder_photo, placeholder_reason
+from scraper.mugshot_ethnicity.photo_quality import placeholder_reason
+from scraper.mugshot_ethnicity.photo_resolve import (
+    photo_usable_for_scan,
+    resolve_local_photo,
+)
 from scraper.mugshot_ethnicity.scorer import BackendUnavailableError, MugshotEthnicityScorer
 from scraper.searcher import Misclassification, _canonical_race_key, format_race_label
 
@@ -214,8 +218,12 @@ def load_deepface_hits_as_misclass(
         out: List[Misclassification] = []
         for r in rows:
             photo = (r.get("photo_path") or "").strip()
-            # Hide false hits that were scored on silhouette stubs
-            if photo and is_placeholder_photo(photo):
+            df0 = r.get("_deepface") or {}
+            scan_photo = (df0.get("scan_photo_path") or "").strip()
+            # Drop stale hits (photo cleared) and chrome/placeholder faces
+            if not photo_usable_for_scan(photo):
+                continue
+            if scan_photo and not photo_usable_for_scan(scan_photo):
                 continue
             if revalidate:
                 df = r.get("_deepface") or {}
@@ -361,19 +369,22 @@ def scan_gross_misclassifications(
         if not _race_is_target(race, targets):
             continue
         photo = (rec.get("photo_path") or "").strip()
-        if require_photo and (not photo or not Path(photo).is_file()):
+        resolved = resolve_local_photo(photo) if photo else None
+        if require_photo and resolved is None:
             continue
         try:
             oid = int(rec["id"]) if rec.get("id") is not None else None
         except (TypeError, ValueError):
             oid = None
-        # Skip SOR silhouette stubs (white bg + black outline) — not real faces
-        if photo and is_placeholder_photo(photo):
+        # Skip SOR silhouette stubs / shared site chrome — not real faces
+        if photo and not photo_usable_for_scan(photo):
             skipped_placeholder += 1
             # Persist as non-hit so skip_scanned can avoid re-touching them
             if persist and oid is not None:
                 try:
-                    reason_stub = placeholder_reason(photo) or "placeholder"
+                    reason_stub = (
+                        placeholder_reason(resolved or photo) or "placeholder"
+                    )
                     face_stub = FaceEthnicityScore(
                         photo_path=photo,
                         top_label="unknown",
@@ -440,8 +451,8 @@ def scan_gross_misclassifications(
                 ):
                     continue
                 prior_photo = (rec.get("photo_path") or "").strip()
-                # Drop prior false hits that were scored on silhouette stubs
-                if prior_photo and is_placeholder_photo(prior_photo):
+                # Drop stale hits (cleared photo) and chrome/placeholder stubs
+                if not photo_usable_for_scan(prior_photo):
                     continue
                 face = FaceEthnicityScore(
                     photo_path=prior_photo,

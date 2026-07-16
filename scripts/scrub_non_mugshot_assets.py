@@ -22,6 +22,7 @@ from scraper.mugshot_ethnicity.photo_quality import (  # noqa: E402
     is_non_mugshot,
     non_mugshot_reason,
     url_has_empty_image_id,
+    url_looks_like_chrome,
 )
 
 DB = ROOT / "data" / "offenders.db"
@@ -128,6 +129,7 @@ def main() -> int:
     fixed = 0
     kept = 0
     cleared_urls = 0
+    demoted = 0
     if DB.is_file():
         conn = sqlite3.connect(DB)
         conn.row_factory = sqlite3.Row
@@ -137,7 +139,6 @@ def main() -> int:
             "   OR (photo_url IS NOT NULL AND TRIM(photo_url) != '')"
         ).fetchall()
         updates: list[tuple[str | None, str | None, int]] = []
-        cleared_urls = 0
         for r in rows:
             oid = int(r["id"])
             raw = (r["photo_path"] or "").strip()
@@ -172,13 +173,19 @@ def main() -> int:
             elif raw:
                 kept += 1
 
-            # Drop empty CallImage?imgID= / ImageId=0 so we never re-fetch stubs
-            if url and url_has_empty_image_id(url):
+            # Drop empty CallImage?imgID= / ImageId=0 / noimage stubs
+            if url and (
+                url_has_empty_image_id(url) or url_looks_like_chrome(url)
+            ):
                 new_url = None
                 cleared_urls += 1
                 changed = True
+                # noimage.jpg bodies must not stay as mugshots either
+                if new_path and path is not None and is_non_mugshot(path):
+                    new_path = None
+                    cleared += 1
                 if not (path is not None and is_non_mugshot(path)):
-                    print(f"  clear url id={oid}: empty image id")
+                    print(f"  clear url id={oid}: chrome/empty image url")
 
             if changed:
                 updates.append((new_path, new_url, oid))
@@ -188,8 +195,48 @@ def main() -> int:
                 updates,
             )
             conn.commit()
+
+        # Demote DeepFace hits scored on missing / chrome photos
+        demoted = 0
+        try:
+            from scraper.mugshot_ethnicity.photo_resolve import photo_usable_for_scan
+
+            scan_rows = conn.execute(
+                "SELECT offender_id, photo_path, is_hit FROM deepface_scans "
+                "WHERE is_hit = 1"
+            ).fetchall()
+            for s in scan_rows:
+                oid = int(s["offender_id"])
+                scan_pp = (s["photo_path"] or "").strip()
+                o_row = conn.execute(
+                    "SELECT photo_path FROM offenders WHERE id = ?", (oid,)
+                ).fetchone()
+                o_pp = (o_row["photo_path"] if o_row else None) or ""
+                o_pp = str(o_pp).strip()
+                bad = False
+                if not photo_usable_for_scan(o_pp):
+                    bad = True
+                elif scan_pp and not photo_usable_for_scan(scan_pp):
+                    bad = True
+                if bad:
+                    demoted += 1
+                    if not dry:
+                        conn.execute(
+                            "UPDATE deepface_scans SET is_hit = 0, "
+                            "severity = NULL, reason = NULL, "
+                            "error = COALESCE(error, 'demoted: non-mugshot or missing photo') "
+                            "WHERE offender_id = ?",
+                            (oid,),
+                        )
+            if not dry and demoted:
+                conn.commit()
+        except Exception as e:
+            print(f"  deepface demote skipped: {e}")
         conn.close()
-    print(f"DB: kept={kept} fixed={fixed} cleared_paths={cleared} cleared_urls={cleared_urls}")
+    print(
+        f"DB: kept={kept} fixed={fixed} cleared_paths={cleared} "
+        f"cleared_urls={cleared_urls} demoted_hits={demoted}"
+    )
 
     # --- Delete non-essential image files under report_pages ---
     deleted = 0

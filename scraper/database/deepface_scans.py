@@ -251,12 +251,27 @@ class DeepfaceScanMixin:
             params.append(int(limit))
         ids = [int(r[0]) for r in self._conn.execute(sql, params).fetchall()]
         out: List[Dict[str, Any]] = []
+        try:
+            from scraper.mugshot_ethnicity.photo_resolve import photo_usable_for_scan
+        except Exception:
+            photo_usable_for_scan = None  # type: ignore[assignment]
         for oid in ids:
             scan = self.get_deepface_scan(oid)
             rec = self.get_offender_by_id(oid)
             if not scan or not rec:
                 continue
             rec = dict(rec)
+            photo = (rec.get("photo_path") or "").strip()
+            scan_photo = (scan.get("photo_path") or "").strip()
+            # Never surface hits whose current mugshot is gone or is site chrome.
+            # (Shared SC help icons / noimage stubs used to score as face hits.)
+            if photo_usable_for_scan is not None:
+                if not photo_usable_for_scan(photo):
+                    continue
+                if scan_photo and not photo_usable_for_scan(scan_photo):
+                    continue
+            elif not photo:
+                continue
             rec["_deepface"] = {
                 "top_label": scan.get("top_label"),
                 "top_confidence": scan.get("top_confidence"),
@@ -269,6 +284,7 @@ class DeepfaceScanMixin:
                 "scanned_at": scan.get("scanned_at"),
                 "predicted_label": scan.get("predicted_label"),
                 "recorded_race_scan": scan.get("recorded_race"),
+                "scan_photo_path": scan_photo or None,
             }
             rec["_deepface_is_hit"] = True
             out.append(rec)

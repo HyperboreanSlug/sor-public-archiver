@@ -133,6 +133,62 @@ class MockScorerTests(unittest.TestCase):
             self.assertTrue(is_non_mugshot(p))
             self.assertIn("QR", (non_mugshot_reason(p) or "").upper())
 
+    def test_noimage_url_and_known_chrome_md5(self):
+        """iCrimeWatch noimage URL + known shared chrome hashes are rejected."""
+        from scraper.mugshot_ethnicity.photo_quality import (
+            KNOWN_CHROME_MD5,
+            clear_placeholder_cache,
+            is_non_mugshot,
+            url_looks_like_chrome,
+        )
+        from scraper.mugshot_ethnicity.photo_resolve import photo_usable_for_scan
+
+        self.assertTrue(
+            url_looks_like_chrome("https://icrimewatch.net/images/noimage.jpg")
+        )
+        self.assertTrue(
+            url_looks_like_chrome(
+                "https://example.com/photos/photo_not_available.png"
+            )
+        )
+        self.assertFalse(
+            url_looks_like_chrome(
+                "https://offender.fdle.state.fl.us/offender/CallImage?imgID=123"
+            )
+        )
+        # Known no-photo stub hash
+        self.assertIn(
+            "9850c1a72ea77853428c9bf906c57f44", KNOWN_CHROME_MD5
+        )
+        # SC help icon / WV badge hashes used as shared "mugshots"
+        self.assertIn(
+            "a94c8c8a42da56b64bdf75a7a47bbd49", KNOWN_CHROME_MD5
+        )
+        self.assertIn(
+            "9ef0a2a39dad28f396d92f84a355ac8b", KNOWN_CHROME_MD5
+        )
+
+        clear_placeholder_cache()
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "chrome.jpg"
+            payload = b"\xff\xd8\xff" + b"\x22" * 2500
+            p.write_bytes(payload)
+            import hashlib
+
+            digest = hashlib.md5(payload).hexdigest()
+            self.assertTrue(photo_usable_for_scan(str(p)))
+            KNOWN_CHROME_MD5.add(digest)
+            try:
+                clear_placeholder_cache()
+                self.assertTrue(is_non_mugshot(p))
+                self.assertFalse(photo_usable_for_scan(str(p)))
+            finally:
+                KNOWN_CHROME_MD5.discard(digest)
+                clear_placeholder_cache()
+            self.assertFalse(photo_usable_for_scan(None))
+            self.assertFalse(photo_usable_for_scan(""))
+            self.assertFalse(photo_usable_for_scan(str(Path(tmp) / "missing.jpg")))
+
 
 class VerifyAndScanTests(unittest.TestCase):
     def setUp(self):
@@ -227,6 +283,53 @@ class VerifyAndScanTests(unittest.TestCase):
         self.assertEqual(len(hits), 1)
         self.assertEqual(hits[0].predicted_label, "black")
         self.assertEqual(hits[0].record["last_name"], "One")
+
+    def test_scan_skips_known_chrome_photo(self):
+        """Shared site chrome must never become a DeepFace hit."""
+        from scraper.mugshot_ethnicity.photo_quality import (
+            KNOWN_CHROME_MD5,
+            clear_placeholder_cache,
+        )
+
+        chrome = self.root / "shared_chrome.jpg"
+        payload = b"\xff\xd8\xff" + b"\x33" * 4000
+        chrome.write_bytes(payload)
+        import hashlib
+
+        digest = hashlib.md5(payload).hexdigest()
+        clear_placeholder_cache()
+        KNOWN_CHROME_MD5.add(digest)
+        try:
+            self.db.insert_offenders_batch(
+                [
+                    {
+                        "first_name": "ROBERT",
+                        "last_name": "TAFTA",
+                        "race": "WHITE",
+                        "photo_path": str(chrome),
+                        "state": "SC",
+                    },
+                    {
+                        "first_name": "JOSE",
+                        "last_name": "ARMENTA",
+                        "race": "WHITE",
+                        "photo_path": str(chrome),
+                        "state": "SC",
+                    },
+                ]
+            )
+            sc = MugshotEthnicityScorer(backend=MockBackend())
+            hits = scan_gross_misclassifications(
+                db=self.db,
+                scorer=sc,
+                min_confidence=0.85,
+                limit=50,
+                force_rescan=True,
+            )
+            self.assertEqual(hits, [])
+        finally:
+            KNOWN_CHROME_MD5.discard(digest)
+            clear_placeholder_cache()
 
     def test_verify_misclass_list(self):
         photo = self._photo("indian__0.92.jpg")
