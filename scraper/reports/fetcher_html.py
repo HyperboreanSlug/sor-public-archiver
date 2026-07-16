@@ -144,7 +144,7 @@ class FetcherHtmlMixin:
             for bad in (
                 "logo", "icon", "sprite", "pixel", "tracking", "1x1", "spacer",
                 "banner", "button", "header", "footer", "seal", "badge", "map",
-                "help", "question", "chat", "tooltip",
+                "help", "question", "chat", "tooltip", "qrcode", "qr-code", "/qr",
             ):
                 if bad in low:
                     score -= 8
@@ -244,6 +244,9 @@ class FetcherHtmlMixin:
                     "icon",
                     "sheriff's office",
                     "sheriffs office",
+                    "qr code",
+                    "qrcode",
+                    "mobile app",
                 )
             ):
                 # Keep real "offender photo" etc.
@@ -270,7 +273,13 @@ class FetcherHtmlMixin:
                         score += 30
                     elif "photo" in alt and "office" not in alt:
                         score += 18
-                    if any(k in alt for k in ("sheriff", "office", "search", "email", "tip", "logo")):
+                    if any(
+                        k in alt
+                        for k in (
+                            "sheriff", "office", "search", "email", "tip", "logo",
+                            "qr", "mobile app",
+                        )
+                    ):
                         score -= 25
                 try:
                     fsz = Path(local).stat().st_size

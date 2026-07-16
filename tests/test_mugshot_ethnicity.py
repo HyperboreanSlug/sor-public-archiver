@@ -100,6 +100,39 @@ class MockScorerTests(unittest.TestCase):
             img.save(p, format="JPEG", quality=90)
             self.assertTrue(is_placeholder_photo(p))
 
+    def test_qr_code_heuristic(self):
+        """High-contrast square module grid → not a mugshot."""
+        from scraper.mugshot_ethnicity.photo_quality import (
+            clear_placeholder_cache,
+            is_non_mugshot,
+            non_mugshot_reason,
+        )
+
+        try:
+            from PIL import Image, ImageDraw
+        except ImportError:
+            self.skipTest("Pillow required")
+
+        clear_placeholder_cache()
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "qr.jpg"
+            # Synthetic QR-like: 125×125 checker of 5px modules, B/W only
+            img = Image.new("L", (125, 125), color=255)
+            draw = ImageDraw.Draw(img)
+            mod = 5
+            for y in range(0, 125, mod):
+                for x in range(0, 125, mod):
+                    if ((x // mod) + (y // mod)) % 2 == 0:
+                        draw.rectangle((x, y, x + mod - 1, y + mod - 1), fill=0)
+            # Finder-style solid blocks in corners (boost black + structure)
+            for ox, oy in ((0, 0), (90, 0), (0, 90)):
+                draw.rectangle((ox, oy, ox + 30, oy + 30), fill=0)
+                draw.rectangle((ox + 5, oy + 5, ox + 25, oy + 25), fill=255)
+                draw.rectangle((ox + 10, oy + 10, ox + 20, oy + 20), fill=0)
+            img.save(p, format="JPEG", quality=95)
+            self.assertTrue(is_non_mugshot(p))
+            self.assertIn("QR", (non_mugshot_reason(p) or "").upper())
+
 
 class VerifyAndScanTests(unittest.TestCase):
     def setUp(self):

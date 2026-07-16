@@ -107,7 +107,7 @@ data/        # offenders.db, report_pages, settings (runtime)
 | `ethnic_names_*` | load, signals, classify, confidence |
 | `cli_cmds_*` + `cli_parser` | CLI commands |
 | `paths.py` + `app_settings.py` | Install-root path resolution; portable `db_path` across machines |
-| `mugshot_ethnicity/` | still denser — split next pass |
+| `mugshot_ethnicity/` | face ethnicity scan; `photo_quality` + `photo_quality_heuristics` (silhouette/QR/chrome) |
 | `db_sync*` | GitHub public DB sync (base + deltas + selective photos; overall % progress) |
 | `db_sync_progress` | Byte-weighted overall progress for sync/publish UI |
 | `db_publish_*` | Publisher-only: gate, row index, delta package, selective upload (this machine) |
