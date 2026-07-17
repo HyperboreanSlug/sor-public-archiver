@@ -175,6 +175,23 @@ class ReportsCardsAddMixin:
         ctk.CTkLabel(
             line1, text=f"  #{index}", font=FONT_SM, text_color=C["dim"],
         ).pack(side="left")
+        export_badge = ""
+        try:
+            from gui_app.shared.export_card_release import (
+                format_export_badge,
+                peek_release_number,
+            )
+
+            export_badge = format_export_badge(peek_release_number(rec))
+        except Exception:
+            export_badge = ""
+        if export_badge:
+            ctk.CTkLabel(
+                line1,
+                text=f"  {export_badge}",
+                font=FONT_SM,
+                text_color=C["accent"],
+            ).pack(side="left")
         status_lbl = ctk.CTkLabel(
             line1,
             text=self._reports_verdict_label_short(verdict),

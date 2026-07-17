@@ -11,7 +11,7 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 
 # Schema version - increment when schema changes
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 # Strategies for find/remove_duplicates
 DUPLICATE_STRATEGIES = (
@@ -81,6 +81,8 @@ _OFFENDER_INSERT_COLUMNS = (
     "photo_url",
     # JSON array of per-source field contributions (csv / nsopw / report HTML)
     "sources_json",
+    # Stable export-card number (re-export reuses; shown in Reports)
+    "export_number",
 )
 _OFFENDER_INSERT_SQL = (
     "INSERT INTO offenders ("

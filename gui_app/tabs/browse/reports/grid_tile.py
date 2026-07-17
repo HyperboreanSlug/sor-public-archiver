@@ -227,11 +227,24 @@ class ReportsGridTileMixin:
         meta_row = ctk.CTkFrame(card, fg_color="transparent", height=14)
         meta_row.pack(fill="x", padx=3, pady=(0, 0))
         meta_row.pack_propagate(False)
+        export_badge = ""
+        try:
+            from gui_app.shared.export_card_release import (
+                format_export_badge,
+                peek_release_number,
+            )
+
+            export_badge = format_export_badge(peek_release_number(rec))
+        except Exception:
+            export_badge = ""
+        left_meta = f"{conf_label} · {state}"
+        if export_badge:
+            left_meta = f"{export_badge} · {left_meta}"
         ctk.CTkLabel(
             meta_row,
-            text=f"{conf_label} · {state}",
+            text=left_meta,
             font=("Segoe UI", 9),
-            text_color=C["muted"],
+            text_color=C["accent"] if export_badge else C["muted"],
             anchor="w",
         ).pack(side="left")
         status_lbl = ctk.CTkLabel(

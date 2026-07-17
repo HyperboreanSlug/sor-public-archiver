@@ -16,7 +16,37 @@ class ReportsExportGridMixin:
                 rec["race"] = str(listed).strip()
         except Exception:
             pass
+        # Prefer app DB path so export_number lands on the open database
+        dbp = getattr(self, "db_path", None)
+        if dbp:
+            rec["_db_path"] = str(dbp)
         return rec
+
+    def _reports_sync_export_number(self, mc, record: Dict[str, Any]) -> None:
+        """Copy assigned export_number onto the live misclass/report row."""
+        num = record.get("export_number")
+        if num is None:
+            try:
+                from gui_app.shared.export_card_release import peek_release_number
+
+                num = peek_release_number(record)
+            except Exception:
+                num = None
+        if num is None:
+            return
+        try:
+            num_i = int(num)
+        except (TypeError, ValueError):
+            return
+        if isinstance(getattr(mc, "record", None), dict):
+            mc.record["export_number"] = num_i
+        # Also refresh any tree-side cache of the same offender
+        rid = (mc.record or {}).get("id") if isinstance(mc.record, dict) else None
+        by_iid = getattr(self, "_misclass_records_by_iid", None) or {}
+        if rid is not None:
+            for rec in by_iid.values():
+                if isinstance(rec, dict) and rec.get("id") == rid:
+                    rec["export_number"] = num_i
 
     def _reports_export_single_card(self, mc, btn=None) -> None:
         """Export one watermarked mugshot card to the Desktop (no dialog on success)."""
@@ -32,7 +62,8 @@ class ReportsExportGridMixin:
         def work():
             from gui_app.shared.export_card import export_record_card_to_desktop
 
-            return export_record_card_to_desktop(record)
+            path = export_record_card_to_desktop(record)
+            return {"path": path, "record": record}
 
         def done(result=None, error=None):
             if btn is not None:
@@ -43,8 +74,13 @@ class ReportsExportGridMixin:
             if error is not None:
                 messagebox.showerror("Export card", str(error))
                 return
-            path = result
-            msg = f"Card → {getattr(path, 'name', path)}"
+            payload = result if isinstance(result, dict) else {"path": result}
+            path = payload.get("path")
+            rec_out = payload.get("record") or record
+            self._reports_sync_export_number(mc, rec_out)
+            num = rec_out.get("export_number")
+            badge = f" · export #{num}" if num else ""
+            msg = f"Card → {getattr(path, 'name', path)}{badge}"
             try:
                 if hasattr(self, "report_status"):
                     self.report_status.configure(text=msg)
@@ -53,9 +89,15 @@ class ReportsExportGridMixin:
             except Exception:
                 pass
             try:
-                self.log_queue.put(f"Reports card export: {path}")
+                self.log_queue.put(f"Reports card export: {path}{badge}")
             except Exception:
                 pass
+            # Repaint so the export # badge appears on the card
+            if hasattr(self, "_reports_rebuild_cards"):
+                try:
+                    self._reports_rebuild_cards(refilter=False)
+                except Exception:
+                    pass
 
         if hasattr(self, "run_bg"):
             self.run_bg(work, done, name="report-card-export")
@@ -164,7 +206,13 @@ class ReportsExportGridMixin:
             except Exception:
                 pass
 
-        records = [dict(r) for r in recs]
+        records = []
+        dbp = str(getattr(self, "db_path", None) or "")
+        for r in recs:
+            d = dict(r)
+            if dbp:
+                d["_db_path"] = dbp
+            records.append(d)
 
         def work():
             return export_grid_to_desktop(records, layout=layout)
@@ -174,7 +222,14 @@ class ReportsExportGridMixin:
                 messagebox.showerror("Export grid", str(error))
                 return
             path = result
-            msg = f"Grid {layout} → {getattr(path, 'name', path)}"
+            # Persist export #s already written during render; refresh badges
+            nums = []
+            for rec in records:
+                n = rec.get("export_number")
+                if n is not None:
+                    nums.append(str(n))
+            badge = f" · export #{', #'.join(nums)}" if nums else ""
+            msg = f"Grid {layout} → {getattr(path, 'name', path)}{badge}"
             try:
                 if hasattr(self, "report_status"):
                     self.report_status.configure(text=msg)
@@ -182,8 +237,23 @@ class ReportsExportGridMixin:
                     self.stats_label.configure(text=msg)
             except Exception:
                 pass
+            if hasattr(self, "_reports_rebuild_cards"):
+                try:
+                    # Mirror numbers onto selected cache + sheet
+                    for rec in records:
+                        n = rec.get("export_number")
+                        rid = rec.get("id")
+                        if n is None or rid is None:
+                            continue
+                        for mc in list(getattr(self, "_report_items", None) or []):
+                            r = getattr(mc, "record", None)
+                            if isinstance(r, dict) and r.get("id") == rid:
+                                r["export_number"] = n
+                    self._reports_rebuild_cards(refilter=False)
+                except Exception:
+                    pass
             try:
-                self.log_queue.put(f"Reports grid export: {path}")
+                self.log_queue.put(f"Reports grid export: {path}{badge}")
             except Exception:
                 pass
             # No confirmation dialog — status bar + log are enough

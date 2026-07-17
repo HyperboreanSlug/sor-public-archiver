@@ -147,7 +147,9 @@ class SchemaMixin:
                 report_html_path TEXT,
                 -- Local photo archive + remote URL
                 photo_path TEXT,
-                photo_url TEXT
+                photo_url TEXT,
+                -- Sequential export-card number (stable per person across re-exports)
+                export_number INTEGER
             )
         """)
 
@@ -199,6 +201,7 @@ class SchemaMixin:
             "external_id": "TEXT",
             "middle_name": "TEXT",
             "sources_json": "TEXT",
+            "export_number": "INTEGER",
         }
         for name, typ in additions.items():
             if name not in cols:
