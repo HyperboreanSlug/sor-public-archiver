@@ -62,16 +62,19 @@ class DeepfaceSetupStatusMixin:
         try:
             import importlib.util
 
-            pkg = importlib.util.find_spec("deepface") is not None
+            pkg_df = importlib.util.find_spec("deepface") is not None
+            pkg_ff = importlib.util.find_spec("face_race") is not None
         except Exception:
-            pkg = False
+            pkg_df = False
+            pkg_ff = False
+        pkg = pkg_ff or pkg_df
 
         try:
             self.df_status_installed.configure(
                 text=(
                     "Installed: package found — checking runtime…"
                     if pkg
-                    else "Installed: No"
+                    else "Installed: No (need face-race and/or DeepFace)"
                 ),
                 text_color=C["accent"] if pkg else C["danger"],
             )
@@ -83,25 +86,31 @@ class DeepfaceSetupStatusMixin:
         except Exception:
             pass
 
-        home = Path.home() / ".deepface" / "weights"
-        try:
-            if home.is_dir():
-                files = [f for f in home.glob("*") if f.is_file()]
-                n = len(files)
-                size = sum(f.stat().st_size for f in files)
-                mb = size / (1024 * 1024)
-                self.df_status_weights.configure(
-                    text=f"Weights cache: {home}  ·  {n} files  ·  {mb:.1f} MB"
-                )
-            else:
-                self.df_status_weights.configure(
-                    text=f"Weights cache: not created yet ({home})"
-                )
-        except Exception:
+        ff_home = Path.home() / ".face_race" / "weights"
+        df_home = Path.home() / ".deepface" / "weights"
+
+        def _cache_line(label: str, home: Path) -> str:
             try:
-                self.df_status_weights.configure(text=f"Weights cache: {home}")
+                if home.is_dir():
+                    files = [f for f in home.glob("*") if f.is_file()]
+                    n = len(files)
+                    size = sum(f.stat().st_size for f in files)
+                    mb = size / (1024 * 1024)
+                    return f"{label}: {home}  ·  {n} files  ·  {mb:.1f} MB"
+                return f"{label}: not created yet ({home})"
             except Exception:
-                pass
+                return f"{label}: {home}"
+
+        try:
+            self.df_status_weights.configure(
+                text=(
+                    _cache_line("FairFace weights", ff_home)
+                    + "  |  "
+                    + _cache_line("DeepFace cache", df_home)
+                )
+            )
+        except Exception:
+            pass
 
         skip = os.environ.get("SOR_SKIP_DEEPFACE_INSTALL", "").strip().lower() in (
             "1", "true", "yes",
@@ -115,8 +124,8 @@ class DeepfaceSetupStatusMixin:
                 pass
 
         def worker() -> None:
-            runtime_ok = False
-            runtime_detail = "check failed"
+            df_runtime_ok = False
+            df_runtime_detail = "check failed"
             backends: Dict[str, bool] = {}
             err: Optional[str] = None
             try:
@@ -124,7 +133,7 @@ class DeepfaceSetupStatusMixin:
                 from scraper.mugshot_ethnicity.setup import deepface_runtime_ok
                 from scraper.mugshot_ethnicity.scorer import get_available_backends
 
-                runtime_ok, runtime_detail = deepface_runtime_ok()
+                df_runtime_ok, df_runtime_detail = deepface_runtime_ok()
                 backends = get_available_backends()
             except Exception as e:
                 err = str(e)
@@ -140,12 +149,19 @@ class DeepfaceSetupStatusMixin:
                             text_color=C["danger"],
                         )
                         return
-                    if runtime_ok:
-                        inst_txt = "Installed: Yes (runtime OK)"
+                    ff_ok = bool(backends.get("fairface"))
+                    df_ok = bool(df_runtime_ok and backends.get("deepface"))
+                    if ff_ok:
+                        inst_txt = "Installed: FairFace ready (primary)"
+                        if df_ok:
+                            inst_txt += " · DeepFace fallback OK"
                         inst_col = C["success"]
+                    elif df_ok:
+                        inst_txt = "Installed: DeepFace ready (FairFace missing)"
+                        inst_col = C["accent"]
                     elif pkg:
                         inst_txt = (
-                            f"Installed: package present but broken — {runtime_detail}"
+                            f"Installed: package present but broken — {df_runtime_detail}"
                         )
                         inst_col = C["danger"]
                     else:
@@ -154,14 +170,18 @@ class DeepfaceSetupStatusMixin:
                     self.df_status_installed.configure(
                         text=inst_txt, text_color=inst_col
                     )
-                    if runtime_ok and backends.get("deepface"):
-                        be = "deepface (ready)"
+                    # Scan default is auto: FairFace → DeepFace → CLIP
+                    if ff_ok:
+                        be = "fairface (default)"
                         col = C["success"]
+                    elif df_ok:
+                        be = "deepface (fallback — install face-race for FairFace)"
+                        col = C["accent"]
                     elif backends.get("clip"):
-                        be = "clip (fallback)"
+                        be = "clip (last resort)"
                         col = C["accent"]
                     else:
-                        be = "none — install / repair required for mugshot tools"
+                        be = "none — install face-race (FairFace) or DeepFace"
                         col = C["danger"]
                     self.df_status_backend.configure(
                         text=f"Preferred backend: {be}", text_color=col

@@ -70,9 +70,10 @@ class DeepfaceScanBuildMixin:
         )
         _muted(
             opt,
-            "Score mugshots with the local Race model. Flags high-confidence face "
-            "ethnicity that contradicts the registry race (default: face Black/Indian/Asian "
-            "while race is White). Does not use surnames. Configure weights under Setup.",
+            "Score mugshots with FairFace by default (DeepFace only if FairFace is "
+            "unavailable). Flags high-confidence face ethnicity that contradicts the "
+            "registry race (default: face Black/Indian/Asian while race is White). "
+            "Does not use surnames. Setup still manages DeepFace weights as fallback.",
         ).pack(anchor="w", padx=14, pady=(0, 8))
 
         grid = ctk.CTkFrame(opt, fg_color="transparent")

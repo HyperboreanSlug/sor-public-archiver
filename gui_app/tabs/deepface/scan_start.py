@@ -169,31 +169,28 @@ class DeepfaceScanStartMixin:
             hits = []
             err = None
             try:
-                from scraper.mugshot_ethnicity.setup import (
-                    configure_tf_keras_env,
-                    ensure_deepface,
-                )
+                from scraper.mugshot_ethnicity.setup import configure_tf_keras_env
                 from scraper.mugshot_ethnicity.scorer import (
                     BackendUnavailableError,
                     MugshotEthnicityScorer,
                 )
                 from scraper.mugshot_ethnicity.scanner import scan_gross_misclassifications
 
+                # Legacy TF env only needed if auto falls back to DeepFace.
                 configure_tf_keras_env()
-                ensure_deepface(
-                    auto_install=True,
-                    warm=True,
-                    log=self._deepface_scan_log_msg,
-                )
+                # Default: FairFace (face-race) → DeepFace → CLIP
                 try:
                     scorer = MugshotEthnicityScorer(
-                        backend="deepface",
-                        auto_install=False,
+                        backend="auto",
+                        auto_install=True,
                         log=self._deepface_scan_log_msg,
                     )
                 except BackendUnavailableError as e:
                     raise RuntimeError(str(e)) from e
 
+                self._deepface_scan_log_msg(
+                    f"Using backend: {scorer.backend_name}"
+                )
                 hits = scan_gross_misclassifications(
                     db_path=db_path,
                     scorer=scorer,

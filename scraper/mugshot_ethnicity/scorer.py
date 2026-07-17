@@ -19,7 +19,8 @@ class MugshotEthnicityScorer:
     Parameters
     ----------
     backend:
-        Backend name (``auto``, ``deepface``, ``clip``, ``mock``) or instance.
+        Backend name (``auto``, ``fairface``, ``deepface``, ``clip``, ``mock``)
+        or instance. ``auto`` prefers FairFace, then DeepFace, then CLIP.
     min_file_bytes:
         Skip tiny / broken photo stubs.
     cache:

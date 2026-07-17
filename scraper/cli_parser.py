@@ -160,8 +160,8 @@ Examples:
     p_mv.add_argument("--max-display", type=int, default=30)
     p_mv.add_argument(
         "--backend", default="auto",
-        choices=["auto", "deepface", "clip", "mock"],
-        help="Vision backend (auto prefers deepface, then clip)",
+        choices=["auto", "fairface", "deepface", "clip", "mock"],
+        help="Vision backend (auto prefers FairFace, then DeepFace, then CLIP)",
     )
     p_mv.add_argument("--include-no-photo", action="store_true")
     p_mv.add_argument("--export", type=str, help="Export CSV or JSON path")
@@ -185,7 +185,8 @@ Examples:
     p_ms.add_argument("--max-display", type=int, default=40)
     p_ms.add_argument(
         "--backend", default="auto",
-        choices=["auto", "deepface", "clip", "mock"],
+        choices=["auto", "fairface", "deepface", "clip", "mock"],
+        help="Vision backend (auto prefers FairFace, then DeepFace, then CLIP)",
     )
     p_ms.add_argument("--export", type=str, help="Export CSV or JSON path")
     _add_database_arg(p_ms)

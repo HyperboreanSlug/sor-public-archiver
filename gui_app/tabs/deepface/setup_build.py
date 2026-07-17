@@ -78,7 +78,8 @@ class DeepfaceSetupBuildMixin:
         )
         _muted(
             status_card,
-            "Local open-source face race model (no cloud). Used by mugshot verify/scan.",
+            "Local open-source face race model (no cloud). Scan defaults to FairFace; "
+            "DeepFace is legacy fallback. Used by mugshot verify/scan.",
         ).pack(anchor="w", padx=14, pady=(0, 8))
 
         self.df_status_installed = ctk.CTkLabel(

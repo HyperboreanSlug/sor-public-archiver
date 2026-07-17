@@ -31,13 +31,17 @@ import csv
 from pathlib import Path
 
 def _ensure_mugshot_backend(backend: str) -> None:
-    """Auto-install DeepFace when using auto/deepface backends."""
+    """Pre-warm only when DeepFace is explicitly requested.
+
+    ``auto`` / ``fairface`` are handled by ``MugshotEthnicityScorer``
+    (FairFace first, DeepFace only as fallback).
+    """
     b = (backend or "auto").strip().lower()
-    if b not in ("auto", "deepface"):
+    if b != "deepface":
         return
     from .mugshot_ethnicity import ensure_deepface
 
-    print("  Ensuring DeepFace is installed (local race model)…", flush=True)
+    print("  Ensuring DeepFace is installed (legacy backend)…", flush=True)
     ok = ensure_deepface(auto_install=True, warm=True, log=print)
     if not ok:
         print("  WARNING: DeepFace setup incomplete — scoring may fail.", flush=True)
