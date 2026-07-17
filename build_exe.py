@@ -93,6 +93,7 @@ def main() -> None:
         "scraper.nsopw_builder",
         "scraper.report_fetcher",
         "scraper.public_links",
+        "scraper.public_links_mi",
         "scraper.reports",
         "scraper.reports.fetcher",
         "scraper.reports.util",
