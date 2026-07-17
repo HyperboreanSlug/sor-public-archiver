@@ -39,11 +39,14 @@ def layout_capacity(layout: str) -> int:
 def render_export_grid(
     records: Sequence[Mapping[str, Any]],
     layout: str = "2x2",
+    *,
+    assign_number: bool = False,
 ) -> Image.Image:
     """Build a grid of mapa-style watermarked cards.
 
     Each cell is a full ``render_export_card`` (seal + @DoDeportations).
     Empty slots (fewer selections than capacity) are solid dark panels.
+    ``assign_number`` only for deliberate grid export to Desktop.
     """
     layout = normalize_layout(layout)
     rows, cols = _LAYOUTS[layout]
@@ -53,7 +56,7 @@ def render_export_grid(
     # Render watermarked cards first so empty panels match card size
     cards: List[Image.Image] = []
     for rec in recs:
-        img = render_export_card(rec).convert("RGBA")
+        img = render_export_card(rec, assign_number=assign_number).convert("RGBA")
         cards.append(img)
     cw, ch = (_CARD_W, _CARD_H)
     if cards:
@@ -82,9 +85,12 @@ def export_grid_to_desktop(
     records: Sequence[Mapping[str, Any]],
     layout: str = "2x2",
 ) -> Path:
-    """Render grid PNG to Desktop; return path."""
+    """Render grid PNG to Desktop; return path.
+
+    Deliberate export: assigns (or reuses) export numbers for each person.
+    """
     layout = normalize_layout(layout)
-    img = render_export_grid(records, layout=layout)
+    img = render_export_grid(records, layout=layout, assign_number=True)
     desktop = desktop_dir()
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     names = [safe_filename(person_name(r)) for r in list(records)[:4]]

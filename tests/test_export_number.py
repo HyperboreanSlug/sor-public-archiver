@@ -65,6 +65,35 @@ class ExportNumberTests(unittest.TestCase):
         self.assertEqual(format_export_badge(None), "")
         self.assertEqual(format_export_badge(0), "")
 
+    def test_footer_peek_does_not_mint(self):
+        """assign=False only peeks; assign=True is the deliberate export path."""
+        from unittest.mock import patch
+
+        from gui_app.shared.export_card_fields import arrest_datetime
+
+        rec = {"id": 777, "first_name": "No", "last_name": "Mint"}
+        with patch(
+            "gui_app.shared.export_card_release.release_number_for"
+        ) as mint, patch(
+            "gui_app.shared.export_card_release.peek_release_number",
+            return_value=None,
+        ):
+            self.assertEqual(arrest_datetime(rec, assign=False), "")
+            mint.assert_not_called()
+
+        with patch(
+            "gui_app.shared.export_card_release.release_number_for",
+            return_value=5,
+        ) as mint:
+            self.assertEqual(arrest_datetime(rec, assign=True), "No. 5")
+            mint.assert_called_once()
+
+    def test_footer_shows_existing_without_assign(self):
+        from gui_app.shared.export_card_fields import arrest_datetime
+
+        rec = {"id": 1, "export_number": 9, "first_name": "Has", "last_name": "Num"}
+        self.assertEqual(arrest_datetime(rec, assign=False), "No. 9")
+
 
 if __name__ == "__main__":
     unittest.main()

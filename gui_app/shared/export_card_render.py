@@ -44,8 +44,14 @@ _FOOTER_H = 56
 _NUMBER_SIZE = 36  # bottom-right export No. (larger than location text)
 
 
-def render_export_card(record: Mapping[str, Any]) -> Image.Image:
-    """Premium watermarked card: large photo, race banner, crime, location + release No."""
+def render_export_card(
+    record: Mapping[str, Any], *, assign_number: bool = False
+) -> Image.Image:
+    """Premium watermarked card: large photo, race banner, crime, location + release No.
+
+    ``assign_number`` must be True only for deliberate Desktop/grid exports.
+    Bare render (preview, tests) never mints a new sequence number.
+    """
     canvas = Image.new("RGBA", (_CARD_W, _CARD_H), _BG)
     draw = ImageDraw.Draw(canvas)
     _draw_foil_sheen(canvas)
@@ -59,8 +65,8 @@ def render_export_card(record: Mapping[str, Any]) -> Image.Image:
             race = ""
     loc = last_known_location(record)
     cr = crime(record)
-    # Footer right: persistent release number (increments per new person only).
-    arrest_dt = arrest_datetime(record)
+    # Footer right: persistent release No. (mint only when assign_number=True)
+    arrest_dt = arrest_datetime(record, assign=assign_number)
 
     name_font = load_font(_NAME_SIZE, bold=True)
     # Crime: large bold charge lines
@@ -270,9 +276,12 @@ def _draw_footer(
 
 
 def export_record_card_to_desktop(record: Mapping[str, Any]) -> Path:
-    """Render and save a PNG card to the user's Desktop; return the path."""
+    """Render and save a PNG card to the user's Desktop; return the path.
+
+    Deliberate export: assigns (or reuses) this person's export number.
+    """
     try:
-        img = render_export_card(record)
+        img = render_export_card(record, assign_number=True)
     except Exception as exc:
         try:
             from gui_app.crash_log import log_exception

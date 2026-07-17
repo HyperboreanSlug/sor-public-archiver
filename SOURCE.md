@@ -21,7 +21,7 @@
 | DeepFace UI | `gui_app/tabs/deepface/` |
 | Settings | `gui_app/tabs/settings/` |
 | Export card | `gui_app/shared/export_card*.py` (premium layout: foil name, Reported As race banner, crime panel, location + release No. footer) |
-| Card export # | `gui_app/shared/export_card_release.py` — sequential No. per person (`offenders.export_number` + `data/card_release.json`); re-export reuses; Reports shows `export #N` |
+| Card export # | `gui_app/shared/export_card_release.py` — sequential No. per person (`offenders.export_number` + `data/card_release.json`); **mint only on deliberate Desktop/grid export** (`assign_number=True`); bare render/peek never burns a number; re-export reuses; Reports shows `export #N` |
 | Crime summary | `scraper/crime_summary*.py` (clause parse + docket strip) |
 | Detail drawer | `gui_app/shared/detail_drawer/` |
 | SQLite | `scraper/database/` · path helpers in `scraper/paths.py` |
@@ -103,8 +103,8 @@ data/        # offenders.db, report_pages, settings (runtime)
 |---------|-------------|
 | `database/` | schema, inserts, queries, `db_retry` (SQLite locked/busy multi-retry), `dedupe_*` (name+DOB uses normalize_dob; URL dedupe respects identity hard-reject), `csv_*` (incl. `csv_repair_fl_sor`), sources + `sources_merge` / `sources_race_verify` (HTML consensus = listed race; scrub wrong PERSON_NBR bulk race), deepface_scans + `deepface_scan_hits` (recompute is_hit after race edits) |
 | `nsopw/` | `client_*`, `builder_*` (requeue_inc + requeue_work), search_plan, parallel (same-jurisdiction concurrency) |
-| `reports/` | `fetcher_*`, `identity_gate` + `identity_audit` (NUCLEAR: name+DOB+photo+link verification; never wrong person), `pdf_fields`, util, photos; `public_links` (FDLE + MA + **MI mspsor** path-style `/Home/OffenderDetails/{uuid}` fixes). CLI: `scripts/verify_identity_full.py`. Crime summary: `crime_summary*.py`. NV multi-col crime + Start Date county repair: `scripts/repair_nv_crime_county.py`. VA vspsor card-header offenses: `fetcher_crime_va.py` + `scripts/repair_va_crime_from_html.py`. MI URL rewrite: `scripts/repair_mi_mspsor_urls.py`. SMT-as-crime + Jr suffix repair: `fetcher_crime_smt.py` + `scripts/repair_smt_crime_and_suffix.py` |
-| `scrapers/` | State bulk paths: `direct_download`, `arcgis`, `api`, `hybrid`, `html`; **VA** = `va_scraper` + `va_client` + `va_parse*` (vspsor.com DataTables POST `/search/searchRegistry` + `/Offender/Details/{uuid}`) |
+| `reports/` | `fetcher_*`, `identity_gate` + `identity_audit` (NUCLEAR: name+DOB+photo+link verification; never wrong person), `pdf_fields`, util, photos; `public_links` (FDLE + MA + MI + **TX sor.dps.texas.gov** rapsheet `?sid=`). CLI: `scripts/verify_identity_full.py`. Crime summary: `crime_summary*.py`. NV multi-col crime + Start Date county repair: `scripts/repair_nv_crime_county.py`. VA vspsor card-header offenses: `fetcher_crime_va.py` + `scripts/repair_va_crime_from_html.py`. MI URL rewrite: `scripts/repair_mi_mspsor_urls.py`. TX URL rewrite: `scripts/repair_tx_dps_urls.py`. SMT-as-crime + Jr suffix repair: `fetcher_crime_smt.py` + `scripts/repair_smt_crime_and_suffix.py` |
+| `scrapers/` | State bulk paths: `direct_download`, `arcgis`, `api`, `hybrid`, `html`; **VA** = `va_scraper` + `va_client` + `va_parse*` (vspsor.com); **TX** = `tx_scraper` + `tx_client` (`data/downloads/TX.csv` + `GetRapsheetXml?sid=`; live host `sor.dps.texas.gov`) |
 | `searcher_*` | race helpers + core/analyze/export + appearance (eye/hair) |
 | `ethnic_names_*` | load, signals, classify, confidence |
 | `cli_cmds_*` + `cli_parser` | CLI commands |

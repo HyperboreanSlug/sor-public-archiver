@@ -171,16 +171,19 @@ def crime(record: Mapping[str, Any]) -> str:
     return ""
 
 
-def arrest_datetime(record: Mapping[str, Any]) -> str:
+def arrest_datetime(record: Mapping[str, Any], *, assign: bool = False) -> str:
     """Footer right-side label: card export number (not a date).
 
-    Name kept for mapa chassis compatibility. Assigns a new number only when
-    a *different* person is exported for the first time. Persists to
-    ``offenders.export_number`` so Reports can show ``export #N``.
+    Name kept for mapa chassis compatibility. By default only *shows* an
+    already-assigned number (peek). Pass ``assign=True`` only from deliberate
+    export paths so preview/tests cannot burn sequence numbers.
     """
     from gui_app.shared.export_card_release import (
         format_release_label,
+        peek_release_number,
         release_number_for,
     )
 
-    return format_release_label(release_number_for(record, persist_db=True))
+    if assign:
+        return format_release_label(release_number_for(record, persist_db=True))
+    return format_release_label(peek_release_number(record))

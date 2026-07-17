@@ -145,7 +145,7 @@ def format_export_badge(num: Optional[int]) -> str:
     return f"export #{n}"
 
 
-def format_release_label(num: int) -> str:
+def format_release_label(num: Optional[int]) -> str:
     """Footer text for a release number on the card image."""
     n = _coerce_export_num(num)
     if n is None:
