@@ -180,20 +180,33 @@ def extract_person_name_from_html(html: str) -> Optional[str]:
     # Prefer early page region (headers) over map/footer chrome
     head = html[:120_000] if len(html) > 120_000 else html
     candidates: List[str] = []
+
+    def _add(n: str) -> None:
+        n = re.sub(r"\s+", " ", (n or "").strip())
+        if _looks_like_person_name(n):
+            candidates.append(n)
+
+    # MI mspsor / Bootstrap: <h2 class="text-primary">DAVID AGUILAR JR</h2>
+    for m in re.finditer(
+        r"<h([1-3])\b[^>]*>\s*([^<]{3,60})\s*</h\1>",
+        head,
+        flags=re.I,
+    ):
+        _add(m.group(2))
     for m in re.finditer(
         r'font-weight:\s*bold[^>]*>\s*([A-Za-z][A-Za-z0-9 \-\'.]{3,48})\s*<',
         head,
         flags=re.I,
     ):
-        n = re.sub(r"\s+", " ", m.group(1)).strip()
-        if _looks_like_person_name(n):
-            candidates.append(n)
+        _add(m.group(1))
     if candidates:
-        # Prefer 2–3 token ALL CAPS / Title names over long phrases
+        # Prefer 2–4 token ALL CAPS names; keep Jr/Sr (do not strip for display)
         def _score(s: str) -> tuple:
             toks = s.split()
-            caps = sum(1 for t in toks if t.isupper())
-            return (caps, -abs(len(toks) - 2), -len(s))
+            caps = sum(1 for t in toks if t.isupper() or t.rstrip(".").upper() in ("JR", "SR"))
+            # Prefer names that still include generational suffix when present
+            has_suf = 1 if re.search(r"\b(Jr|Sr|II|III|IV)\.?\b", s, re.I) else 0
+            return (has_suf, caps, -abs(len(toks) - 3), -len(s))
 
         candidates.sort(key=_score, reverse=True)
         return candidates[0]

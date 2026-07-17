@@ -27,6 +27,7 @@ from scraper.reports.race_value import is_plausible_race_value
 from scraper.reports.fetcher_crime import (
     extract_crime_from_tables,
     extract_offense_label_rows,
+    extract_statute_card_offenses,
     is_demographic_crime_junk,
     is_label_chrome_value,
 )
@@ -218,6 +219,17 @@ class FetcherParseMixin:
                 found["crime"] = va_crime
             elif va_crime not in prev and len(va_crime) > len(prev):
                 found["crime"] = va_crime
+
+        # MI mspsor (and similar) card-header statute titles
+        card_crime = extract_statute_card_offenses(soup)
+        if card_crime:
+            prev = (found.get("crime") or "").strip()
+            if not prev or is_demographic_crime_junk(prev):
+                found["crime"] = card_crime
+            elif card_crime not in prev and (
+                is_demographic_crime_junk(prev) or len(card_crime) > len(prev)
+            ):
+                found["crime"] = card_crime
 
         # Label-only node → next sibling element holds value (common grid layouts)
         for lab_el in soup.find_all(["span", "div", "label", "strong", "b", "th", "td", "p"]):

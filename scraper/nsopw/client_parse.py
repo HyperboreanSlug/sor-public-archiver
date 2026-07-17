@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from html import unescape
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -30,14 +31,33 @@ class NSOPWClientParseMixin:
         given = (name.get("givenName") or "").strip()
         middle = (name.get("middleName") or "").strip()
         sur = (name.get("surName") or "").strip()
-        parts = [p for p in (given, middle, sur) if p]
+        # NSOPW often returns Jr/Sr/II/III in name.suffix — keep on full + last
+        suffix = (name.get("suffix") or name.get("nameSuffix") or "").strip()
+        suffix = re.sub(r"^[,\s]+", "", suffix).strip() if suffix else ""
+        last = " ".join(p for p in (sur, suffix) if p).strip() or sur
+        parts = [p for p in (given, middle, last) if p]
         full = " ".join(parts)
 
         aliases: List[str] = []
         for a in obj.get("aliases") or []:
             if not isinstance(a, dict):
                 continue
-            ap = [p for p in (a.get("givenName"), a.get("middleName"), a.get("surName")) if p]
+            a_suf = (a.get("suffix") or a.get("nameSuffix") or "").strip()
+            a_suf = re.sub(r"^[,\s]+", "", a_suf).strip() if a_suf else ""
+            a_last = " ".join(
+                p
+                for p in ((a.get("surName") or "").strip(), a_suf)
+                if p
+            )
+            ap = [
+                p
+                for p in (
+                    (a.get("givenName") or "").strip(),
+                    (a.get("middleName") or "").strip(),
+                    a_last,
+                )
+                if p
+            ]
             if ap:
                 aliases.append(" ".join(str(x) for x in ap))
 
@@ -83,7 +103,7 @@ class NSOPWClientParseMixin:
         return NSOPWOffender(
             first_name=given,
             middle_name=middle,
-            last_name=sur,
+            last_name=last,
             full_name=full,
             gender=(obj.get("gender") or "").strip(),
             date_of_birth=dob,

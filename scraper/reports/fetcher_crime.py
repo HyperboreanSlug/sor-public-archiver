@@ -98,12 +98,22 @@ def is_label_chrome_value(text: str) -> bool:
     return False
 
 
+from scraper.reports.fetcher_crime_smt import (  # noqa: E402
+    extract_statute_card_offenses as _extract_statute_card_offenses_impl,
+    is_smt_description_junk,
+    is_smt_table,
+    _OFFENSE_WORD_RE,
+)
+
+
 def is_demographic_crime_junk(text: str) -> bool:
     """True when *text* is mis-parsed demographics, not an offense."""
     s = " ".join((text or "").split()).strip()
     if not s:
         return True
     if is_label_chrome_value(s):
+        return True
+    if is_smt_description_junk(s):
         return True
     if _DEMO_JUNK_RE.search(s):
         return True
@@ -120,11 +130,7 @@ def is_demographic_crime_junk(text: str) -> bool:
             return True
     # Surname, Given with no offense verbs and multiple semicolons
     if re.match(r"^[A-Z][A-Z' \-]+,\s*[A-Z]", s) and s.count(";") >= 2:
-        if not re.search(
-            r"(?i)\b(?:rape|assault|battery|molest|abuse|sodomy|indecent|"
-            r"porn|sex|lewd|kidnap|fail(?:ure)?\s+to\s+regist)\b",
-            s,
-        ):
+        if not _OFFENSE_WORD_RE.search(s):
             return True
     return False
 
@@ -203,6 +209,16 @@ def extract_offense_label_rows(soup: BeautifulSoup) -> str:
     return "; ".join(collected)[:_MAX_CRIME_LEN]
 
 
+def extract_statute_card_offenses(soup: BeautifulSoup) -> str:
+    """MI/VA-style card headers: ``750.520C1A - CRIMINAL SEXUAL CONDUCT…``."""
+    return _extract_statute_card_offenses_impl(
+        soup,
+        is_label_chrome_value=is_label_chrome_value,
+        is_demographic_crime_junk=is_demographic_crime_junk,
+        is_crime_cell=_is_crime_cell,
+    )
+
+
 def extract_crime_from_tables(soup: BeautifulSoup) -> str:
     """Pull offense/charge text from multi-row offense tables."""
     collected: List[str] = []
@@ -217,6 +233,9 @@ def extract_crime_from_tables(soup: BeautifulSoup) -> str:
         if len(headers) > 10:
             continue
         if any(len(h) > 80 for h in headers):
+            continue
+        # Never treat SMT (tattoo/scar) grids as offense tables
+        if is_smt_table(headers, rows):
             continue
 
         cap = _table_caption(table)
