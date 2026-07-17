@@ -178,3 +178,12 @@ class ReportsFilterStatsMixin:
             )
             self._misclass_records_by_iid[iid] = rec
             self._misclass_mc_by_iid[iid] = mc
+
+        # Rebuild inserts in scan order; restore the user's column sort
+        # (e.g. after classification confirmation, which repopulates the tree).
+        reapply = getattr(self.misclass_tree, "_reapply_sort", None)
+        if callable(reapply):
+            try:
+                reapply()
+            except Exception:
+                pass
