@@ -60,7 +60,8 @@ def render_export_card(record: Mapping[str, Any]) -> Image.Image:
     arrest_dt = arrest_datetime(record)
 
     name_font = load_font(_NAME_SIZE, bold=True)
-    crime_font = load_font(28)
+    # Crime: slightly larger + bold so charges read clearly on the card
+    crime_font = load_font(34, bold=True)
     footer_font = load_font(22)
     reported_font = load_font(22, bold=True)
     race_font = _load_display_font(48)
