@@ -55,6 +55,18 @@ def is_statute_or_docket(clause: str) -> bool:
 
 def strip_statute_cites(s: str) -> str:
     t = s or ""
+    # iCrimeWatch / OffenderWatch field prefixes left in stored crime text
+    t = re.sub(
+        r"(?i)^[\u2022\u00b7•·\-\*]+\s*"
+        r"(?:description|details|offense|charge|charges)\s*:?\s*",
+        "",
+        t,
+    )
+    t = re.sub(
+        r"(?i)^(?:description|details)\s*:\s*",
+        "",
+        t,
+    )
     t = re.sub(r"(?i)\*?\s*excluding\s+subsections?\s+[\d.(),\s]+", " ", t)
     t = re.sub(r"(?i)\bF\.?S\.?\s*[\d.()/a-z]+\s*(?:\(PRINCIPAL\))?", " ", t)
     t = re.sub(r"(?i)\bs\.\s*\d{2,4}\.\d+(?:\([a-z0-9]+\))*\d*", " ", t)
@@ -77,6 +89,12 @@ def is_junk_label(label: str) -> bool:
     """True if a finished summary fragment is case-number / chrome noise."""
     s = " ".join((label or "").split()).strip(" ·;,|")
     if not s or len(s) < 3:
+        return True
+    # Mis-scraped iCrimeWatch field labels (e.g. FRANCISCO AGUILAR → "description")
+    if re.fullmatch(
+        r"(?i)[\u2022\u00b7•·\-\*]?\s*description\s*:?",
+        s,
+    ):
         return True
     if is_statute_or_docket(s):
         return True

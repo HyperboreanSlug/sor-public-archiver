@@ -26,7 +26,9 @@ from scraper.reports.util import (  # noqa: F401
 from scraper.reports.race_value import is_plausible_race_value
 from scraper.reports.fetcher_crime import (
     extract_crime_from_tables,
+    extract_offense_label_rows,
     is_demographic_crime_junk,
+    is_label_chrome_value,
 )
 
 class FetcherParseMixin:
@@ -174,8 +176,15 @@ class FetcherParseMixin:
                     and len(value) <= max_len
                     and val_norm not in _LABEL_MAP
                     and val_norm not in _header_like_values
+                    and not is_label_chrome_value(value)
                 ):
-                    found.setdefault(key, value[:max_len])
+                    # Prefer real charges over prior chrome/junk setdefaults.
+                    if key == "crime" and is_demographic_crime_junk(
+                        str(found.get("crime") or "")
+                    ):
+                        found["crime"] = value[:max_len]
+                    else:
+                        found.setdefault(key, value[:max_len])
                     i += 2
                 else:
                     i += 1
@@ -190,6 +199,15 @@ class FetcherParseMixin:
                 found["crime"] = crime_bits
             elif crime_bits not in prev:
                 found["crime"] = f"{prev}; {crime_bits}"[:_MAX_CRIME_LEN]
+
+        # iCrimeWatch offenseLabel rows (Description → statute/charge text)
+        label_crime = extract_offense_label_rows(soup)
+        if label_crime:
+            prev = (found.get("crime") or "").strip()
+            if not prev or is_demographic_crime_junk(prev):
+                found["crime"] = label_crime
+            elif label_crime not in prev and len(label_crime) > len(prev):
+                found["crime"] = label_crime
 
         # Label-only node → next sibling element holds value (common grid layouts)
         for lab_el in soup.find_all(["span", "div", "label", "strong", "b", "th", "td", "p"]):

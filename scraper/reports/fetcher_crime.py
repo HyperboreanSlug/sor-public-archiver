@@ -48,11 +48,44 @@ _DEMO_JUNK_RE = re.compile(
     r"(?i)\b(?:photo\s*date|year\s*of\s*birth)\b"
 )
 
+# iCrimeWatch pairs section "Offenses" with sub-label "• Description:" —
+# never store bare field labels as the crime string.
+_LABEL_CHROME_RE = re.compile(
+    r"(?ix)^[\u2022\u00b7•·\-\*]+\s*"
+    r"(?:"
+    r"description|details|date\s+convicted|conviction\s+state|"
+    r"release\s+date|counts?|offense|offenses|charge|charges|"
+    r"date|status|type|row|jurisdiction|statute"
+    r")\s*:?\s*$"
+    r"|^"
+    r"(?:"
+    r"description|details|date\s+convicted|conviction\s+state|"
+    r"release\s+date|counts?|offense|offenses|charge|charges"
+    r")\s*:?\s*$"
+)
+
+
+def is_label_chrome_value(text: str) -> bool:
+    """True when *text* is a UI field label (e.g. '• Description:'), not a charge."""
+    s = " ".join((text or "").split()).strip()
+    if not s:
+        return True
+    if _LABEL_CHROME_RE.match(s):
+        return True
+    # Short trailing-colon labels without digits ("Description:", "Date:")
+    if s.endswith(":") and len(s) <= 40 and not re.search(r"\d", s):
+        letters = sum(1 for c in s if c.isalpha())
+        if letters >= 3:
+            return True
+    return False
+
 
 def is_demographic_crime_junk(text: str) -> bool:
     """True when *text* is mis-parsed demographics, not an offense."""
     s = " ".join((text or "").split()).strip()
     if not s:
+        return True
+    if is_label_chrome_value(s):
         return True
     if _DEMO_JUNK_RE.search(s):
         return True
@@ -109,6 +142,47 @@ def _header_cells(row) -> List[str]:
     if len(cells) < 2:
         cells = row.find_all(["th", "td"])
     return [_normalize_label(c.get_text(" ", strip=True)) for c in cells]
+
+
+def extract_offense_label_rows(soup: BeautifulSoup) -> str:
+    """iCrimeWatch/OffenderWatch: ``span.offenseLabel`` + adjacent value cell.
+
+    Example::
+
+        <span class="offenseLabel">• Description:</span>
+        … <td>76-4-401 - ENTICING A MINOR/2ND DEGREE FELONY</td>
+    """
+    collected: List[str] = []
+    seen: Set[str] = set()
+    for span in soup.select("span.offenseLabel, .offenseLabel"):
+        lab = _normalize_label(span.get_text(" ", strip=True))
+        if lab not in (
+            "description",
+            "offense",
+            "offense description",
+            "charge",
+            "charges",
+            "statute",
+        ):
+            continue
+        td = span.find_parent("td")
+        val = ""
+        if td is not None:
+            sib = td.find_next_sibling("td")
+            if sib is not None:
+                val = _clean_value(sib.get_text(" ", strip=True))
+        if not val or is_label_chrome_value(val) or not _is_crime_cell(val):
+            continue
+        if is_demographic_crime_junk(val):
+            continue
+        key = val.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        collected.append(val)
+        if len(collected) >= 8:
+            break
+    return "; ".join(collected)[:_MAX_CRIME_LEN]
 
 
 def extract_crime_from_tables(soup: BeautifulSoup) -> str:

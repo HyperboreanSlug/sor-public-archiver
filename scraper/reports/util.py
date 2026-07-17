@@ -82,6 +82,8 @@ _LABEL_MAP = {
     "crime description": "crime",
     "description of offense": "crime",
     "description of crime": "crime",
+    # iCrimeWatch offense rows: "• Description:" → charge text in next cell
+    "description": "crime",
     "conviction": "conviction_date",
     "conviction date": "conviction_date",
 }

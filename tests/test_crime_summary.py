@@ -130,6 +130,17 @@ class CrimeSummaryTests(unittest.TestCase):
         self.assertNotIn("lewd", out.lower())
         self.assertNotIn("lascivious", out.lower())
 
+    def test_icrimewatch_description_label_not_shown(self):
+        """Bare field labels must not appear as the crime summary."""
+        self.assertEqual(summarize_crime("• Description:"), "")
+        self.assertEqual(summarize_crime("Description:"), "")
+        self.assertEqual(summarize_crime("Description"), "")
+        out = summarize_crime(
+            "• Description: 76-4-401 - ENTICING A MINOR/2ND DEGREE FELONY"
+        )
+        self.assertIn("Enticing", out)
+        self.assertNotIn("Description", out)
+
 
 if __name__ == "__main__":
     unittest.main()
