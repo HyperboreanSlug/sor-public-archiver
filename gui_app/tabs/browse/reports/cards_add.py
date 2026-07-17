@@ -186,13 +186,14 @@ class ReportsCardsAddMixin:
             export_badge = format_export_badge(peek_release_number(rec))
         except Exception:
             export_badge = ""
-        if export_badge:
-            ctk.CTkLabel(
-                line1,
-                text=f"  {export_badge}",
-                font=FONT_SM,
-                text_color=C["accent"],
-            ).pack(side="left")
+        # Always create badge label so export can update in place (no page rebuild)
+        export_badge_lbl = ctk.CTkLabel(
+            line1,
+            text=f"  {export_badge}" if export_badge else "",
+            font=FONT_SM,
+            text_color=C["accent"] if export_badge else C["dim"],
+        )
+        export_badge_lbl.pack(side="left")
         status_lbl = ctk.CTkLabel(
             line1,
             text=self._reports_verdict_label_short(verdict),
@@ -406,6 +407,12 @@ class ReportsCardsAddMixin:
                     "<Double-Button-1>",
                     lambda _e, m=mc: self._reports_open_record_links(m),
                 )
+        except Exception:
+            pass
+        try:
+            self._reports_register_card_ui(
+                mc, export_badge_lbl=export_badge_lbl, card=card
+            )
         except Exception:
             pass
         return card

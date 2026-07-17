@@ -55,6 +55,14 @@ class ReportsCardsLayoutMixin:
         scroll = getattr(self, "_report_scroll", None)
         if scroll is None:
             return
+        # Drop stale widget refs so export badges don't update destroyed cards
+        try:
+            self._reports_clear_card_ui_registry()
+        except Exception:
+            try:
+                self._report_card_ui = {}
+            except Exception:
+                pass
 
         if refilter and (
             getattr(self, "_report_analyze_results", None)

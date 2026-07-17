@@ -48,6 +48,85 @@ class ReportsExportGridMixin:
                 if isinstance(rec, dict) and rec.get("id") == rid:
                     rec["export_number"] = num_i
 
+    def _reports_register_card_ui(self, mc, **widgets) -> None:
+        """Keep weak refs so export can update a badge without rebuilding the page."""
+        if not hasattr(self, "_report_card_ui") or self._report_card_ui is None:
+            self._report_card_ui: Dict[str, Dict[str, Any]] = {}
+        try:
+            key = self._reports_export_key(mc)
+        except Exception:
+            return
+        slot = self._report_card_ui.get(key) or {}
+        slot.update({k: v for k, v in widgets.items() if v is not None})
+        slot["mc"] = mc
+        self._report_card_ui[key] = slot
+
+    def _reports_clear_card_ui_registry(self) -> None:
+        """Drop card widget map (called when the page is rebuilt)."""
+        self._report_card_ui = {}
+
+    def _reports_refresh_export_badge(self, mc, record: Optional[Dict[str, Any]] = None) -> None:
+        """Update export # on one card in place — no full page rebuild."""
+        try:
+            from gui_app.shared.export_card_release import (
+                format_export_badge,
+                peek_release_number,
+            )
+        except Exception:
+            return
+        rec = record or self._reports_record_for_export(mc)
+        try:
+            badge = format_export_badge(
+                rec.get("export_number")
+                if rec.get("export_number") is not None
+                else peek_release_number(rec)
+            )
+        except Exception:
+            badge = ""
+        key = ""
+        try:
+            key = self._reports_export_key(mc)
+        except Exception:
+            pass
+        ui = (getattr(self, "_report_card_ui", None) or {}).get(key) or {}
+
+        # List-view badge label (always present after cards_add change)
+        lbl = ui.get("export_badge_lbl")
+        if lbl is not None:
+            try:
+                from gui_app.theme import C as _C
+
+                lbl.configure(
+                    text=f"  {badge}" if badge else "",
+                    text_color=_C["accent"] if badge else _C["dim"],
+                )
+            except Exception:
+                try:
+                    lbl.configure(text=f"  {badge}" if badge else "")
+                except Exception:
+                    pass
+
+        # Grid-view meta line embeds badge + conf · state
+        meta = ui.get("meta_lbl")
+        if meta is not None:
+            conf_label = str(ui.get("conf_label") or "").strip()
+            state = str(ui.get("state") or "").strip()
+            left = f"{conf_label} · {state}".strip(" ·")
+            if badge:
+                left = f"{badge} · {left}" if left else badge
+            try:
+                from gui_app.theme import C as _C
+
+                meta.configure(
+                    text=left or "—",
+                    text_color=_C["accent"] if badge else _C["muted"],
+                )
+            except Exception:
+                try:
+                    meta.configure(text=left or "—")
+                except Exception:
+                    pass
+
     def _reports_export_single_card(self, mc, btn=None) -> None:
         """Export one watermarked mugshot card to the Desktop (no dialog on success)."""
         record = self._reports_record_for_export(mc)
@@ -78,6 +157,11 @@ class ReportsExportGridMixin:
             path = payload.get("path")
             rec_out = payload.get("record") or record
             self._reports_sync_export_number(mc, rec_out)
+            # In-place badge only — do not rebuild the whole report page
+            try:
+                self._reports_refresh_export_badge(mc, rec_out)
+            except Exception:
+                pass
             num = rec_out.get("export_number")
             badge = f" · export #{num}" if num else ""
             msg = f"Card → {getattr(path, 'name', path)}{badge}"
@@ -92,12 +176,6 @@ class ReportsExportGridMixin:
                 self.log_queue.put(f"Reports card export: {path}{badge}")
             except Exception:
                 pass
-            # Repaint so the export # badge appears on the card
-            if hasattr(self, "_reports_rebuild_cards"):
-                try:
-                    self._reports_rebuild_cards(refilter=False)
-                except Exception:
-                    pass
 
         if hasattr(self, "run_bg"):
             self.run_bg(work, done, name="report-card-export")
@@ -237,21 +315,44 @@ class ReportsExportGridMixin:
                     self.stats_label.configure(text=msg)
             except Exception:
                 pass
-            if hasattr(self, "_reports_rebuild_cards"):
-                try:
-                    # Mirror numbers onto selected cache + sheet
-                    for rec in records:
-                        n = rec.get("export_number")
-                        rid = rec.get("id")
-                        if n is None or rid is None:
+            # Mirror numbers onto live rows + refresh badges in place (no full rebuild)
+            try:
+                for rec in records:
+                    n = rec.get("export_number")
+                    rid = rec.get("id")
+                    if n is None:
+                        continue
+                    for mc in list(getattr(self, "_report_items", None) or []):
+                        r = getattr(mc, "record", None)
+                        if not isinstance(r, dict):
                             continue
-                        for mc in list(getattr(self, "_report_items", None) or []):
-                            r = getattr(mc, "record", None)
-                            if isinstance(r, dict) and r.get("id") == rid:
-                                r["export_number"] = n
-                    self._reports_rebuild_cards(refilter=False)
-                except Exception:
-                    pass
+                        if rid is not None and r.get("id") == rid:
+                            r["export_number"] = n
+                            try:
+                                self._reports_refresh_export_badge(mc, r)
+                            except Exception:
+                                pass
+                        elif rid is None:
+                            # Match by export key against selected cache
+                            try:
+                                if self._reports_export_key(mc) in (
+                                    getattr(self, "_report_export_selected", None) or {}
+                                ):
+                                    r["export_number"] = n
+                                    self._reports_refresh_export_badge(mc, r)
+                            except Exception:
+                                pass
+                    # Selected-cache dicts used for the next grid export
+                    for key, sel in list(
+                        (getattr(self, "_report_export_selected", None) or {}).items()
+                    ):
+                        if isinstance(sel, dict) and (
+                            rid is None or sel.get("id") == rid
+                        ):
+                            if n is not None:
+                                sel["export_number"] = n
+            except Exception:
+                pass
             try:
                 self.log_queue.put(f"Reports grid export: {path}{badge}")
             except Exception:

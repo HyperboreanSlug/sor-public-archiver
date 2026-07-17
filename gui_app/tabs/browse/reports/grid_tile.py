@@ -240,13 +240,14 @@ class ReportsGridTileMixin:
         left_meta = f"{conf_label} · {state}"
         if export_badge:
             left_meta = f"{export_badge} · {left_meta}"
-        ctk.CTkLabel(
+        meta_lbl = ctk.CTkLabel(
             meta_row,
             text=left_meta,
             font=("Segoe UI", 9),
             text_color=C["accent"] if export_badge else C["muted"],
             anchor="w",
-        ).pack(side="left")
+        )
+        meta_lbl.pack(side="left")
         status_lbl = ctk.CTkLabel(
             meta_row,
             text=self._reports_verdict_label_short(verdict),
@@ -364,6 +365,16 @@ class ReportsGridTileMixin:
                 _bind_open(child)
                 for grand in child.winfo_children():
                     _bind_open(grand)
+        except Exception:
+            pass
+        try:
+            self._reports_register_card_ui(
+                mc,
+                meta_lbl=meta_lbl,
+                conf_label=conf_label,
+                state=state,
+                card=card,
+            )
         except Exception:
             pass
         return card
