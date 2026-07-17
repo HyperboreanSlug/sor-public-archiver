@@ -10,6 +10,10 @@ Michigan mspsor.com:
   - live site uses path-style ``/Home/OffenderDetails/{uuid}`` (search grid + maps)
   - older rows stored ``/Home/OffenderDetails?id={uuid}`` — still rewrite to path form
   - prefer mspsor.com when jurisdiction is MI (avoid WI captcha / foreign hosts)
+
+Texas DPS SOR:
+  - publicsite.dps.texas.gov rapsheets are dead/503; live host is sor.dps.texas.gov
+  - canonical: ``/PublicSite/Search/Rapsheet?sid={SID}``
 """
 
 from __future__ import annotations
@@ -42,6 +46,13 @@ from scraper.public_links_mi import (  # noqa: E402
     extract_mspsor_offender_id,
     is_mspsor_url as _is_mspsor_url,
     normalize_mspsor_url,
+)
+from scraper.public_links_tx import (  # noqa: E402
+    TX_SOR_HOST,
+    TX_SOR_SEARCH_HOME,
+    extract_tx_sid,
+    is_tx_dps_url as _is_tx_dps_url,
+    normalize_tx_dps_url,
 )
 
 _MULTI_URL_SPLIT = re.compile(r"\s*\|\s*")
@@ -247,6 +258,8 @@ def resolve_public_source_url(
         hosts = [_MA_SORB_HOST]
     elif st == "MI":
         hosts = [MI_MSPSOR_HOST]
+    elif st == "TX":
+        hosts = [TX_SOR_HOST, "publicsite.dps.texas.gov", "dps.texas.gov"]
     else:
         hosts = []
 
@@ -283,6 +296,13 @@ def resolve_public_source_url(
             if cleaned:
                 return cleaned
             continue
+        if _is_tx_dps_url(u) or (
+            st == "TX" and "sid=" in u.lower()
+        ):
+            cleaned = normalize_tx_dps_url(_strip_jsessionid(u))
+            if cleaned:
+                return cleaned
+            continue
         # MI rows sometimes hold foreign hosts (WI captcha, etc.) — skip those
         if st == "MI":
             continue
@@ -303,6 +323,12 @@ def resolve_public_source_url(
     ):
         return MI_MSPSOR_SEARCH_HOME
 
+    # Texas with no usable SID rapsheet → public search
+    if st == "TX" or any(_is_tx_dps_url(u) for u in urls) or (
+        raw_url and _is_tx_dps_url(raw_url)
+    ):
+        return TX_SOR_SEARCH_HOME
+
     # Last resort: first raw piece or empty (never error404)
     if ordered:
         u0 = ordered[0]
@@ -312,6 +338,8 @@ def resolve_public_source_url(
             return normalize_ma_sorb_url(u0)
         if _is_mspsor_url(u0):
             return normalize_mspsor_url(u0)
+        if _is_tx_dps_url(u0):
+            return normalize_tx_dps_url(u0)
         return u0
     raw = (raw_url or "").strip()
     if _is_fdle_error_page(raw):
@@ -320,6 +348,8 @@ def resolve_public_source_url(
         return normalize_ma_sorb_url(raw)
     if _is_mspsor_url(raw):
         return normalize_mspsor_url(raw)
+    if _is_tx_dps_url(raw):
+        return normalize_tx_dps_url(raw)
     return raw
 
 

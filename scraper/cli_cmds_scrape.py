@@ -271,7 +271,7 @@ def cmd_status(args: argparse.Namespace) -> None:
         if r.abbr == "US":
             continue
         has_bulk = r.scrape_method in (
-            "direct", "arcgis", "api", "hybrid", "vspsor", "va"
+            "direct", "arcgis", "api", "hybrid", "vspsor", "va", "tx", "texas"
         ) or bool(r.direct_downloads)
         if has_bulk:
             bulk_n += 1

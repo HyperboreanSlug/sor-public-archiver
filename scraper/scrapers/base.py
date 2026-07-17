@@ -127,12 +127,20 @@ class ScraperFactory:
             from .va_scraper import VAScraper
 
             return VAScraper(state_abbr, delay=delay)
+        if method in ("tx", "texas", "tx_dps"):
+            from .tx_scraper import TXScraper
+
+            return TXScraper(state_abbr, delay=delay)
         if method == "api":
             # Virginia uses a dedicated vspsor client, not generic REST paging.
             if str(state_abbr or "").upper() == "VA":
                 from .va_scraper import VAScraper
 
                 return VAScraper(state_abbr, delay=delay)
+            if str(state_abbr or "").upper() == "TX":
+                from .tx_scraper import TXScraper
+
+                return TXScraper(state_abbr, delay=delay)
             return APIScraper(state_abbr, delay=delay)
         if method == "hybrid":
             return HybridScraper(state_abbr, delay=delay)

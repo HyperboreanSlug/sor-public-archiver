@@ -53,12 +53,21 @@ class DedupeUrlNormMixin:
             p = urlparse(raw)
         except Exception:
             return raw.rstrip("/").lower()
-        # Relative paths / non-http: still normalize query if present
-        kept = [
-            (k, v)
-            for k, v in parse_qsl(p.query, keep_blank_values=True)
-            if k and k.lower() not in _VOLATILE_URL_PARAMS
-        ]
+        # Relative paths / non-http: still normalize query if present.
+        # Note: bare ``sid`` is often a session key, but Texas DPS uses numeric
+        # ``sid=`` as the stable offender SID — keep those.
+        kept = []
+        for k, v in parse_qsl(p.query, keep_blank_values=True):
+            if not k:
+                continue
+            kl = k.lower()
+            if kl in _VOLATILE_URL_PARAMS:
+                if not (
+                    kl == "sid"
+                    and re.fullmatch(r"\d{5,12}", str(v or "").strip())
+                ):
+                    continue
+            kept.append((k, v))
         # FDLE: force camelCase personId key (JSF is case-sensitive)
         host_l = (p.netloc or "").lower()
         if "fdle.state.fl.us" in host_l:
@@ -114,6 +123,15 @@ class DedupeUrlNormMixin:
                 return normalize_mspsor_url(rebuilt)
             except Exception:
                 pass
+        # Texas DPS: publicsite rapsheets → sor.dps.texas.gov
+        if "dps.texas.gov" in host:
+            try:
+                from scraper.public_links_tx import normalize_tx_dps_url
+
+                rebuilt = f"{scheme}://{host}{path}" + (f"?{query}" if query else "")
+                return normalize_tx_dps_url(rebuilt)
+            except Exception:
+                pass
         return out.lower()
 
 
@@ -150,12 +168,13 @@ class DedupeUrlNormMixin:
             for key in (
                 "Id", "ID", "id", "OffenderId", "offenderId", "offender_id",
                 "personId", "personid", "PersonId",
+                "sid", "Sid", "SID",  # Texas DPS SOR
             ):
                 # parse_qsl is case-sensitive; also scan case-insensitively
                 if key in qs and str(qs[key]).strip():
                     return str(qs[key]).strip()
             for k, v in qs.items():
-                if k.lower() == "personid" and str(v).strip():
+                if k.lower() in ("personid", "sid") and str(v).strip():
                     return str(v).strip()
             # path tail numeric id: /offenders/12345
             try:

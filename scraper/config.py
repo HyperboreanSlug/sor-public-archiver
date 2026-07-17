@@ -9,6 +9,7 @@ scrape_method values:
   - html:        attempt static HTML table scrape of registry_url
   - api:         generic REST pagination via search_api
   - vspsor:      Virginia vspsor.com DataTables POST + detail pages
+  - tx:          Texas DPS bulk CSV (data/downloads/TX.csv) + rapsheet XML
 """
 
 from __future__ import annotations
@@ -285,9 +286,15 @@ REGISTRIES: List[RegistryConfig] = [
     ),
     RegistryConfig(
         name="Texas", abbr="TX",
-        registry_url="https://publicsite.dps.texas.gov/SexOffenderRegistry",
-        scrape_method="interactive",
-        notes="Search only; very large registry; no public bulk API.",
+        registry_url="https://sor.dps.texas.gov/PublicSite/Search",
+        scrape_method="tx",
+        search_api="https://sor.dps.texas.gov/PublicSite/Search/Rapsheet/GetRapsheetXml",
+        notes=(
+            "Live site: sor.dps.texas.gov (publicsite.dps.texas.gov rapsheets are dead/503). "
+            "Rapsheet: /PublicSite/Search/Rapsheet?sid={SID}. "
+            "Bulk ZIP requires free DPS account at /PublicSite/Home/Export; "
+            "place converted CSV at data/downloads/TX.csv for scrape."
+        ),
     ),
     RegistryConfig(
         name="Utah", abbr="UT",
@@ -361,7 +368,9 @@ def get_direct_download_sources() -> List[RegistryConfig]:
 
 def get_bulk_capable_sources() -> List[RegistryConfig]:
     """Registries with an automated bulk path (direct/arcgis/api/hybrid/vspsor)."""
-    bulk_methods = {"direct", "arcgis", "api", "hybrid", "vspsor", "va", "virginia"}
+    bulk_methods = {
+        "direct", "arcgis", "api", "hybrid", "vspsor", "va", "virginia", "tx", "texas",
+    }
     return [
         r
         for r in REGISTRIES

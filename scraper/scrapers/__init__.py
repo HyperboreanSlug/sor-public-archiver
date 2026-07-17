@@ -7,6 +7,7 @@ from .html_scraper import HTMLScraper
 from .hybrid_scraper import HybridScraper
 from .arcgis_scraper import ArcGISScraper
 from .va_scraper import VAScraper
+from .tx_scraper import TXScraper
 
 __all__ = [
     "BaseScraper",
@@ -17,4 +18,5 @@ __all__ = [
     "HybridScraper",
     "ArcGISScraper",
     "VAScraper",
+    "TXScraper",
 ]

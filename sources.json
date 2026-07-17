@@ -317,9 +317,11 @@
   {
     "jurisdiction": "Texas",
     "abbr": "TX",
-    "registry_url": "https://publicsite.dps.texas.gov/SexOffenderRegistry",
+    "registry_url": "https://sor.dps.texas.gov/PublicSite/Search",
     "direct_downloads": [],
-    "notes": "Search interface only. Very large registry."
+    "scrape_method": "tx",
+    "search_api": "https://sor.dps.texas.gov/PublicSite/Search/Rapsheet/GetRapsheetXml",
+    "notes": "Live host sor.dps.texas.gov. Rapsheet?sid=SID. publicsite host is dead/503. Bulk export needs free DPS account; CSV at data/downloads/TX.csv."
   },
   {
     "jurisdiction": "Utah",
