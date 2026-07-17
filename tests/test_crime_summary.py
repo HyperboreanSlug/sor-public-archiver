@@ -141,6 +141,24 @@ class CrimeSummaryTests(unittest.TestCase):
         self.assertIn("Enticing", out)
         self.assertNotIn("Description", out)
 
+    def test_nv_multicolumn_dump_not_name_or_court(self):
+        """ALAWI-style NV dump must not summarize to person name / city."""
+        raw = (
+            "06/05/2009; 288 (A) LEWD OR LASCIVIOUS ACTS W/ CHILD UNDER 14; "
+            "SAN DIEGO SUPERIOR COURT; EHAB ABDALLAH ALAWI; SAN DIEGO, CA; "
+            "DEPT OF CORRECTIONS"
+        )
+        out = summarize_crime(raw)
+        self.assertEqual(out, "Victim under 14")
+        self.assertNotIn("Alawi", out)
+        self.assertNotIn("San Diego", out)
+        self.assertNotIn("Ehab", out)
+        self.assertNotIn("lewd", out.lower())
+
+    def test_ca_pc288_clean_phrase(self):
+        out = summarize_crime("288 (A) LEWD OR LASCIVIOUS ACTS W/ CHILD UNDER 14")
+        self.assertEqual(out, "Victim under 14")
+
 
 if __name__ == "__main__":
     unittest.main()

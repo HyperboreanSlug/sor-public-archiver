@@ -28,6 +28,23 @@ _COURT_JUNK = re.compile(
     r")$"
 )
 
+# Whole clause is a court / institution / agency (drop entirely)
+_COURT_OR_AGENCY_CLAUSE = re.compile(
+    r"(?ix)^(?:"
+    r".*\b(?:superior\s+court|circuit\s+court|district\s+court|"
+    r"judicial\s+district|municipal\s+court|county\s+court)\b.*"
+    r"|dept\.?\s+of\s+corrections.*"
+    r"|department\s+of\s+corrections.*"
+    r"|out\s+of\s+state.*"
+    r"|california\s+department.*"
+    r")$"
+)
+
+# Person-name-only clauses (NV dumps put conviction name next to the charge)
+_PERSON_NAME_CLAUSE = re.compile(
+    r"(?ix)^[A-Z][A-Z' \-.]{1,40}(?:\s+[A-Z][A-Z' \-.]{0,30}){0,4}$"
+)
+
 _LOCATION_TRAIL = re.compile(
     r"(?ix)"
     r"(?:"
@@ -91,7 +108,7 @@ def title_offense(s: str) -> str:
 
 
 def summarize_lewd_clause(clause: str) -> Optional[str]:
-    """Compress FL lewd/lascivious boilerplate to short card labels.
+    """Compress FL/CA lewd/lascivious boilerplate to short card labels.
 
     Never includes the words lewd/lascivious — only victim age and acts.
 
@@ -101,11 +118,21 @@ def summarize_lewd_clause(clause: str) -> Optional[str]:
           → Victim under 12/force
         … molestation involving unclothed genitals
           → Unclothed genitals
+        288 (A) LEWD OR LASCIVIOUS ACTS W/ CHILD UNDER 14
+          → Victim under 14
     """
     low = (clause or "").lower()
     under12 = bool(
         re.search(
             r"under\s*12|victim\s+is\s+under\s*12|u/?12|< ?12|vctm\s*under\s*12",
+            low,
+        )
+    )
+    # CA PC 288(a) and similar: child under 14 / under fourteen
+    under14 = bool(
+        re.search(
+            r"under\s*14|less\s+than\s*14|u/?14|< ?14|vctm\s*under\s*14|"
+            r"child\s+under\s*14|w/?\s*child\s+under\s*14",
             low,
         )
     )
@@ -119,11 +146,14 @@ def summarize_lewd_clause(clause: str) -> Optional[str]:
     unclothed = bool(re.search(r"unclothed\s+genitals?", low))
     molest = bool(re.search(r"molest", low))
     exhibition = bool(re.search(r"exhibition", low))
+    with_child = bool(re.search(r"\b(?:child|minor|w/?\s*child)\b", low))
 
     if under12 and force:
         return "Victim under 12/force"
     if under12:
         return "Victim under 12"
+    if under14:
+        return "Victim under 14"
     if unclothed:
         return "Unclothed genitals"
     if molest and under16:
@@ -136,6 +166,9 @@ def summarize_lewd_clause(clause: str) -> Optional[str]:
         return "Indecent exhibition"
     if force:
         return "Force or coercion"
+    # Bare CA-style "lewd … with child" without a parsed age
+    if with_child:
+        return "Acts with a child"
     # No useful qualifier — omit rather than print lewd/lascivious
     return None
 
@@ -144,10 +177,22 @@ def extract_from_clause(clause: str) -> Optional[str]:
     c = norm(clause)
     if not c or len(c) < 3 or DROP_CLAUSE.match(c) or is_statute_or_docket(c):
         return None
+    # NV multi-column dumps: court / agency / person-name only
+    if _COURT_OR_AGENCY_CLAUSE.match(c):
+        return None
+    if _PERSON_NAME_CLAUSE.match(c) and not re.search(
+        r"(?i)\b(?:rape|assault|battery|molest|abuse|sodomy|indecent|"
+        r"porn|sex|lewd|kidnap|fail(?:ure)?\s+to\s+regist|offense|"
+        r"child|minor|conduct)\b",
+        c,
+    ):
+        return None
 
     c = strip_dates(c)
     c = strip_statute_cites(c)
     if not c or DROP_CLAUSE.match(c) or is_statute_or_docket(c) or is_junk_label(c):
+        return None
+    if _COURT_OR_AGENCY_CLAUSE.match(c):
         return None
 
     src = clause + " " + c
@@ -199,13 +244,20 @@ def extract_from_clause(clause: str) -> Optional[str]:
         return None
     if DROP_CLAUSE.match(c2) or is_statute_or_docket(c2) or is_junk_label(c2):
         return None
+    if _COURT_OR_AGENCY_CLAUSE.match(c2) or _PERSON_NAME_CLAUSE.match(c2):
+        return None
     if len(c2) > 90:
         c2 = re.split(r"\s+where\s+|\s+by\s+offender\s+", c2, maxsplit=1)[0]
         c2 = strip_location_junk(norm(c2))
         if len(c2) > 80:
             return None
-    if re.match(r"^[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3}$", c2) and not re.search(
-        r"sexual|lewd|rape|child|assault|battery", c2, re.I
+    # Title Case or ALL CAPS multi-token names without offense verbs
+    if re.match(
+        r"^(?:[A-Z][a-z]+|[A-Z]+)(?:\s+(?:[A-Z][a-z]+|[A-Z]+|[A-Z]\.?)){1,4}$",
+        c2,
+    ) and not re.search(
+        r"(?i)sexual|lewd|rape|child|assault|battery|molest|offense|conduct",
+        c2,
     ):
         return None
     if CITY_STATE.fullmatch(c2) or COUNTY_LOC.fullmatch(c2) or is_junk_label(c2):

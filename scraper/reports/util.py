@@ -68,6 +68,8 @@ _LABEL_MAP = {
     "charges": "crime",
     "conviction offense": "crime",
     "convicting offense": "crime",
+    # NV sexoffenders.nv.gov offense table column
+    "conviction description": "crime",
     "qualifying offense": "crime",
     "registerable offense": "crime",
     "registrable offense": "crime",

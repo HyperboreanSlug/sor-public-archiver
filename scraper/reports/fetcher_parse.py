@@ -233,21 +233,43 @@ class FetcherParseMixin:
                 continue
             # empty value on label node → look next
             if ":" in raw and not re.search(r":\s*\S", raw):
-                # parent then next sibling
+                # Prefer value *inside* the same row (NV RowHead + text node),
+                # never the next sibling row (that is often "Start Date: …").
                 parent = lab_el.parent
-                candidates = []
+                val = ""
                 if parent is not None:
-                    candidates.append(parent.find_next_sibling())
-                candidates.append(lab_el.find_next_sibling())
-                for nxt in candidates:
-                    if not nxt or not hasattr(nxt, "get_text"):
-                        continue
-                    if getattr(nxt, "name", "") == "th":
-                        continue
-                    val = nxt.get_text(" ", strip=True)
-                    if val and len(val) < 80 and _normalize_label(val) not in _LABEL_MAP:
-                        found.setdefault(_LABEL_MAP[label], val)
-                        break
+                    ptext = parent.get_text(" ", strip=True)
+                    rest = re.sub(
+                        re.escape(raw), "", ptext, count=1, flags=re.I
+                    ).strip(" :-|")
+                    if (
+                        rest
+                        and len(rest) < 80
+                        and _normalize_label(rest) not in _LABEL_MAP
+                        and not re.match(
+                            r"(?i)^(start|end)\s+date\b", rest
+                        )
+                    ):
+                        val = rest
+                if not val:
+                    for nxt in (lab_el.find_next_sibling(),):
+                        if not nxt or not hasattr(nxt, "get_text"):
+                            continue
+                        if getattr(nxt, "name", "") == "th":
+                            continue
+                        cand = nxt.get_text(" ", strip=True)
+                        if (
+                            cand
+                            and len(cand) < 80
+                            and _normalize_label(cand) not in _LABEL_MAP
+                            and not re.match(
+                                r"(?i)^(start|end)\s+date\b", cand
+                            )
+                        ):
+                            val = cand
+                            break
+                if val:
+                    found.setdefault(_LABEL_MAP[label], val)
 
         for lab in soup.find_all(["label", "strong", "b", "span", "div", "p"]):
             raw = lab.get_text(" ", strip=True)

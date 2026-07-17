@@ -28,12 +28,30 @@ _CRIME_HEADER_KEYS: Set[str] = {
     "registerable offense",
     "registrable offense",
     "description",
+    "conviction description",  # NV sexoffenders.nv.gov
     "violation",
     "chapter/section",  # MA SORB statute column
 }
 
 # MA SORB puts the offense title under "Jurisdiction" when chapter/section is present
 _MA_OFFENSE_NAME_KEYS: Set[str] = {"jurisdiction"}
+
+# Never treat these columns as the charge (NV multi-col offense tables)
+_NON_CRIME_HEADER_KEYS: Set[str] = {
+    "conviction date",
+    "conviction name",  # person name on NV rows
+    "court name",
+    "court",
+    "offense location",
+    "location",
+    "institution name",
+    "institution",
+    "case number",
+    "case #",
+    "count",
+    "counts",
+    "disposition",
+}
 
 # Demographic labels that must never become crime text
 _DEMO_LABEL_RE = re.compile(
@@ -219,7 +237,11 @@ def extract_crime_from_tables(soup: BeautifulSoup) -> str:
             and "address" not in headers
         )
 
-        idxs = [i for i, h in enumerate(headers) if h in _CRIME_HEADER_KEYS]
+        idxs = [
+            i
+            for i, h in enumerate(headers)
+            if h in _CRIME_HEADER_KEYS and h not in _NON_CRIME_HEADER_KEYS
+        ]
         if ma_style:
             for i, h in enumerate(headers):
                 if h in _MA_OFFENSE_NAME_KEYS and i not in idxs:
@@ -228,23 +250,38 @@ def extract_crime_from_tables(soup: BeautifulSoup) -> str:
         if not idxs:
             head_blob = " ".join(headers)
             if not is_offense_caption and not any(
-                k in head_blob for k in ("offense", "charge", "crime", "statute")
+                k in head_blob for k in ("offense", "charge", "crime", "statute", "conviction")
             ):
                 continue
-            # Narrow fallback only: short header rows, known offense tables
-            if len(headers) > 6:
+            # Narrow fallback only: short header rows, known offense tables.
+            # Skip columns that are court/name/location (NV multi-col dumps).
+            if len(headers) > 8:
                 continue
+            usable = [
+                i
+                for i, h in enumerate(headers)
+                if h not in _NON_CRIME_HEADER_KEYS
+                and h
+                not in (
+                    "name",
+                    "offender name",
+                    "defendant",
+                )
+            ]
             for data_row in rows[1:]:
                 tds = data_row.find_all("td")
-                parts = [
-                    _clean_value(td.get_text(" ", strip=True))
-                    for td in tds
-                    if _is_crime_cell(_clean_value(td.get_text(" ", strip=True)))
-                ]
+                parts: List[str] = []
+                for i in usable:
+                    if i >= len(tds):
+                        continue
+                    t = _clean_value(tds[i].get_text(" ", strip=True))
+                    if _is_crime_cell(t) and len(t) >= 5:
+                        parts.append(t)
                 # Prefer longer phrase cells (offense titles over codes alone)
-                parts = [p for p in parts if len(p) >= 5]
                 if parts:
-                    collected.append(" — ".join(parts[:3]))
+                    # One best offense phrase — not court + name glued on
+                    best = max(parts, key=len)
+                    collected.append(best)
             continue
 
         for data_row in rows[1:]:
