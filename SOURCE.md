@@ -20,7 +20,8 @@
 | NSOPW UI | `gui_app/tabs/nsopw/` |
 | DeepFace UI | `gui_app/tabs/deepface/` |
 | Settings | `gui_app/tabs/settings/` |
-| Export card | `gui_app/shared/export_card*.py` (premium layout: foil name, Reported As race banner, crime panel, location footer; no date) |
+| Export card | `gui_app/shared/export_card*.py` (premium layout: foil name, Reported As race banner, crime panel, location + release No. footer) |
+| Card release # | `gui_app/shared/export_card_release.py` — sequential No. per distinct person (`data/card_release.json`); re-export reuses |
 | Crime summary | `scraper/crime_summary*.py` (clause parse + docket strip) |
 | Detail drawer | `gui_app/shared/detail_drawer/` |
 | SQLite | `scraper/database/` · path helpers in `scraper/paths.py` |

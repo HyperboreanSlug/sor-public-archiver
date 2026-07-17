@@ -42,7 +42,7 @@ _FOOTER_H = 44
 
 
 def render_export_card(record: Mapping[str, Any]) -> Image.Image:
-    """Premium watermarked card: large photo, race banner, crime, location (no date)."""
+    """Premium watermarked card: large photo, race banner, crime, location + release No."""
     canvas = Image.new("RGBA", (_CARD_W, _CARD_H), _BG)
     draw = ImageDraw.Draw(canvas)
     _draw_foil_sheen(canvas)
@@ -56,7 +56,7 @@ def render_export_card(record: Mapping[str, Any]) -> Image.Image:
             race = ""
     loc = last_known_location(record)
     cr = crime(record)
-    # SORPA: never show a date on export cards (see arrest_datetime stub).
+    # Footer right: persistent release number (increments per new person only).
     arrest_dt = arrest_datetime(record)
 
     name_font = load_font(_NAME_SIZE, bold=True)
@@ -201,12 +201,12 @@ def _draw_crime_panel(draw, text: str, y: int, margin: int, max_w: int, font) ->
 
 
 def _draw_footer(
-    draw, loc: str, date: str, y: int, margin: int, max_w: int, font
+    draw, loc: str, release_label: str, y: int, margin: int, max_w: int, font
 ) -> None:
     draw.line((margin, y, _CARD_W - margin, y), fill=_LINE, width=2)
     ty = y + 14
     left = (loc or "")[:40]
-    right = (date or "")[:28]
+    right = (release_label or "")[:28]
     handle = _WATERMARK
     if left:
         draw.text((margin, ty), left.upper(), font=font, fill=_MUTED)

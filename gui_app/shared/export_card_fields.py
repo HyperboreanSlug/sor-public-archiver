@@ -170,9 +170,14 @@ def crime(record: Mapping[str, Any]) -> str:
 
 
 def arrest_datetime(record: Mapping[str, Any]) -> str:
-    """SORPA export cards never show a date (registry data, not arrests).
+    """Footer right-side label: card release number (not a date).
 
-    Kept as a stub so the shared card chassis (footer signature) stays compatible
-    with mapa; always returns empty so the footer right side stays blank.
+    Name kept for mapa chassis compatibility. Assigns a new number only when
+    a *different* person is exported for the first time.
     """
-    return ""
+    from gui_app.shared.export_card_release import (
+        format_release_label,
+        release_number_for,
+    )
+
+    return format_release_label(release_number_for(record))
