@@ -43,11 +43,15 @@ class BuilderMergeDemoMixin:
         )
         if " | " in url:
             url = url.split(" | ", 1)[0].strip()
+        # Prefer host of the report URL (GA flyer → GA), not residential state.
+        # Out-of-state registrants often have FL address + GA source_url.
         jur = (
-            (record.get("state") or record.get("source_state") or "")
-            or jurisdiction_from_url(url)
+            jurisdiction_from_url(url)
+            or (record.get("source_state") or "")
+            or (record.get("state") or "")
         )
         if isinstance(jur, str) and " | " in jur:
+            # Prefer first listed jurisdiction (primary registry)
             jur = jur.split(" | ", 1)[0].strip()
         jur = str(jur or "").strip().upper()
 

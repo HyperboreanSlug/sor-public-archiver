@@ -69,14 +69,16 @@ class NSOPWClientParseMixin:
         except (TypeError, ValueError):
             lat = lon = None
 
-        jur = normalize_jurisdiction_code(
-            loc.get("state"),
-            obj.get("jurisdictionId"),
-        )
+        # Registry jurisdiction (who hosts the flyer) beats residential address
+        # state — out-of-state GA registrants living in FL must stay GA, not FL.
         jur_id = normalize_jurisdiction_code(
             obj.get("jurisdictionId"),
             loc.get("state"),
         ) or (obj.get("jurisdictionId") or "").strip().upper()
+        jur = normalize_jurisdiction_code(
+            obj.get("jurisdictionId"),
+            loc.get("state"),
+        )
 
         return NSOPWOffender(
             first_name=given,
@@ -86,7 +88,7 @@ class NSOPWClientParseMixin:
             gender=(obj.get("gender") or "").strip(),
             date_of_birth=dob,
             age=age,
-            # Prefer real state; never store NSOPW junk like "YY"
+            # Prefer registry jurisdictionId; never store NSOPW junk like "YY"
             state=jur or jur_id,
             city=(loc.get("city") or "").strip(),
             address=(loc.get("streetAddress") or "").strip(),

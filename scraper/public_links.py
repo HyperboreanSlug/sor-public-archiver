@@ -208,9 +208,22 @@ def resolve_public_source_url(
     urls = split_source_urls(raw_url)
     st = (state or "").strip().upper()
     if " | " in st:
-        # multi-jurisdiction tags like "YY | FL"
-        parts = [p.strip() for p in st.split("|") if p.strip()]
-        st = "FL" if "FL" in parts else (parts[-1] if parts else st)
+        # multi-jurisdiction: prefer host of the first URL, else first listed code
+        # (do NOT force FL just because FL appears — out-of-state GA+FL address)
+        from scraper.database.sources import jurisdiction_from_url
+
+        url_jur = ""
+        for u in urls:
+            url_jur = jurisdiction_from_url(u)
+            if url_jur:
+                break
+        parts = [p.strip().upper() for p in st.split("|") if p.strip()]
+        if url_jur and url_jur in parts:
+            st = url_jur
+        elif parts:
+            st = parts[0]
+        else:
+            st = st.split("|", 1)[0].strip()
     # Prefer state-relevant hosts when known
     if prefer_hosts:
         hosts = [h.lower() for h in prefer_hosts if h]
@@ -294,7 +307,8 @@ def openable_url_for_record(record: Optional[dict]) -> str:
     valid flyer ``personId`` (e.g. Carlos Gabriel Ramirez / 19184).
     """
     rec = record or {}
-    state = rec.get("state") or rec.get("source_state")
+    # Prefer source_state (registry) then residential state
+    state = rec.get("source_state") or rec.get("state")
     skip_flyers = _record_has_http_404_block(rec)
     url = resolve_public_source_url(
         rec.get("source_url"),
