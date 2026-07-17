@@ -241,7 +241,9 @@ class NSOPWOffender:
         """Map to database/offender dict."""
         import json
 
-        st = normalize_jurisdiction_code(self.state, self.jurisdiction_id)
+        # Registry jurisdictionId beats residential address state (out-of-state
+        # registrants living in FL must not be labeled FL when flyer is GA/etc.).
+        st = normalize_jurisdiction_code(self.jurisdiction_id, self.state)
         src_st = normalize_jurisdiction_code(self.jurisdiction_id, self.state) or st or "US"
         return {
             "first_name": self.first_name or None,
