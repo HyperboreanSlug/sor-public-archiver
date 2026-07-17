@@ -119,12 +119,15 @@ class ReportsGridMetaMixin:
 
     @staticmethod
     def _reports_verdict_label_short(verdict: str) -> str:
+        v = (verdict or "").strip().lower()
+        if v in ("incorrect", "misclass", "wrong"):
+            v = "confirmed"
         return {
             "confirmed": "● Incorrect",
             "correct": "● Correct",
             "skip": "● Skip",
             "unreviewed": "○ Open",
-        }.get(verdict, "○ Open")
+        }.get(v, "○ Open")
 
 
     @staticmethod
@@ -188,22 +191,28 @@ class ReportsGridMetaMixin:
 
     @staticmethod
     def _reports_verdict_label(verdict: str) -> str:
+        v = (verdict or "").strip().lower()
+        if v in ("incorrect", "misclass", "wrong"):
+            v = "confirmed"
         return {
             "confirmed": "● Confirmed incorrect",
             "correct": "● Confirmed correct",
             "skip": "● Skipped",
             "unreviewed": "○ Unconfirmed",
-        }.get(verdict, "○ Unconfirmed")
+        }.get(v, "○ Unconfirmed")
 
 
     @staticmethod
     def _reports_verdict_color(verdict: str) -> str:
+        v = (verdict or "").strip().lower()
+        if v in ("incorrect", "misclass", "wrong"):
+            v = "confirmed"
         return {
             "confirmed": C["danger"],
             "correct": C["success"],
             "skip": C["dim"],
             "unreviewed": C["muted"],
-        }.get(verdict, C["muted"])
+        }.get(v, C["muted"])
 
 
     def _reports_update_metrics(self) -> None:
@@ -223,7 +232,7 @@ class ReportsGridMetaMixin:
             if p and Path(p).is_file():
                 n_photo += 1
             v = self._verdict_for_mc(mc)
-            if v == "confirmed":
+            if v in ("confirmed", "incorrect"):
                 n_conf += 1
             elif v == "correct":
                 n_ok += 1

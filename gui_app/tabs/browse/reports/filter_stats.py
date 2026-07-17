@@ -6,14 +6,18 @@ from typing import Optional
 
 class ReportsFilterStatsMixin:
     def _results_excluding_correct(self, results: Optional[list] = None) -> list:
-        """Misclass results with Correct-label verdicts removed (for Statistics)."""
+        """Misclass results with *Confirmed correct* removed (not confirmed incorrect).
+
+        Reports vocabulary: ``correct`` = listed race OK (drop from mismatch list);
+        ``confirmed`` = confirmed misclassification (keep, show status).
+        """
         src = list(results if results is not None else (self._misclass_results or []))
         out = []
         for mc in src:
             v = self._verdict_for_mc(mc) if hasattr(self, "_verdict_for_mc") else ""
-            if v in ("correct", "confirmed"):
+            # Only drop confirmed-correct; keep confirmed-incorrect + unreviewed
+            if v == "correct":
                 continue
-            # Also honor offenders.flags ethnicity_review
             try:
                 from scraper.ethnicity_review import ethnicity_review_verdict
 
@@ -214,13 +218,15 @@ class ReportsFilterStatsMixin:
             )
             crime = summarize_crime(str(crime_raw), max_len=72) if crime_raw else "—"
             conf_status = verification_label(rec)
-            # Prefer JSON report verdict when set and flags empty
-            if conf_status == "Unverified" and hasattr(self, "_verdict_for_mc"):
+            # Prefer JSON / normalized report verdict when flags empty or stale
+            if hasattr(self, "_verdict_for_mc"):
                 v = self._verdict_for_mc(mc)
-                if v in ("correct", "confirmed"):
+                if v == "correct":
                     conf_status = "Confirmed correct"
-                elif v == "incorrect":
+                elif v == "confirmed":
                     conf_status = "Confirmed incorrect"
+                elif v == "skip" and conf_status == "Unverified":
+                    conf_status = "Skipped"
             iid = self.misclass_tree.insert(
                 "",
                 "end",

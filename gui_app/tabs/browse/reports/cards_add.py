@@ -95,12 +95,17 @@ class ReportsCardsAddMixin:
         has_photo = bool(photo_path and Path(photo_path).is_file())
         crime = self._reports_crime_text(rec)
         df = rec.get("_deepface") or {}
+        v_key = (
+            "confirmed"
+            if str(verdict or "").lower() in ("confirmed", "incorrect")
+            else str(verdict or "unreviewed")
+        )
         border = {
             "confirmed": C["danger"],
             "correct": C["success"],
             "skip": C["dim"],
             "unreviewed": C["border"],
-        }.get(verdict, C["border"])
+        }.get(v_key, C["border"])
 
         if grid:
             return self._reports_add_grid_tile(

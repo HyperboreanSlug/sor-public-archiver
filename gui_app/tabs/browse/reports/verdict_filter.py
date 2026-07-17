@@ -95,13 +95,26 @@ class ReportsVerdictFilterMixin:
     @staticmethod
     def _reports_verdict_passes_filter(verdict: str, vfilter: str) -> bool:
         """Strict Show filter: Unconfirmed never includes confirmed/correct/skip."""
-        v = (verdict or "unreviewed").strip() or "unreviewed"
+        # Normalize so flags' "incorrect" matches Show → Confirmed incorrect
+        v_raw = (verdict or "unreviewed").strip().lower() or "unreviewed"
+        if v_raw in ("incorrect", "misclass", "wrong"):
+            v = "confirmed"
+        elif v_raw in ("correct", "ok"):
+            v = "correct"
+        elif v_raw in ("skip", "skipped"):
+            v = "skip"
+        elif v_raw in ("confirmed",):
+            v = "confirmed"
+        else:
+            v = "unreviewed" if v_raw in ("unreviewed", "unconfirmed", "") else v_raw
         f = (vfilter or "unreviewed").strip() or "unreviewed"
         if f == "all":
             return True
         if f == "unreviewed":
             # Only never-reviewed cards — not confirmed incorrect/correct/skip
             return v == "unreviewed"
+        if f == "confirmed":
+            return v == "confirmed"
         return v == f
 
 
