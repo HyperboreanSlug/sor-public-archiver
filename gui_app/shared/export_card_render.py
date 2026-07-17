@@ -1,24 +1,25 @@
-"""Render and save shareable offender mugshot cards."""
+"""Render and save premium shareable offender mugshot cards."""
 from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Mapping, Tuple
+from typing import Any, Mapping
 
 from PIL import Image, ImageDraw, ImageFont
 
 from gui_app.shared.export_card_fields import (
-    _ACCENT,
     _BANNER_RED,
     _BANNER_TEXT,
     _BG,
     _CARD_H,
     _CARD_W,
+    _CRIME_PANEL,
+    _FOIL,
+    _LINE,
     _MUTED,
-    _PHOTO_H,
-    _TEXT,
     _WATERMARK,
     _clean_field,
+    arrest_datetime,
     crime,
     desktop_dir,
     last_known_location,
@@ -26,7 +27,6 @@ from gui_app.shared.export_card_fields import (
     person_name,
     safe_filename,
 )
-from gui_app.shared.export_card_fit import draw_crime_block, draw_labeled_block
 from gui_app.shared.export_card_photo import (
     draw_seal_watermark,
     load_mugshot,
@@ -34,33 +34,18 @@ from gui_app.shared.export_card_photo import (
 )
 from scraper.searcher import format_race_label
 
+_PAD = 48
+_NAME_SIZE = 52
+_CRIME_H = 100
+_BANNER_H = 96
+_FOOTER_H = 44
+
 
 def render_export_card(record: Mapping[str, Any]) -> Image.Image:
-    """Watermarked card: full photo (no zoom), city+state only, crime at bottom."""
+    """Premium watermarked card: large photo, race banner, crime, location/date."""
     canvas = Image.new("RGBA", (_CARD_W, _CARD_H), _BG)
     draw = ImageDraw.Draw(canvas)
-
-    margin = 48
-    footer_reserve = 56
-    photo_box = (_CARD_W - margin * 2, _PHOTO_H)
-    photo_rect = (margin, margin, margin + photo_box[0], margin + photo_box[1])
-    # Photo box: dark frame, full image letterboxed inside (never cropped/zoomed)
-    draw.rectangle(photo_rect, fill=(12, 12, 14, 255))
-    mug = load_mugshot(record, photo_box).convert("RGBA")
-    canvas.paste(mug, (margin, margin), mug if mug.mode == "RGBA" else None)
-
-    draw_seal_watermark(
-        canvas,
-        photo_box=photo_rect,
-        text=_WATERMARK,
-        seal_opacity=0.03,
-        text_opacity=0.15,
-    )
-
-    bar_y = margin + _PHOTO_H + 18
-    draw.rounded_rectangle(
-        (margin, bar_y, _CARD_W - margin, bar_y + 8), radius=4, fill=_ACCENT
-    )
+    _draw_foil_sheen(canvas)
 
     name = person_name(record) or "—"
     race_raw = _clean_field(record.get("race"))
@@ -71,116 +56,161 @@ def render_export_card(record: Mapping[str, Any]) -> Image.Image:
             race = ""
     loc = last_known_location(record)
     cr = crime(record)
+    arrest_dt = arrest_datetime(record)
 
-    name_font = load_font(54, bold=True)
-    label_font = load_font(26)
-    value_font = load_font(34, bold=True)
-    banner_font = load_font(48, bold=True)
+    name_font = load_font(_NAME_SIZE, bold=True)
+    crime_font = load_font(28)
+    footer_font = load_font(22)
+    reported_font = load_font(22, bold=True)
+    race_font = _load_display_font(48)
 
-    y = bar_y + 28
-    max_text_w = _CARD_W - margin * 2
-    # Crime uses slightly wider inset so long labels are not clipped early
-    crime_margin = max(28, margin - 16)
-    crime_text_w = _CARD_W - crime_margin * 2
-    crime_bottom = _CARD_H - margin - footer_reserve
-    # Hard-reserve bottom band so name/race/location never push crime off the card.
-    # Multi-offense summaries wrap across 2–3 lines (middot breaks).
-    crime_band = 200 if cr else 0
-    content_limit = crime_bottom - crime_band
-
-    for line in wrap_text(draw, name, name_font, max_text_w)[:2]:
-        if y + 56 > content_limit:
-            break
-        draw.text((margin, y), line, font=name_font, fill=_TEXT)
-        y += 56
-
-    if race and y + 100 <= content_limit:
-        y = _draw_race_banner(draw, race, y, margin, max_text_w, banner_font)
-
-    # City + state only (never address/county)
-    if loc:
-        y = draw_labeled_block(
-            draw,
-            "Location",
-            loc,
-            y,
-            margin,
-            max_text_w,
-            label_font,
-            value_font,
-            max_lines=2,
-            bottom_limit=content_limit,
-        )
-
-    # Crime always at the bottom of the card (above watermark handle)
-    if cr:
-        draw_crime_block(
-            draw,
-            cr,
-            content_limit,
-            margin=crime_margin,
-            max_text_w=crime_text_w,
-            bottom_limit=crime_bottom,
-            label_font=label_font,
-            anchor_bottom=True,
-            min_height=crime_band,
-        )
-
-    handle = _WATERMARK or "@DoDeportations"
-    handle_font = load_font(28, bold=True)
-    hb = draw.textbbox((0, 0), handle, font=handle_font)
-    hw, hh = hb[2] - hb[0], hb[3] - hb[1]
-    draw.text(
-        (_CARD_W - margin - hw, _CARD_H - margin - hh),
-        handle,
-        font=handle_font,
-        fill=(255, 255, 255, 255),
+    max_text_w = _CARD_W - _PAD * 2
+    banner_on = bool(race)
+    stack_h = (
+        20
+        + _name_block_h(draw, name, name_font, max_text_w)
+        + 16
+        + (_BANNER_H if banner_on else 0)
+        + (16 if banner_on else 0)
+        + (_CRIME_H if cr else 0)
+        + (16 if cr else 0)
+        + _FOOTER_H
+        + _PAD
     )
+    photo_top = _PAD
+    photo_h = max(420, _CARD_H - photo_top - stack_h)
+    photo_box = (_CARD_W - _PAD * 2, photo_h)
+    photo_rect = (_PAD, photo_top, _PAD + photo_box[0], photo_top + photo_box[1])
+
+    draw.rounded_rectangle(photo_rect, radius=28, fill=(13, 14, 18, 255))
+    mug = load_mugshot(record, photo_box).convert("RGBA")
+    frame = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+    frame.paste(mug, (_PAD, photo_top), mug if mug.mode == "RGBA" else None)
+    mask = Image.new("L", canvas.size, 0)
+    ImageDraw.Draw(mask).rounded_rectangle(photo_rect, radius=28, fill=255)
+    canvas.paste(frame, (0, 0), mask)
+    draw.rounded_rectangle(photo_rect, radius=28, outline=_LINE, width=2)
+
+    draw_seal_watermark(
+        canvas,
+        photo_box=photo_rect,
+        text=_WATERMARK,
+        seal_opacity=0.03,
+        text_opacity=0.15,
+    )
+
+    y = photo_top + photo_h + 20
+    y = _draw_name(draw, name, y, _PAD, max_text_w, name_font)
+    if race:
+        y = _draw_race_banner(
+            draw, race, y + 8, _PAD, max_text_w, reported_font, race_font
+        )
+    if cr:
+        y = _draw_crime_panel(draw, cr, y + 12, _PAD, max_text_w, crime_font)
+    _draw_footer(draw, loc, arrest_dt, y + 14, _PAD, max_text_w, footer_font)
     return canvas
 
 
-def _draw_race_banner(draw, race, y, margin, max_text_w, banner_font) -> int:
-    banner_h = 96
-    banner_pad_x = 28
-    banner_top = y + 8
+def _load_display_font(size: int) -> ImageFont.ImageFont:
+    windir = Path(__import__("os").environ.get("WINDIR", r"C:\Windows"))
+    for name in ("impact.ttf", "arialbd.ttf", "segoeuib.ttf"):
+        path = windir / "Fonts" / name
+        try:
+            if path.is_file():
+                return ImageFont.truetype(str(path), size=size)
+        except OSError:
+            continue
+    return load_font(size, bold=True)
+
+
+def _name_block_h(draw, name: str, font, max_w: int) -> int:
+    lines = wrap_text(draw, name or "—", font, max_w)[:2]
+    return max(56, len(lines) * 58)
+
+
+def _draw_foil_sheen(canvas: Image.Image) -> None:
+    overlay = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+    od = ImageDraw.Draw(overlay)
+    cx, cy = _CARD_W - 80, 40
+    for r, col in (
+        (220, (240, 206, 132, 28)),
+        (160, (142, 123, 224, 22)),
+        (110, (95, 216, 224, 18)),
+        (70, (217, 142, 107, 20)),
+    ):
+        od.ellipse((cx - r, cy - r, cx + r, cy + r), fill=col)
+    canvas.alpha_composite(overlay)
+
+
+def _draw_name(draw, name: str, y: int, margin: int, max_w: int, font) -> int:
+    for line in wrap_text(draw, name or "—", font, max_w)[:2]:
+        draw.text((margin, y), line, font=font, fill=_FOIL)
+        y += 58
+    return y
+
+
+def _draw_race_banner(
+    draw, race: str, y: int, margin: int, max_w: int, label_font, race_font
+) -> int:
+    top = y
     draw.rounded_rectangle(
-        (margin, banner_top, _CARD_W - margin, banner_top + banner_h),
+        (margin, top, _CARD_W - margin, top + _BANNER_H),
         radius=14,
         fill=_BANNER_RED,
+        outline=(178, 58, 58, 255),
+        width=2,
     )
-    banner_label_font = load_font(24, bold=True)
-    label = "RACE MARKED"
-    race_lines = wrap_text(
-        draw, race.upper(), banner_font, max_text_w - banner_pad_x * 2
-    )[:2]
-    gap = 6
-
-    def line_metrics(text: str, font: ImageFont.ImageFont) -> Tuple[int, int, int]:
-        b = draw.textbbox((0, 0), text, font=font)
-        return b[2] - b[0], b[3] - b[1], b[1]
-
-    label_w, label_h, label_top = line_metrics(label, banner_label_font)
-    race_metrics = [line_metrics(line, banner_font) for line in race_lines]
-    race_block_h = sum(m[1] for m in race_metrics) + max(0, len(race_metrics) - 1) * 4
-    block_h = label_h + gap + race_block_h
-    cursor_y = banner_top + max(0, (banner_h - block_h) // 2)
-
+    label = "Reported As"
+    race_txt = race.upper()
+    lb = draw.textbbox((0, 0), label, font=label_font)
+    lw, lh = lb[2] - lb[0], lb[3] - lb[1]
+    race_lines = wrap_text(draw, race_txt, race_font, max_w - 40)[:1]
+    rb = draw.textbbox((0, 0), race_lines[0], font=race_font)
+    rw, rh = rb[2] - rb[0], rb[3] - rb[1]
+    gap = 4
+    block = lh + gap + rh
+    cy = top + max(0, (_BANNER_H - block) // 2)
     draw.text(
-        ((_CARD_W - label_w) // 2, cursor_y - label_top),
+        ((_CARD_W - lw) // 2, cy - lb[1]),
         label,
-        font=banner_label_font,
-        fill=(255, 220, 220, 255),
+        font=label_font,
+        fill=(245, 217, 217, 255),
     )
-    cursor_y += label_h + gap
-    for line, (lw, lh, ltop) in zip(race_lines, race_metrics):
-        draw.text(
-            ((_CARD_W - lw) // 2, cursor_y - ltop),
-            line,
-            font=banner_font,
-            fill=_BANNER_TEXT,
-        )
-        cursor_y += lh + 4
-    return banner_top + banner_h + 14
+    cy += lh + gap
+    draw.text(
+        ((_CARD_W - rw) // 2, cy - rb[1]),
+        race_lines[0],
+        font=race_font,
+        fill=_BANNER_TEXT,
+    )
+    return top + _BANNER_H
+
+
+def _draw_crime_panel(draw, text: str, y: int, margin: int, max_w: int, font) -> int:
+    box = (margin, y, _CARD_W - margin, y + _CRIME_H)
+    draw.rounded_rectangle(box, radius=18, fill=_CRIME_PANEL, outline=_LINE, width=2)
+    lines = wrap_text(draw, text or "", font, max_w - 36)[:3]
+    ty = y + 18
+    for line in lines:
+        if line:
+            draw.text((margin + 18, ty), line, font=font, fill=_MUTED)
+            ty += 28
+    return y + _CRIME_H
+
+
+def _draw_footer(
+    draw, loc: str, date: str, y: int, margin: int, max_w: int, font
+) -> None:
+    draw.line((margin, y, _CARD_W - margin, y), fill=_LINE, width=2)
+    ty = y + 14
+    left = (loc or "")[:48]
+    right = (date or "")[:32]
+    if left:
+        draw.text((margin, ty), left.upper(), font=font, fill=_MUTED)
+    if right:
+        rb = draw.textbbox((0, 0), right, font=font)
+        rw = rb[2] - rb[0]
+        draw.text((_CARD_W - margin - rw, ty), right, font=font, fill=_MUTED)
 
 
 def export_record_card_to_desktop(record: Mapping[str, Any]) -> Path:

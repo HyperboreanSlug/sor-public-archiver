@@ -13,14 +13,18 @@ _SEAL_PATH = (
 )
 _CARD_W = 1080
 _CARD_H = 1350
-# Leave room below for name + race banner + location + crime at bottom
+# Legacy; premium layout sizes photo dynamically.
 _PHOTO_H = 760
-_BG = (12, 12, 14, 255)
-_PANEL = (26, 26, 32, 255)
-_TEXT = (236, 236, 241, 255)
-_MUTED = (155, 155, 168, 255)
-_ACCENT = (232, 168, 124, 255)
-_BANNER_RED = (180, 28, 36, 255)
+# Premium card palette (matches premium_card_blank.html)
+_BG = (10, 11, 14, 255)
+_PANEL = (20, 22, 27, 255)
+_CRIME_PANEL = (20, 22, 27, 255)
+_LINE = (38, 42, 51, 255)
+_TEXT = (243, 241, 234, 255)
+_MUTED = (139, 143, 153, 255)
+_FOIL = (240, 206, 132, 255)
+_ACCENT = (240, 206, 132, 255)
+_BANNER_RED = (140, 31, 31, 255)
 _BANNER_TEXT = (255, 255, 255, 255)
 
 
