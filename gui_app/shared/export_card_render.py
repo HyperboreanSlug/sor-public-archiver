@@ -40,7 +40,8 @@ _CRIME_H = 128
 _BANNER_H = 120
 # Race banner slightly wider than text stack (extends toward card edges)
 _BANNER_INSET = 28
-_FOOTER_H = 44
+_FOOTER_H = 56
+_NUMBER_SIZE = 36  # bottom-right export No. (larger than location text)
 
 
 def render_export_card(record: Mapping[str, Any]) -> Image.Image:
@@ -65,6 +66,7 @@ def render_export_card(record: Mapping[str, Any]) -> Image.Image:
     # Crime: large bold charge lines
     crime_font = load_font(42, bold=True)
     footer_font = load_font(22)
+    number_font = load_font(_NUMBER_SIZE, bold=True)
     # "Reported As" + race value — large display weight
     reported_font = load_font(28, bold=True)
     race_font = _load_display_font(58)
@@ -113,7 +115,9 @@ def render_export_card(record: Mapping[str, Any]) -> Image.Image:
         )
     if cr:
         y = _draw_crime_panel(draw, cr, y + 12, _PAD, max_text_w, crime_font)
-    _draw_footer(draw, loc, arrest_dt, y + 14, _PAD, max_text_w, footer_font)
+    _draw_footer(
+        draw, loc, arrest_dt, y + 14, _PAD, max_text_w, footer_font, number_font
+    )
     return canvas
 
 
@@ -212,25 +216,39 @@ def _draw_crime_panel(draw, text: str, y: int, margin: int, max_w: int, font) ->
 
 
 def _draw_footer(
-    draw, loc: str, release_label: str, y: int, margin: int, max_w: int, font
+    draw,
+    loc: str,
+    release_label: str,
+    y: int,
+    margin: int,
+    max_w: int,
+    font,
+    number_font=None,
 ) -> None:
     draw.line((margin, y, _CARD_W - margin, y), fill=_LINE, width=2)
-    ty = y + 14
+    ty = y + 12
     left = (loc or "")[:40]
     right = (release_label or "")[:28]
     handle = _WATERMARK
+    num_font = number_font or load_font(_NUMBER_SIZE, bold=True)
     if left:
-        draw.text((margin, ty), left.upper(), font=font, fill=_MUTED)
+        draw.text((margin, ty + 6), left.upper(), font=font, fill=_MUTED)
     if right:
-        rb = draw.textbbox((0, 0), right, font=font)
+        rb = draw.textbbox((0, 0), right, font=num_font)
         rw = rb[2] - rb[0]
-        draw.text((_CARD_W - margin - rw, ty), right, font=font, fill=_MUTED)
+        # Brighter + larger so export No. reads clearly on the card
+        draw.text(
+            (_CARD_W - margin - rw, ty),
+            right,
+            font=num_font,
+            fill=(235, 235, 240, 255),
+        )
     # Brand mark centered in footer (same handle as photo watermark)
     handle_font = load_font(20, bold=True)
     hb = draw.textbbox((0, 0), handle, font=handle_font)
     hw = hb[2] - hb[0]
     draw.text(
-        ((_CARD_W - hw) // 2, ty),
+        ((_CARD_W - hw) // 2, ty + 6),
         handle,
         font=handle_font,
         fill=(200, 200, 210, 255),
