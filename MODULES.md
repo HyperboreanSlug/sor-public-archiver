@@ -21,6 +21,7 @@ scraper/
   database/ (dedupe_*, csv_*, schema, …)
   nsopw/ (client_*, builder_*, search_plan, parallel)
   reports/ (fetcher_*)
+  scrapers/ (base, direct, arcgis, hybrid, va_*)
   searcher_*, ethnic_names_*, cli_*, mugshot_ethnicity/
 ```
 

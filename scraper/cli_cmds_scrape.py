@@ -270,7 +270,9 @@ def cmd_status(args: argparse.Namespace) -> None:
     for r in REGISTRIES:
         if r.abbr == "US":
             continue
-        has_bulk = r.scrape_method in ("direct", "arcgis", "api") or bool(r.direct_downloads)
+        has_bulk = r.scrape_method in (
+            "direct", "arcgis", "api", "hybrid", "vspsor", "va"
+        ) or bool(r.direct_downloads)
         if has_bulk:
             bulk_n += 1
         flag = "YES" if has_bulk else "no"

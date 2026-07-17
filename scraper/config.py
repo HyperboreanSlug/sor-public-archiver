@@ -8,6 +8,7 @@ scrape_method values:
   - interactive: search-only website; no automated bulk path
   - html:        attempt static HTML table scrape of registry_url
   - api:         generic REST pagination via search_api
+  - vspsor:      Virginia vspsor.com DataTables POST + detail pages
 """
 
 from __future__ import annotations
@@ -300,9 +301,13 @@ REGISTRIES: List[RegistryConfig] = [
     ),
     RegistryConfig(
         name="Virginia", abbr="VA",
-        registry_url="https://vspsor.com/",
-        scrape_method="interactive",
-        notes="Public registry UI is vspsor.com (VSP landing page is not the SOR app).",
+        registry_url="https://www.vspsor.com/",
+        scrape_method="vspsor",
+        search_api="https://www.vspsor.com/search/searchRegistry",
+        notes=(
+            "vspsor.com DataTables POST /search/searchRegistry (Filter=None = all). "
+            "Detail pages at /Offender/Details/{uuid}. TLS often needs verify=False on Windows."
+        ),
     ),
     RegistryConfig(
         name="Washington", abbr="WA",
@@ -355,8 +360,8 @@ def get_direct_download_sources() -> List[RegistryConfig]:
 
 
 def get_bulk_capable_sources() -> List[RegistryConfig]:
-    """Registries with an automated bulk path (direct/arcgis/api/hybrid with downloads)."""
-    bulk_methods = {"direct", "arcgis", "api", "hybrid"}
+    """Registries with an automated bulk path (direct/arcgis/api/hybrid/vspsor)."""
+    bulk_methods = {"direct", "arcgis", "api", "hybrid", "vspsor", "va", "virginia"}
     return [
         r
         for r in REGISTRIES

@@ -338,9 +338,11 @@
   {
     "jurisdiction": "Virginia",
     "abbr": "VA",
-    "registry_url": "https://vspsor.com/",
+    "registry_url": "https://www.vspsor.com/",
     "direct_downloads": [],
-    "notes": "Search-only UI at vspsor.com (VSP landing page is not the SOR app). TLS often needs verify=False on Windows."
+    "scrape_method": "vspsor",
+    "search_api": "https://www.vspsor.com/search/searchRegistry",
+    "notes": "vspsor.com DataTables POST + /Offender/Details/{uuid}. Filter=None = all offenders. TLS often needs verify=False on Windows."
   },
   {
     "jurisdiction": "Washington",

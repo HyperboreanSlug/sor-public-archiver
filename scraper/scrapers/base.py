@@ -123,7 +123,16 @@ class ScraperFactory:
             return DirectDownloadScraper(state_abbr, delay=delay)
         if method in ("arcgis", "arcgis_rest", "feature_server"):
             return ArcGISScraper(state_abbr, delay=delay)
+        if method in ("vspsor", "va", "virginia"):
+            from .va_scraper import VAScraper
+
+            return VAScraper(state_abbr, delay=delay)
         if method == "api":
+            # Virginia uses a dedicated vspsor client, not generic REST paging.
+            if str(state_abbr or "").upper() == "VA":
+                from .va_scraper import VAScraper
+
+                return VAScraper(state_abbr, delay=delay)
             return APIScraper(state_abbr, delay=delay)
         if method == "hybrid":
             return HybridScraper(state_abbr, delay=delay)
