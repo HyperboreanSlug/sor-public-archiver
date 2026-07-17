@@ -91,12 +91,13 @@ def render_export_card(record: Mapping[str, Any]) -> Image.Image:
     canvas.paste(frame, (0, 0), mask)
     draw.rounded_rectangle(photo_rect, radius=28, outline=_LINE, width=2)
 
+    # Seal + @DoDeportations on the mug (always; after frame so nothing covers it)
     draw_seal_watermark(
         canvas,
         photo_box=photo_rect,
         text=_WATERMARK,
-        seal_opacity=0.03,
-        text_opacity=0.15,
+        seal_opacity=0.05,
+        text_opacity=0.22,
     )
 
     y = photo_top + photo_h + 20
@@ -203,14 +204,25 @@ def _draw_footer(
 ) -> None:
     draw.line((margin, y, _CARD_W - margin, y), fill=_LINE, width=2)
     ty = y + 14
-    left = (loc or "")[:48]
-    right = (date or "")[:32]
+    left = (loc or "")[:40]
+    right = (date or "")[:28]
+    handle = _WATERMARK
     if left:
         draw.text((margin, ty), left.upper(), font=font, fill=_MUTED)
     if right:
         rb = draw.textbbox((0, 0), right, font=font)
         rw = rb[2] - rb[0]
         draw.text((_CARD_W - margin - rw, ty), right, font=font, fill=_MUTED)
+    # Brand mark centered in footer (same handle as photo watermark)
+    handle_font = load_font(20, bold=True)
+    hb = draw.textbbox((0, 0), handle, font=handle_font)
+    hw = hb[2] - hb[0]
+    draw.text(
+        ((_CARD_W - hw) // 2, ty),
+        handle,
+        font=handle_font,
+        fill=(200, 200, 210, 255),
+    )
 
 
 def export_record_card_to_desktop(record: Mapping[str, Any]) -> Path:
