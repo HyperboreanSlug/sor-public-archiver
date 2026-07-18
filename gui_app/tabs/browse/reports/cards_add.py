@@ -202,11 +202,17 @@ class ReportsCardsAddMixin:
         )
         status_lbl.pack(side="right")
 
-        # Listed race banner
+        # Listed race banner (+ DEPORTED in block letters when registry says so)
+        try:
+            from gui_app.shared.deported import format_listed_banner
+
+            listed_txt = format_listed_banner(race, rec)
+        except Exception:
+            listed_txt = f"LISTED {str(race).upper()}"
         ctk.CTkLabel(
             body,
-            text=f"LISTED {str(race).upper()}",
-            font=FONT_SM,
+            text=listed_txt,
+            font=FONT_BOLD,
             text_color="#ffffff",
             fg_color="#7a1f1f",
             corner_radius=4,
@@ -376,8 +382,14 @@ class ReportsCardsAddMixin:
             url_disp = openable_url_for_record(rec) or url_raw or "—"
         except Exception:
             url_disp = url_raw or "—"
+        try:
+            from gui_app.shared.deported import format_listed_banner
+
+            listed_copy = format_listed_banner(race, rec)
+        except Exception:
+            listed_copy = f"LISTED AS: {race}"
         copy_blob = (
-            f"{name}\nLISTED AS: {race}\nSurname ethnicity: {eth}"
+            f"{name}\n{listed_copy}\nSurname ethnicity: {eth}"
             f"{crime_line}\nConf {conf_text} · {state}\n"
             f"HTML: {html_raw or '—'}\n"
             f"URL: {url_disp}"

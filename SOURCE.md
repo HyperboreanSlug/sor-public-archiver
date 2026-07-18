@@ -22,6 +22,7 @@
 | Settings | `gui_app/tabs/settings/` |
 | Export card | `gui_app/shared/export_card*.py` (premium layout: foil name, Reported As race banner, crime panel, location + release No. footer) |
 | Card export # | `gui_app/shared/export_card_release.py` — sequential No. per person (`offenders.export_number` + `data/card_release.json`); **mint only on deliberate Desktop/grid export** (`assign_number=True`); bare render/peek never burns a number; re-export reuses; Reports shows `export #N` |
+| Deported flag | `gui_app/shared/deported.py` — when address/city/county marks deported, Reports banner shows bold **`LISTED WHITE  DEPORTED`** (list + grid + HTML export) |
 | Crime summary | `scraper/crime_summary*.py` (clause parse + docket strip) |
 | Detail drawer | `gui_app/shared/detail_drawer/` |
 | SQLite | `scraper/database/` · path helpers in `scraper/paths.py` |

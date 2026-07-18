@@ -153,7 +153,19 @@ class ReportsExportHtmlMixin:
             )
             vclass = _esc(verdict)
             race_disp = _format_race_display(mc.expected_race) or (mc.expected_race or "—")
+            try:
+                from gui_app.shared.deported import format_listed_banner
+
+                listed_full = format_listed_banner(race_disp, rec)
+            except Exception:
+                listed_full = f"LISTED {str(race_disp).upper()}"
+            # Split "LISTED WHITE  DEPORTED" for HTML structure
             race = _esc(str(race_disp).upper())
+            deported_html = (
+                ' <span class="listed-deported">DEPORTED</span>'
+                if " DEPORTED" in listed_full
+                else ""
+            )
             crime = self._reports_crime_text(rec)
             # Description = crime only (summarized to fit); no conf/state/face dump
             crime_short = self._reports_summarize_crime(
@@ -173,8 +185,8 @@ class ReportsExportHtmlMixin:
   <div class="body">
     <h2 title="{_esc(name)}">{_esc(name)}</h2>
     <div class="listed-as" title="Registry-listed race">
-      <span class="listed-label">LISTED AS</span>
-      <span class="listed-race">{race}</span>
+      <span class="listed-label">LISTED</span>
+      <span class="listed-race">{race}</span>{deported_html}
     </div>
     {crime_html}
     <p class="badge-line">{badge}</p>
@@ -194,8 +206,8 @@ class ReportsExportHtmlMixin:
       <span class="badge">{badge}</span>
     </header>
     <div class="listed-as" title="Registry-listed race">
-      <span class="listed-label">LISTED AS</span>
-      <span class="listed-race">{race}</span>
+      <span class="listed-label">LISTED</span>
+      <span class="listed-race">{race}</span>{deported_html}
     </div>
     {crime_html}
     {link}
@@ -248,9 +260,14 @@ class ReportsExportHtmlMixin:
     letter-spacing: .08em; color: #f0b0b0; margin-bottom: .1rem;
   }
   .listed-race {
-    display: block; font-size: 1.05rem; font-weight: 800;
+    display: inline; font-size: 1.05rem; font-weight: 800;
     line-height: 1.15; color: #fff; letter-spacing: .02em;
     word-break: break-word;
+  }
+  .listed-deported {
+    display: inline; font-size: 1.05rem; font-weight: 900;
+    letter-spacing: .08em; color: #fff; margin-left: .35rem;
+    text-transform: uppercase;
   }
   .crime {
     margin: .2rem 0 0; color: var(--text); font-size: .72rem;
@@ -323,8 +340,13 @@ class ReportsExportHtmlMixin:
     letter-spacing: .1em; color: #f0b0b0; margin-bottom: .15rem;
   }
   .listed-race {
-    display: block; font-size: 2rem; font-weight: 800;
+    display: inline; font-size: 2rem; font-weight: 800;
     line-height: 1.1; color: #fff; letter-spacing: .03em;
+  }
+  .listed-deported {
+    display: inline; font-size: 1.55rem; font-weight: 900;
+    letter-spacing: .1em; color: #fff; margin-left: .5rem;
+    text-transform: uppercase;
   }
   .vs-eth {
     margin: .15rem 0 .35rem; color: var(--muted); font-size: .95rem;

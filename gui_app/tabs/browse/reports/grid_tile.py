@@ -201,10 +201,15 @@ class ReportsGridTileMixin:
             height=16,
         ).pack(fill="x", padx=3, pady=(1, 0))
 
-        race_u = str(race or "—").strip().upper() or "—"
+        try:
+            from gui_app.shared.deported import format_listed_banner
+
+            listed_txt = format_listed_banner(race, rec)
+        except Exception:
+            listed_txt = f"LISTED  {str(race or '—').strip().upper() or '—'}"
         ctk.CTkLabel(
             card,
-            text=f"LISTED  {race_u}",
+            text=listed_txt,
             font=("Segoe UI", 12, "bold"),
             text_color="#ffffff",
             fg_color="#7a1f1f",
