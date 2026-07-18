@@ -913,6 +913,19 @@ class EthnicAndSearchTests(unittest.TestCase):
             eth_d == "African American" or eth_d.startswith("African"),
             f"DeShawn Washington should stay AA, got {eth_d}",
         )
+        # Mack is Scottish/Irish + common US — not uniquely Black
+        eth_m, _, _ = edb.classify_by_name(
+            "Mack", first_name="Christopher", middle_name="David"
+        )
+        self.assertFalse(
+            eth_m.startswith("African") or eth_m == "African American",
+            f"Christopher David Mack must not be AA, got {eth_m}",
+        )
+        eth_md, _, _ = edb.classify_by_name("Mack", first_name="DeShawn")
+        self.assertTrue(
+            eth_md == "African American" or eth_md.startswith("African"),
+            f"DeShawn Mack should still allow AA, got {eth_md}",
+        )
         # Unique African still flags White as mismatch
         eth_o, _, _ = edb.classify_by_name("Okonkwo")
         self.assertTrue(eth_o.startswith("African"), eth_o)

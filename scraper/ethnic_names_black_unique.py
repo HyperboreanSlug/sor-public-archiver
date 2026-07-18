@@ -34,7 +34,7 @@ _COMMON_US_ENGLISH_SURNAMES = frozenset({
     "green", "griffin", "hall", "hamilton", "harris", "harrison", "hayes",
     "henderson", "hill", "howard", "hughes", "jackson", "james", "jefferson",
     "jenkins", "johnson", "jones", "jordan", "kelly", "kennedy", "king",
-    "lee", "lewis", "long", "marshall", "martin", "mason", "miller",
+    "lee", "lewis", "long", "mack", "marshall", "martin", "mason", "miller",
     "mitchell", "montgomery", "moore", "morgan", "morris", "murphy",
     "murray", "myers", "nelson", "owens", "parker", "patterson", "perry",
     "peterson", "phillips", "powell", "price", "reed", "reynolds",
