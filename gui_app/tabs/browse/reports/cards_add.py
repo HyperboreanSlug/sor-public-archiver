@@ -251,7 +251,7 @@ class ReportsCardsAddMixin:
         crime_sum = self._reports_summarize_crime(crime, max_len=110)
         crime_lbl = ctk.CTkLabel(
             body,
-            text=crime_sum or "—",
+            text=crime_sum or "",
             font=FONT_SM,
             text_color=C["text"] if crime_sum else C["dim"],
             anchor="nw",

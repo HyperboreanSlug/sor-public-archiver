@@ -133,6 +133,11 @@ class ReportsGridTileMixin:
                 pass
             if not s:
                 return ""
+            # Never ship em/en dash on report cards
+            s = s.replace("\u2014", " · ").replace("\u2013", " · ")
+            s = re.sub(r"(?:\s*·\s*)+", " · ", s).strip(" ·")
+            if not s or is_junk_label(s):
+                return ""
             if len(s) <= max_len:
                 return s
             cut = s[: max_len - 1]
@@ -255,7 +260,7 @@ class ReportsGridTileMixin:
         crime_row.pack_propagate(False)
         crime_lbl = ctk.CTkLabel(
             crime_row,
-            text=crime_short or "—",
+            text=crime_short or "",
             font=("Segoe UI", 10),
             text_color=C["text"] if crime_short else C["dim"],
             anchor="nw",

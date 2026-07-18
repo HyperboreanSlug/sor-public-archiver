@@ -54,7 +54,8 @@ def render_export_card(
     draw = ImageDraw.Draw(canvas)
     _draw_foil_sheen(canvas)
 
-    name = person_name(record) or "—"
+    # Never draw em dash (U+2014) on export cards
+    name = person_name(record) or ""
     race_raw = _clean_field(record.get("race"))
     race = ""
     if race_raw:
@@ -138,7 +139,7 @@ def _load_display_font(size: int) -> ImageFont.ImageFont:
 
 
 def _name_block_h(draw, name: str, font, max_w: int) -> int:
-    lines = wrap_text(draw, name or "—", font, max_w)[:2]
+    lines = wrap_text(draw, name or "", font, max_w)[:2]
     return max(56, len(lines) * 58)
 
 
@@ -157,7 +158,7 @@ def _draw_foil_sheen(canvas: Image.Image) -> None:
 
 
 def _draw_name(draw, name: str, y: int, margin: int, max_w: int, font) -> int:
-    for line in wrap_text(draw, name or "—", font, max_w)[:2]:
+    for line in wrap_text(draw, name or "", font, max_w)[:2]:
         draw.text((margin, y), line, font=font, fill=_FOIL)
         y += 58
     return y

@@ -159,8 +159,17 @@ def is_junk_label(label: str) -> bool:
         s,
     ):
         return True
-    # Statute-subsection crumbs: "1 — b — SEX ASSAULT…" (stripped CRS cite)
-    if re.match(r"(?i)^\d{1,2}\s*[—\-]\s*[a-z]\b", s) and len(s) < 80:
+    # Registration tier chrome, not a charge (VA DAVID DAVILA)
+    if re.fullmatch(
+        r"(?i)tier\s+(?:i{1,3}|iv|v|[1-5]|one|two|three|four|five)"
+        r"(?:\s+sex\s+offender.*)?",
+        s,
+    ):
+        return True
+    if re.fullmatch(r"(?i)registration\s+viol.*", s):
+        return True
+    # Statute-subsection crumbs: "1 - b - SEX ASSAULT…" (stripped CRS cite)
+    if re.match(r"(?i)^\d{1,2}\s*[—–\-]\s*[a-z]\b", s) and len(s) < 80:
         return True
     # Bare FL docket crumbs as a whole label: "23-Cf" / "23-CF-017184"
     if re.fullmatch(
@@ -190,14 +199,19 @@ def is_junk_label(label: str) -> bool:
 
 
 def strip_parentheses(s: str) -> str:
-    """No parentheses in report crime text — keep inner words with an em dash."""
+    """No parentheses in report/export crime text; join with middle-dot only.
+
+    Never introduce em dash (U+2014) or en dash (U+2013).
+    """
     t = s or ""
-    # "Sexual battery (weapon/force)" → "Sexual battery — weapon/force"
-    t = re.sub(r"\s*\(([^)]*)\)", r" — \1", t)
+    # "Sexual battery (weapon/force)" → "Sexual battery · weapon/force"
+    t = re.sub(r"\s*\(([^)]*)\)", r" · \1", t)
     t = t.replace("(", " ").replace(")", " ")
-    t = re.sub(r"(?:\s*—\s*)+", " — ", t)
+    # Collapse any legacy em/en dashes to middle-dot
+    t = re.sub(r"\s*[—–]+\s*", " · ", t)
+    t = re.sub(r"(?:\s*·\s*)+", " · ", t)
     t = re.sub(r"\s{2,}", " ", t)
-    return t.strip(" ·;,|—- ")
+    return t.strip(" ·;,|- ")
 
 
 def clean_label(label: str) -> Optional[str]:

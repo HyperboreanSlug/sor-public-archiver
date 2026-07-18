@@ -218,7 +218,12 @@ class ReportsFilterStatsMixin:
                 or rec.get("offense_type")
                 or ""
             )
-            crime = summarize_crime(str(crime_raw), max_len=72) if crime_raw else "—"
+            crime = summarize_crime(str(crime_raw), max_len=72) if crime_raw else ""
+            if crime:
+                crime = (
+                    crime.replace("\u2014", " · ")
+                    .replace("\u2013", " · ")
+                )
             conf_status = verification_label(rec)
             # Prefer JSON / normalized report verdict when flags empty or stale
             if hasattr(self, "_verdict_for_mc"):
@@ -234,11 +239,11 @@ class ReportsFilterStatsMixin:
                 "end",
                 values=(
                     name,
-                    (mc.expected_race or "—")[:14],
+                    (mc.expected_race or "-")[:14],
                     (mc.likely_ethnicity or "")[:22],
                     conf_cell,
                     df_cell,
-                    crime or "—",
+                    crime or "",
                     conf_status,
                 ),
             )

@@ -161,6 +161,10 @@ def crime(record: Mapping[str, Any]) -> str:
             # Never fall back to raw registry dumps (they embed 23-CF dockets).
             summarized = summarize_crime(val) or ""
             out = _clean_field(to_regular_case(summarized))
+            # Never ship em/en dash on export cards (middle-dot only)
+            if out:
+                out = out.replace("\u2014", " · ").replace("\u2013", " · ")
+                out = re.sub(r"(?:\s*·\s*)+", " · ", out).strip(" ·")
             if not out or is_junk_label(out):
                 continue
             # Hard ban residual FL case numbers / CF crumbs after title-case

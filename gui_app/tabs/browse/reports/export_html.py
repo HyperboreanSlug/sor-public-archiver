@@ -174,7 +174,7 @@ class ReportsExportHtmlMixin:
             crime_html = (
                 f'<p class="crime" title="{_esc(crime_short)}">{_esc(crime_short)}</p>'
                 if crime_short
-                else '<p class="crime">—</p>'
+                else '<p class="crime"></p>'
             )
             badge = _esc(self._reports_verdict_label_short(verdict))
             if compact:

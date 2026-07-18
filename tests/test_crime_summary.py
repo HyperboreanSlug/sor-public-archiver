@@ -360,6 +360,56 @@ class CrimeSummaryTests(unittest.TestCase):
         self.assertNotIn("view this statute", out.lower())
         self.assertNotRegex(out, r"(?i)\b18\b")
 
+    def test_david_davila_va_no_tier_garbage(self):
+        """DAVID DAVILA (VA): drop tier chrome; keep fail-to-reg + indecency."""
+        raw = (
+            "18.2-472.1(B) - TIER III SEX OFFENDER; REGISTRATION VIOL; 2ND; "
+            "18.2-472.1 - VIOLENT OFFENDER FAIL TO REG/PROVIDE FALSE INFO; "
+            "21.11 - INDECENCY WITH A CHILD"
+        )
+        out = summarize_crime(raw)
+        self.assertEqual(out, "Fail to register · Indecency with a child")
+        self.assertNotIn("tier", out.lower())
+        self.assertNotIn("violent offender", out.lower())
+        self.assertNotIn("18.2", out)
+        self.assertNotIn("21.11", out)
+        self.assertNotIn("\u2014", out)
+        self.assertNotIn("\u2013", out)
+
+    def test_david_davila_sc_fl_statute_dump_clean(self):
+        """DAVID DAVILA (SC|FL): FL statute boilerplate → short molestation label."""
+        raw = (
+            "800.04(5b) — 800.04 Lewd or lascivious offenses committed upon or "
+            "in the presence of persons less than 16 years of age.— (5) LEWD OR "
+            "LASCIVIOUS MOLESTATION.— (a) A person who intentionally touches... "
+            "| 10/03/2014 | Lewd or lascivious molestation victim under 12 years "
+            "offender 18 or older | F.S. 800.04(5)(b) | 1301964 | Lake, FL | "
+            "Guilty/convict"
+        )
+        out = summarize_crime(raw)
+        self.assertTrue(out)
+        self.assertIn("molest", out.lower())
+        self.assertNotIn("800.04", out)
+        self.assertNotIn("intentionally touches", out.lower())
+        self.assertNotIn("\u2014", out)
+        self.assertNotIn("\u2013", out)
+        self.assertNotIn("—", out)
+
+    def test_never_em_or_en_dash_in_summary(self):
+        """Standing rule: report/export crime text never uses em/en dash."""
+        samples = [
+            "Sexual battery (weapon/force)",
+            "Indecent assault and battery — 265/13B",
+            "18-3-402(1)(b) — SEX ASSAULT - VIC INCAPABLE APPRAIS COND",
+            "Something – with en dash – here sexual assault",
+        ]
+        for raw in samples:
+            out = summarize_crime(raw)
+            self.assertNotIn("\u2014", out, msg=repr(raw))
+            self.assertNotIn("\u2013", out, msg=repr(raw))
+            self.assertNotIn("—", out, msg=repr(raw))
+            self.assertNotIn("–", out, msg=repr(raw))
+
 
 if __name__ == "__main__":
     unittest.main()

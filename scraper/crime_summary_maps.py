@@ -20,7 +20,15 @@ CODE_MAP = [
         "Victim under 16",
     ),
     (_rx(r"SEXUAL\s*BATTERY\s*BY\s*ADULT\s*ON\s*ADULT"), "Sexual battery · adult on adult"),
-    (_rx(r"FAIL(?:URE)?\s*TO\s*REGIST|FAIL\s*COMPLY\s*REG|RE-?REGISTR"), "Fail to register"),
+    # VA/FL/etc: FAIL TO REG / FAIL TO REGISTER / FAIL REG/PROVIDE FALSE INFO
+    (
+        _rx(
+            r"FAIL(?:URE)?\s*TO\s*REG(?:IST(?:ER|RATION)?|\b|/)"
+            r"|FAIL\s*COMPLY\s*REG|RE-?REGISTR"
+            r"|FAIL\s*TO\s*REG/?\s*PROVIDE\s*FALSE"
+        ),
+        "Fail to register",
+    ),
     (_rx(r"TRAVELING\s+TO\s+MEET\s+MINOR"), "Traveling to meet minor"),
     (_rx(r"STATUTORY\s+SEXUAL\s+SEDUCTION"), "Statutory sexual seduction"),
     (_rx(r"COMMUNICATE\s+WITH\s+MINOR\s+FOR\s+IMMORAL"), "Communicate with minor · immoral purposes"),
@@ -106,6 +114,11 @@ DROP_CLAUSE = re.compile(
     r"|charge\s+correlation\s+pending.*"
     r"|no\s+picture\s+available.*"
     r"|registration\s+of\s+criminal\s+offenders.*"
+    # VA/SC registry chrome (DAVID DAVILA): tier label, not a charge
+    r"|tier\s+(?:i{1,3}|iv|v|[1-5]|one|two|three|four|five)"
+    r"\s+sex\s+offender.*"
+    r"|registration\s+viol.*"
+    r"|2nd\s*$|1st\s*$|3rd\s*$"
     r"|scars,?\s*marks\s+and\s+tattoos.*"
     r"|alias(?:es)?\s*(?:information)?:?$"
     r"|photos?:?$"
