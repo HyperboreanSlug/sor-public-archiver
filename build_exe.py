@@ -94,6 +94,7 @@ def main() -> None:
         "scraper.report_fetcher",
         "scraper.public_links",
         "scraper.public_links_mi",
+        "scraper.public_links_co",
         "scraper.reports",
         "scraper.reports.fetcher",
         "scraper.reports.util",
