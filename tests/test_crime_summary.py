@@ -177,9 +177,10 @@ class CrimeSummaryTests(unittest.TestCase):
         self.assertNotIn("18-3-402", out)
         self.assertNotIn("(", out)
         self.assertNotIn(")", out)
+        # Each middle-dot segment is regular case (leading capital)
         self.assertEqual(
             out,
-            "Attempted sexual assault — victim incapable of appraising condition",
+            "Attempted sexual assault · Victim incapable of appraising condition",
         )
 
     def test_always_regular_case_not_all_caps(self):
@@ -201,13 +202,53 @@ class CrimeSummaryTests(unittest.TestCase):
         self.assertNotEqual(out, out.upper())
 
     def test_to_regular_case_helper(self):
-        from scraper.crime_summary_clause import to_regular_case
+        from scraper.crime_summary_clause import (
+            normalize_crime_separators,
+            to_regular_case,
+        )
 
+        # Always regular (sentence) case — never leave mixed SCREAMING words
         self.assertEqual(
             to_regular_case("SEX OFFENSE, OTHER STATE — SEXUAL MISCONDUCT"),
-            "Sex Offense, Other State — Sexual Misconduct",
+            "Sex offense, other state · Sexual misconduct",
         )
         self.assertEqual(to_regular_case("Sexual battery"), "Sexual battery")
+        self.assertEqual(
+            to_regular_case("Texas SEXUAL PERFORMANCE BY A CHILD"),
+            "Texas sexual performance by a child",
+        )
+        # One separator style only
+        self.assertEqual(
+            normalize_crime_separators("Sexual battery — weapon/force - extra"),
+            "Sexual battery · weapon/force · extra",
+        )
+
+    def test_alejandro_garza_tx_regular_case_and_separators(self):
+        """ALEJANDRO GARZA: no mixed CAPS; structural joins are middle-dot only."""
+        raw = (
+            "Texas Offenses | Texas | SEXUAL PERFORMANCE BY A CHILD | "
+            "TEXAS PENAL CODE 43.25 | 64054325 | "
+            "Status: PROBATION/COMMUNITY SUPERVISION | Conviction: 2004-07-22"
+        )
+        out = summarize_crime(raw)
+        self.assertEqual(out, "Sexual performance by a child")
+        self.assertNotIn("SEXUAL", out)
+        self.assertNotIn("Texas Offenses", out)
+        self.assertNotIn("PROBATION", out)
+        self.assertNotIn("—", out)
+        self.assertNotIn(" - ", out)
+        # Multi-offense path also uses middle-dot only
+        raw2 = (
+            "08/07/1996; SEX OFFENSE, OTHER STATE (INDECENCY WITH A CHILD - "
+            "SEXUAL CONTACT); Not Available; Brazoria, TX; Guilty/convict; "
+            "Chapter 794; Sexual Battery *Excluding subsections 794.011(10)"
+        )
+        out2 = summarize_crime(raw2)
+        self.assertIn("Indecency with a child", out2)
+        self.assertIn("Sexual battery", out2)
+        self.assertNotIn("—", out2)
+        # No residual ALL-CAPS tokens
+        self.assertFalse(re.search(r"\b[A-Z]{3,}\b", out2))
 
     def test_fl_cf_case_number_not_in_description(self):
         """ROGELIO DELEON: 23-CF-017184 must not appear as '23-Cf' on cards."""

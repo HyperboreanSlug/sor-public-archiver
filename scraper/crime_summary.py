@@ -14,6 +14,7 @@ from scraper.crime_summary_clause import (
     COUNTY_LOC,
     extract_from_clause,
     norm,
+    normalize_crime_separators,
     strip_dates,
     strip_location_junk,
     to_regular_case,
@@ -92,7 +93,8 @@ def _summarize_crime_impl(text: Optional[str], *, max_len: int = 200) -> str:
     raw = re.sub(r"(?i)no\s+photograph\s+available[^.]*\.", " ", raw)
 
     labels: List[str] = []
-    for p in re.split(r"\s*;\s*", raw):
+    # TX dumps use ``|``; FL/others use ``;`` — treat both as clause breaks
+    for p in re.split(r"\s*[;|]\s*", raw):
         lab = extract_from_clause(p)
         if lab:
             labels.append(lab)
@@ -142,7 +144,8 @@ def _summarize_crime_impl(text: Optional[str], *, max_len: int = 200) -> str:
     labels = _dedupe_preserve(cleaned_labels)
 
     has_sb_qual = any(
-        x.casefold().startswith("sexual battery —")
+        x.casefold().startswith("sexual battery ·")
+        or x.casefold().startswith("sexual battery —")
         or x.casefold().startswith("sexual battery -")
         for x in labels
     )
@@ -150,10 +153,10 @@ def _summarize_crime_impl(text: Optional[str], *, max_len: int = 200) -> str:
         labels = [x for x in labels if x.casefold() != "sexual battery"]
 
     summary = " · ".join(labels)
-    # Final guard: never ship parentheses; always regular case (never ALL CAPS)
+    # Final guard: never ship parentheses; always regular case; one separator
     summary = summary.replace("(", "").replace(")", "")
     summary = re.sub(r"\s{2,}", " ", summary).strip(" ·;,")
-    summary = to_regular_case(summary)
+    summary = to_regular_case(normalize_crime_separators(summary))
     summary = _ban_docket_crumbs(summary)
     if not summary:
         return ""
@@ -165,7 +168,7 @@ def _summarize_crime_impl(text: Optional[str], *, max_len: int = 200) -> str:
     summary = " · ".join(labels)
     summary = summary.replace("(", "").replace(")", "")
     summary = re.sub(r"\s{2,}", " ", summary).strip(" ·;,")
-    summary = to_regular_case(summary)
+    summary = to_regular_case(normalize_crime_separators(summary))
     summary = _ban_docket_crumbs(summary)
     if not summary:
         return ""
@@ -174,7 +177,9 @@ def _summarize_crime_impl(text: Optional[str], *, max_len: int = 200) -> str:
     cut = summary[: max_len - 1]
     if " " in cut:
         cut = cut.rsplit(" ", 1)[0]
-    return _ban_docket_crumbs(to_regular_case(cut.rstrip(" ·,;:") + "…"))
+    return _ban_docket_crumbs(
+        to_regular_case(normalize_crime_separators(cut.rstrip(" ·,;:") + "…"))
+    )
 
 
 def _ban_docket_crumbs(s: str) -> str:

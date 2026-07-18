@@ -5,24 +5,25 @@ import re
 
 _rx = lambda p: re.compile(p, re.I)  # noqa: E731
 
+# Structural join is always middle-dot `` · `` (see normalize_crime_separators).
 CODE_MAP = [
-    (_rx(r"SEX\s*BAT\s*/?\s*WPN\.?\s*OR\s*FORCE"), "Sexual battery — weapon/force"),
-    (_rx(r"SEX\s*BAT\s*BY\s*ADULT\s*/?\s*VCTM\s*UNDER\s*12"), "Sexual battery — adult/victim under 12"),
-    (_rx(r"SEX\s*BAT\s*BY\s*JUVEN\s*/?\s*VCTM\s*UNDER\s*12"), "Sexual battery — juvenile/victim under 12"),
-    (_rx(r"SEX\s*BAT\s*/?\s*INJ\s*NOT\s*LIKELY"), "Sexual battery — injury not likely"),
+    (_rx(r"SEX\s*BAT\s*/?\s*WPN\.?\s*OR\s*FORCE"), "Sexual battery · weapon/force"),
+    (_rx(r"SEX\s*BAT\s*BY\s*ADULT\s*/?\s*VCTM\s*UNDER\s*12"), "Sexual battery · adult/victim under 12"),
+    (_rx(r"SEX\s*BAT\s*BY\s*JUVEN\s*/?\s*VCTM\s*UNDER\s*12"), "Sexual battery · juvenile/victim under 12"),
+    (_rx(r"SEX\s*BAT\s*/?\s*INJ\s*NOT\s*LIKELY"), "Sexual battery · injury not likely"),
     (
         _rx(r"LEWD\s*ASLT\s*/?\s*SEX\s*BAT\s*VCTM\s*<?\s*16"),
-        "Sexual battery — victim under 16",
+        "Sexual battery · victim under 16",
     ),
     (
         _rx(r"LEWD,?\s*LASCIVIOUS\s*(?:CHILD\s*)?U/?16"),
         "Victim under 16",
     ),
-    (_rx(r"SEXUAL\s*BATTERY\s*BY\s*ADULT\s*ON\s*ADULT"), "Sexual battery — adult on adult"),
+    (_rx(r"SEXUAL\s*BATTERY\s*BY\s*ADULT\s*ON\s*ADULT"), "Sexual battery · adult on adult"),
     (_rx(r"FAIL(?:URE)?\s*TO\s*REGIST|FAIL\s*COMPLY\s*REG|RE-?REGISTR"), "Fail to register"),
     (_rx(r"TRAVELING\s+TO\s+MEET\s+MINOR"), "Traveling to meet minor"),
     (_rx(r"STATUTORY\s+SEXUAL\s+SEDUCTION"), "Statutory sexual seduction"),
-    (_rx(r"COMMUNICATE\s+WITH\s+MINOR\s+FOR\s+IMMORAL"), "Communicate with minor — immoral purposes"),
+    (_rx(r"COMMUNICATE\s+WITH\s+MINOR\s+FOR\s+IMMORAL"), "Communicate with minor · immoral purposes"),
 ]
 
 OFFENSE_MAP = [
@@ -48,13 +49,14 @@ OFFENSE_MAP = [
     (
         r"sex(?:ual)?\s*assault.{0,80}incapable\s+apprais.+\battempt\b"
         r"|\battempt\b.{0,40}sex(?:ual)?\s*assault.{0,80}incapable\s+apprais",
-        "Attempted sexual assault — victim incapable of appraising condition",
+        "Attempted sexual assault · victim incapable of appraising condition",
     ),
     (
         r"sex(?:ual)?\s*assault.{0,80}(?:vic(?:tim)?\s+)?incapable\s+apprais",
-        "Sexual assault — victim incapable of appraising condition",
+        "Sexual assault · victim incapable of appraising condition",
     ),
     (r"\bsex(?:ual)?\s*assault\b", "Sexual assault"),
+    (r"sexual\s+performance\s+(?:by|of)\s+(?:a\s+)?child", "Sexual performance by a child"),
     (r"unlawful\s+sexual\s+activity", "Unlawful sexual activity with minor"),
     (
         r"(?:solicit|possess|control|intentionally\s+view).{0,40}child\s+porn"
@@ -85,7 +87,11 @@ DROP_CLAUSE = re.compile(
     r"|compliant\s+tier\s+level.*"
     r"|offender\s+age\s+at\s+time.*"
     r"|physical\s+description.*"
-    r"|name:?$|level:?.*|status:?.*"
+    r"|name:?$|level:?.*"
+    r"|status\s*:.*"
+    r"|conviction\s*:.*"
+    r"|texas\s+offenses?$"
+    r"|texas\s+penal\s+code.*"
     r"|this\s+link\s+reflects.*"
     r")$"
 )

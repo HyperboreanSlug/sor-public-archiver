@@ -101,14 +101,30 @@ def strip_location_junk(s: str) -> str:
     return norm(t.strip(" ·;,"))
 
 
-def to_regular_case(s: str) -> str:
-    """Force readable regular case (never ALL CAPS registry dumps).
+def normalize_crime_separators(s: str) -> str:
+    """Standardize structural separators to middle-dot `` · `` only.
 
-    - Mostly-uppercase text → Title Case
-    - Already mixed → ensure first letter capital, leave the rest
-    - Multi-part labels split on · / — keep each segment regular
+    Converts em dash, en dash, and spaced hyphen used as phrase joins.
+    Leaves compact hyphens (``re-register``, ages) and slashes alone.
     """
-    raw = (s or "").strip()
+    t = s or ""
+    # Em / en dashes (with or without surrounding spaces)
+    t = re.sub(r"\s*[—–]\s*", " · ", t)
+    # Spaced ASCII hyphen used as a join (not word-internal hyphens)
+    t = re.sub(r"\s+-\s+", " · ", t)
+    # Collapse repeated / messy dots
+    t = re.sub(r"(?:\s*·\s*)+", " · ", t)
+    t = re.sub(r"\s{2,}", " ", t)
+    return t.strip(" ·;,|")
+
+
+def to_regular_case(s: str) -> str:
+    """Force readable regular (sentence) case — never ALL CAPS or mixed SCREAMING.
+
+    Every segment is lowercased then given a leading capital (and after · / :).
+    Separators are normalized to `` · `` first so case rules apply uniformly.
+    """
+    raw = normalize_crime_separators((s or "").strip())
     if not raw:
         return raw
 
@@ -119,29 +135,19 @@ def to_regular_case(s: str) -> str:
         letters = [c for c in t if c.isalpha()]
         if not letters:
             return t
-        upper_ratio = sum(1 for c in letters if c.isupper()) / len(letters)
-        # Registry ALL CAPS (or nearly) — never leave as SCREAMING
-        if upper_ratio >= 0.75:
-            t = t.title()
-            # Soft small words after title() mid-phrase
-            t = re.sub(
-                r"\b(Of|Or|And|The|A|An|To|In|For|On|By|With)\b",
-                lambda m: m.group(1).lower(),
-                t,
-            )
-            # Re-capitalize first char / after em dash
-            t = re.sub(
-                r"(^|[—\-·]\s*)([a-z])",
-                lambda m: m.group(1) + m.group(2).upper(),
-                t,
-            )
-            return t
-        # Mixed/lower: sentence-style first capital only
-        if t[0].islower():
-            return t[0].upper() + t[1:]
+        # Always full regular case — fix mixed "Texas SEXUAL PERFORMANCE…" dumps
+        t = t.lower()
+        # First letter
+        t = re.sub(r"^([a-z])", lambda m: m.group(1).upper(), t, count=1)
+        # After middle-dot / colon only (not slash: keep "12/force", "annoy/molest")
+        t = re.sub(
+            r"([·:]\s*)([a-z])",
+            lambda m: m.group(1) + m.group(2).upper(),
+            t,
+        )
         return t
 
-    # Keep multi-offense separators intact
+    # Apply per segment so "a · b" → "A · B"
     if " · " in raw:
         return " · ".join(_one(p) for p in raw.split(" · "))
     return _one(raw)
@@ -209,7 +215,7 @@ def summarize_lewd_clause(clause: str) -> Optional[str]:
     if unclothed:
         return "Unclothed genitals"
     if molest and under16:
-        return "Molestation — victim under 16"
+        return "Molestation · victim under 16"
     if molest:
         return "Molestation"
     if under16:
@@ -274,7 +280,7 @@ def extract_from_clause(clause: str) -> Optional[str]:
         if re.search(r"injury\s+not\s+likely", c, re.I):
             extra.append("injury not likely")
         base = "Sexual battery"
-        return f"{base} — {', '.join(extra)}" if extra else base
+        return f"{base} · {', '.join(extra)}" if extra else base
 
     # Long-form lewd/lascivious (keep victim age / molestation qualifiers)
     if re.search(r"\blewd\b|\blascivious\b", src, re.I) or re.search(
@@ -287,7 +293,7 @@ def extract_from_clause(clause: str) -> Optional[str]:
             if "porn" in lab.lower():
                 m_c = re.search(r"\(\s*(\d+)\s*counts?\s*\)", src, re.I)
                 if m_c:
-                    return f"{lab} — {m_c.group(1)} counts"
+                    return f"{lab} · {m_c.group(1)} counts"
             # Promote to "Attempted …" when source has ATTEMPT and label doesn't
             if re.search(r"(?i)\battempt", src) and not re.search(
                 r"(?i)\battempt", lab
@@ -304,7 +310,15 @@ def extract_from_clause(clause: str) -> Optional[str]:
         return None
     if DROP_CLAUSE.match(c2) or is_statute_or_docket(c2) or is_junk_label(c2):
         return None
-    if _COURT_OR_AGENCY_CLAUSE.match(c2) or _PERSON_NAME_CLAUSE.match(c2):
+    if _COURT_OR_AGENCY_CLAUSE.match(c2):
+        return None
+    # ALL-CAPS multi-token looks like a person name — keep real offense phrases
+    if _PERSON_NAME_CLAUSE.match(c2) and not re.search(
+        r"(?i)\b(?:rape|assault|battery|molest|abuse|sodomy|indecent|"
+        r"porn|sex|sexual|lewd|kidnap|fail(?:ure)?\s+to\s+regist|offense|"
+        r"child|minor|conduct|performance|exposure|contact)\b",
+        c2,
+    ):
         return None
     if len(c2) > 90:
         c2 = re.split(r"\s+where\s+|\s+by\s+offender\s+", c2, maxsplit=1)[0]
