@@ -219,6 +219,49 @@ def extract_statute_card_offenses(soup: BeautifulSoup) -> str:
     )
 
 
+def extract_info_line_crimes(soup: BeautifulSoup) -> str:
+    """Nebraska (and similar) ``div.info_line`` Crime: / Description: values.
+
+    Prefer English crime titles over ``Statute Number(s): 28-319…`` alone.
+    Example: ``Crime: 1st Degree Sexual Assault F2``
+    """
+    collected: List[str] = []
+    seen: Set[str] = set()
+    for div in soup.select("div.info_line, .info_line, li.info_line"):
+        raw = _clean_value(div.get_text(" ", strip=True))
+        if not raw or len(raw) < 8:
+            continue
+        m = re.match(
+            r"(?i)^(crime|offense|offense\s*description|description)\s*:\s*(.+)$",
+            raw,
+        )
+        if not m:
+            continue
+        val = (m.group(2) or "").strip()
+        if not val:
+            continue
+        # Skip pure statute-number dumps (handled by statute_ref on display)
+        if re.match(r"(?i)^statute\b", val):
+            continue
+        if re.fullmatch(r"[\d.\-()A-Za-z\s,/§]+", val) and not re.search(
+            r"(?i)assault|battery|rape|molest|abuse|sex|indecent|child|kidnap",
+            val,
+        ):
+            continue
+        if is_label_chrome_value(val) or is_demographic_crime_junk(val):
+            continue
+        if not _is_crime_cell(val):
+            continue
+        key = val.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        collected.append(val)
+        if len(collected) >= 8:
+            break
+    return "; ".join(collected)[:_MAX_CRIME_LEN]
+
+
 def extract_crime_from_tables(soup: BeautifulSoup) -> str:
     """Pull offense/charge text from multi-row offense tables."""
     collected: List[str] = []

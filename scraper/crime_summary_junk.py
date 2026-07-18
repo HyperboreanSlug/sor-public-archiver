@@ -86,6 +86,11 @@ def strip_statute_cites(s: str) -> str:
         "",
         t,
     )
+    # "Crime:" / "Statute Number(s):" chrome (NE registry dumps)
+    t = re.sub(r"(?i)\bcrime\s*:\s*", " ", t)
+    t = re.sub(r"(?i)\bstatute\s*number\(s\)?\s*:?\s*", " ", t)
+    # Felony/misdemeanor class crumbs: F1 F2 F3 M1 M2 (keep offense words)
+    t = re.sub(r"(?i)\b[FM]\d{1,2}\b", " ", t)
     t = re.sub(r"(?i)\*?\s*excluding\s+subsections?\s+[\d.(),\s]+", " ", t)
     t = re.sub(r"(?i)\bF\.?S\.?\s*[\d.()/a-z]+\s*(?:\(PRINCIPAL\))?", " ", t)
     t = re.sub(r"(?i)\bs\.\s*\d{2,4}\.\d+(?:\([a-z0-9]+\))*\d*", " ", t)

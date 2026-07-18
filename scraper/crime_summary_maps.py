@@ -34,6 +34,19 @@ OFFENSE_MAP = [
     (r"\brape\b.*\b2nd\b|\b2nd\s+degree\s+rape\b", "Rape 2nd degree"),
     (r"\brape\b.*\b3rd\b|\b3rd\s+degree\s+rape\b", "Rape 3rd degree"),
     (r"\brape\b", "Rape"),
+    # NE/KS style: "1st Degree Sexual Assault F2"
+    (
+        r"(?:1st|first)\s+degree\s+sexual\s+assault",
+        "First degree sexual assault",
+    ),
+    (
+        r"(?:2nd|second)\s+degree\s+sexual\s+assault",
+        "Second degree sexual assault",
+    ),
+    (
+        r"(?:3rd|third)\s+degree\s+sexual\s+assault",
+        "Third degree sexual assault",
+    ),
     (r"sodomy", "Sodomy"),
     (r"child\s+molestation", "Child molestation"),
     (r"sexual\s+exploitation\s+of\s+a\s+child", "Sexual exploitation of a child"),

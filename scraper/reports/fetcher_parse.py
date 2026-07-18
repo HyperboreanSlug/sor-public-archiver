@@ -26,6 +26,7 @@ from scraper.reports.util import (  # noqa: F401
 from scraper.reports.race_value import is_plausible_race_value
 from scraper.reports.fetcher_crime import (
     extract_crime_from_tables,
+    extract_info_line_crimes,
     extract_offense_label_rows,
     extract_statute_card_offenses,
     is_demographic_crime_junk,
@@ -210,6 +211,25 @@ class FetcherParseMixin:
                 found["crime"] = label_crime
             elif label_crime not in prev and len(label_crime) > len(prev):
                 found["crime"] = label_crime
+
+        # NE-style info_line: "Crime: 1st Degree Sexual Assault F2"
+        # Prefer English crime titles over "Statute Number(s): …" alone.
+        info_crime = extract_info_line_crimes(soup)
+        if info_crime:
+            prev = (found.get("crime") or "").strip()
+            prev_is_statute = bool(
+                re.search(r"(?i)statute\s*number", prev)
+            ) or bool(re.fullmatch(r"[\d.\-()\s,A-Za-z/§:]+", prev or ""))
+            if (
+                not prev
+                or is_demographic_crime_junk(prev)
+                or prev_is_statute
+                or (
+                    info_crime not in prev
+                    and len(info_crime) >= len(prev)
+                )
+            ):
+                found["crime"] = info_crime
 
         # Virginia vspsor.com gold card headers (statute + offense title)
         va_crime = extract_va_card_offenses(soup)

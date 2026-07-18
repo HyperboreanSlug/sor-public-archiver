@@ -223,6 +223,19 @@ class CrimeSummaryTests(unittest.TestCase):
             "Sexual battery · weapon/force · extra",
         )
 
+    def test_jose_l_amaya_no_statute_numbers(self):
+        """JOSE L AMAYA NE: never show 28-319(1)(a)(b)(c) or F2 class crumbs."""
+        raw = "Statute Number(s): 28-319(1)(a)(b)(c)"
+        out = summarize_crime(raw)
+        self.assertEqual(out, "First degree sexual assault")
+        self.assertNotRegex(out, r"\d")
+        self.assertNotIn("statute", out.lower())
+        # English NE crime title with felony class
+        out2 = summarize_crime("1st Degree Sexual Assault F2")
+        self.assertEqual(out2, "First degree sexual assault")
+        self.assertNotIn("F2", out2)
+        self.assertNotRegex(out2, r"\d")
+
     def test_alejandro_garza_tx_regular_case_and_separators(self):
         """ALEJANDRO GARZA: no mixed CAPS; structural joins are middle-dot only."""
         raw = (

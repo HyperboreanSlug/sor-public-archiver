@@ -194,7 +194,7 @@ def _summarize_crime_impl(text: Optional[str], *, max_len: int = 200) -> str:
 
 
 def _ban_docket_crumbs(s: str) -> str:
-    """Strip FL case-number remnants that title-case turns into '23-Cf'."""
+    """Strip case numbers, statute codes, and class crumbs from display text."""
     t = s or ""
     t = re.sub(
         r"(?i)\b\d{2,4}\s*[-–—]?\s*(?:cf|mm|ct|dr|dp|cj|ca|sc)"
@@ -202,6 +202,22 @@ def _ban_docket_crumbs(s: str) -> str:
         " ",
         t,
     )
+    # Bare statute codes: 28-319, 28-319(1)(a)(b)(c), 18.2-67.4
+    t = re.sub(
+        r"(?i)\b\d{1,2}\.\d{1,2}(?:-\d+(?:\.\d+)*)+(?:\([a-z0-9]+\))*\b",
+        " ",
+        t,
+    )
+    t = re.sub(
+        r"(?i)\b\d{2,3}-\d{1,4}(?:\.\d+)?(?:\([a-z0-9]+\))*\b",
+        " ",
+        t,
+    )
+    # Leftover subsection chains: (1)(a)(b)(c)
+    t = re.sub(r"(?:\s*\([a-z0-9]+\)\s*){2,}", " ", t, flags=re.I)
+    # Felony class crumbs if any survived
+    t = re.sub(r"(?i)\b[FM]\d{1,2}\b", " ", t)
+    t = re.sub(r"(?i)\bstatute\s*number\(s\)?\b", " ", t)
     t = re.sub(r"\s{2,}", " ", t).strip(" ·;,|—-")
     if is_junk_label(t):
         return ""
