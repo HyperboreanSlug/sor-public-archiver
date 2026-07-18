@@ -59,14 +59,20 @@ class RecordSidebarActionsMixin:
                 def ok() -> None:
                     # Keep live sidebar/record in sync with assigned export #
                     num = record.get("export_number")
-                    if num is not None and isinstance(self._record, dict):
-                        self._record["export_number"] = num
+                    if isinstance(self._record, dict):
+                        if num is not None:
+                            self._record["export_number"] = num
+                        if record.get("flags") is not None:
+                            self._record["flags"] = record["flags"]
                     self.export_btn.configure(
                         state="normal", text="Export card to Desktop"
                     )
                     badge = f" · export #{num}" if num else ""
                     self.verdict_status.configure(
-                        text=f"Saved card → {path.name}{badge}",
+                        text=(
+                            f"Saved card → {path.name}{badge}"
+                            f" · confirmed incorrect"
+                        ),
                         text_color=C["success"],
                     )
 

@@ -406,6 +406,7 @@ class ReportsGridTileMixin:
                 meta_lbl=meta_lbl,
                 conf_label=conf_label,
                 state=state,
+                status_lbl=status_lbl,
                 card=card,
             )
         except Exception:

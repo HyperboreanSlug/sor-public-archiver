@@ -442,7 +442,10 @@ class ReportsCardsAddMixin:
             pass
         try:
             self._reports_register_card_ui(
-                mc, export_badge_lbl=export_badge_lbl, card=card
+                mc,
+                export_badge_lbl=export_badge_lbl,
+                status_lbl=status_lbl,
+                card=card,
             )
         except Exception:
             pass

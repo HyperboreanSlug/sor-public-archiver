@@ -87,7 +87,8 @@ def export_grid_to_desktop(
 ) -> Path:
     """Render grid PNG to Desktop; return path.
 
-    Deliberate export: assigns (or reuses) export numbers for each person.
+    Deliberate export: assigns (or reuses) export numbers for each person,
+    and marks each **confirmed incorrect**.
     """
     layout = normalize_layout(layout)
     img = render_export_grid(records, layout=layout, assign_number=True)
@@ -101,4 +102,16 @@ def export_grid_to_desktop(
         out = desktop / f"{stem}_{layout}_{stamp}_{n}.png"
         n += 1
     img.convert("RGB").save(out, format="PNG", optimize=True)
+    try:
+        from gui_app.shared.export_card_confirm import (
+            mark_export_confirmed_incorrect,
+        )
+
+        for rec in records:
+            try:
+                mark_export_confirmed_incorrect(rec)
+            except Exception:
+                pass
+    except Exception:
+        pass
     return out

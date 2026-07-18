@@ -238,7 +238,8 @@ def _draw_footer(
 def export_record_card_to_desktop(record: Mapping[str, Any]) -> Path:
     """Render and save a PNG card to the user's Desktop; return the path.
 
-    Deliberate export: assigns (or reuses) this person's export number.
+    Deliberate export: assigns (or reuses) this person's export number, and
+    marks them **confirmed incorrect** (export implies verified misclass).
     """
     try:
         img = render_export_card(record, assign_number=True)
@@ -259,4 +260,12 @@ def export_record_card_to_desktop(record: Mapping[str, Any]) -> Path:
         out = desktop / f"{name}_{stamp}_{n}.png"
         n += 1
     img.convert("RGB").save(out, format="PNG", optimize=True)
+    try:
+        from gui_app.shared.export_card_confirm import (
+            mark_export_confirmed_incorrect,
+        )
+
+        mark_export_confirmed_incorrect(record)
+    except Exception:
+        pass
     return out

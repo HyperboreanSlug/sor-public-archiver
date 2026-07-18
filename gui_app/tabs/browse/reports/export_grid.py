@@ -65,6 +65,48 @@ class ReportsExportGridMixin:
         """Drop card widget map (called when the page is rebuilt)."""
         self._report_card_ui = {}
 
+    def _reports_refresh_verdict_ui(self, mc) -> None:
+        """Update verdict chip on one card after auto-confirm on export."""
+        try:
+            key = self._reports_export_key(mc)
+        except Exception:
+            return
+        ui = (getattr(self, "_report_card_ui", None) or {}).get(key) or {}
+        status = ui.get("status_lbl")
+        if status is None:
+            return
+        v = "confirmed"
+        try:
+            if hasattr(self, "_verdict_for_mc"):
+                v = self._verdict_for_mc(mc) or "confirmed"
+        except Exception:
+            pass
+        try:
+            status.configure(
+                text=self._reports_verdict_label_short(v),
+                text_color=self._reports_verdict_color(v),
+            )
+        except Exception:
+            try:
+                status.configure(text=self._reports_verdict_label_short(v))
+            except Exception:
+                pass
+        # Border color on card frame if registered
+        card = ui.get("card")
+        if card is not None:
+            try:
+                from gui_app.theme import C as _C
+
+                border = {
+                    "confirmed": _C["danger"],
+                    "correct": _C["success"],
+                    "skip": _C["dim"],
+                    "unreviewed": _C["border"],
+                }.get(str(v).lower(), _C["border"])
+                card.configure(border_color=border)
+            except Exception:
+                pass
+
     def _reports_refresh_export_badge(self, mc, record: Optional[Dict[str, Any]] = None) -> None:
         """Update export # on one card in place — no full page rebuild."""
         try:
@@ -157,14 +199,29 @@ class ReportsExportGridMixin:
             path = payload.get("path")
             rec_out = payload.get("record") or record
             self._reports_sync_export_number(mc, rec_out)
+            # Export implies verified misclass → Confirmed incorrect
+            try:
+                if hasattr(self, "_set_verdict_for_mc"):
+                    self._set_verdict_for_mc(mc, "confirmed", save=True)
+                if isinstance(getattr(mc, "record", None), dict) and isinstance(
+                    rec_out, dict
+                ):
+                    if rec_out.get("flags") is not None:
+                        mc.record["flags"] = rec_out["flags"]
+            except Exception:
+                pass
             # In-place badge only — do not rebuild the whole report page
             try:
                 self._reports_refresh_export_badge(mc, rec_out)
             except Exception:
                 pass
+            try:
+                self._reports_refresh_verdict_ui(mc)
+            except Exception:
+                pass
             num = rec_out.get("export_number")
             badge = f" · export #{num}" if num else ""
-            msg = f"Card → {getattr(path, 'name', path)}{badge}"
+            msg = f"Card → {getattr(path, 'name', path)}{badge} · confirmed incorrect"
             try:
                 if hasattr(self, "report_status"):
                     self.report_status.configure(text=msg)
@@ -307,7 +364,10 @@ class ReportsExportGridMixin:
                 if n is not None:
                     nums.append(str(n))
             badge = f" · export #{', #'.join(nums)}" if nums else ""
-            msg = f"Grid {layout} → {getattr(path, 'name', path)}{badge}"
+            msg = (
+                f"Grid {layout} → {getattr(path, 'name', path)}{badge}"
+                f" · confirmed incorrect"
+            )
             try:
                 if hasattr(self, "report_status"):
                     self.report_status.configure(text=msg)
@@ -315,46 +375,50 @@ class ReportsExportGridMixin:
                     self.stats_label.configure(text=msg)
             except Exception:
                 pass
-            # Mirror numbers onto live rows + refresh badges in place (no full rebuild)
+            # Mirror numbers + auto-confirm onto live rows (no full rebuild)
             try:
                 for rec in records:
                     n = rec.get("export_number")
                     rid = rec.get("id")
-                    if n is None:
-                        continue
                     for mc in list(getattr(self, "_report_items", None) or []):
                         r = getattr(mc, "record", None)
                         if not isinstance(r, dict):
                             continue
-                        if rid is not None and r.get("id") == rid:
+                        if rid is None or r.get("id") != rid:
+                            continue
+                        if n is not None:
                             r["export_number"] = n
-                            try:
-                                self._reports_refresh_export_badge(mc, r)
-                            except Exception:
-                                pass
-                        elif rid is None:
-                            # Match by export key against selected cache
-                            try:
-                                if self._reports_export_key(mc) in (
-                                    getattr(self, "_report_export_selected", None) or {}
-                                ):
-                                    r["export_number"] = n
-                                    self._reports_refresh_export_badge(mc, r)
-                            except Exception:
-                                pass
-                    # Selected-cache dicts used for the next grid export
-                    for key, sel in list(
-                        (getattr(self, "_report_export_selected", None) or {}).items()
+                        if rec.get("flags") is not None:
+                            r["flags"] = rec["flags"]
+                        try:
+                            if hasattr(self, "_set_verdict_for_mc"):
+                                self._set_verdict_for_mc(
+                                    mc, "confirmed", save=True
+                                )
+                        except Exception:
+                            pass
+                        try:
+                            self._reports_refresh_export_badge(mc, r)
+                        except Exception:
+                            pass
+                        try:
+                            self._reports_refresh_verdict_ui(mc)
+                        except Exception:
+                            pass
+                    for sel in list(
+                        (getattr(self, "_report_export_selected", None) or {}).values()
                     ):
-                        if isinstance(sel, dict) and (
-                            rid is None or sel.get("id") == rid
-                        ):
+                        if isinstance(sel, dict) and sel.get("id") == rid:
                             if n is not None:
                                 sel["export_number"] = n
+                            if rec.get("flags") is not None:
+                                sel["flags"] = rec["flags"]
             except Exception:
                 pass
             try:
-                self.log_queue.put(f"Reports grid export: {path}{badge}")
+                self.log_queue.put(
+                    f"Reports grid export: {path}{badge} · confirmed incorrect"
+                )
             except Exception:
                 pass
             # No confirmation dialog — status bar + log are enough
