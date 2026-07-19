@@ -56,6 +56,10 @@ class FetcherHtmlMixin:
             ).encode("utf-8")
 
             text = content.decode("utf-8", errors="replace")
+            # Never archive empty / trivial shells as "HTML" — empty files
+            # poison identity checks and make enrich look like it saved work.
+            if len(text.strip()) < 80:
+                return None, None
             primary_photo: Optional[str] = None
 
             if download_images:

@@ -144,6 +144,9 @@ class IntegrityRequeueMixin:
                         text=(
                             f"Done · queued {summary.get('queued', 0)} · "
                             f"updated {summary.get('updated', 0)} · "
+                            f"race {summary.get('with_race', 0)} · "
+                            f"crime {summary.get('with_crime', 0)} · "
+                            f"photo {summary.get('with_photo', 0)} · "
                             f"skipped scope {summary.get('skipped_scope', 0)} · "
                             f"errors {summary.get('errors', 0)} · "
                             f"threads {summary.get('threads', threads)}"

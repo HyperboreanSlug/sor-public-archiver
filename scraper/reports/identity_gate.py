@@ -17,7 +17,7 @@ from scraper.database.identity import (
     _norm_token,
 )
 
-# UI chrome often bolded on FDLE flyers — not person names
+# UI chrome often bolded on registry pages — not person names
 _HTML_NAME_NOISE = frozenset(
     {
         "sexual offender",
@@ -69,6 +69,41 @@ _HTML_NAME_NOISE = frozenset(
         "tier level",
         "state bureau of identification",
         "st louis city",
+        # Site chrome mistaken for names (MO DPS, MS, etc.)
+        "about dps",
+        "main navigation",
+        "get connected",
+        "submit a tip",
+        "state of mississippi",
+        "offender details",
+        "safety & security",
+        "safety and security",
+        "dps divisions",
+        "public safety",
+        "department of public safety",
+        "missouri state highway patrol links",
+        "state of missouri navigation",
+        "department of public safety links",
+        "resources",
+        "home",
+        "contact us",
+        "privacy policy",
+        "terms of use",
+        "skip to content",
+        "skip navigation",
+        "mailing address",
+        "physical address",
+        "residential address",
+        "home address",
+        "primary address",
+        "last known address",
+        "registered address",
+        "work address",
+        "employer address",
+        "vehicle information",
+        "offense information",
+        "personal information",
+        "contact information",
     }
 )
 
@@ -90,6 +125,30 @@ _HTML_NAME_NOISE_SUBSTR = (
     "or auburn",
     "bureau of identification",
     "louis city",
+    "about dps",
+    "main navigation",
+    "get connected",
+    "submit a tip",
+    "state of ",
+    "department of ",
+    "public safety",
+    "highway patrol",
+    "navigation",
+    "skip to ",
+    "privacy policy",
+    "terms of use",
+    "dps divisions",
+    "safety &",
+    "safety and",
+    "mailing address",
+    "physical address",
+    "residential address",
+    "home address",
+    "last known",
+    "vehicle information",
+    "offense information",
+    "personal information",
+    "contact information",
 )
 
 _GEN_SUFFIX = frozenset(
@@ -174,52 +233,84 @@ def _looks_like_person_name(n: str) -> bool:
 
 
 def extract_person_name_from_html(html: str) -> Optional[str]:
-    """Best-effort display name from a registry report page."""
+    """Best-effort display name from a registry report page.
+
+    Prefer explicit ``Name:`` / ``Offender Name`` labels over bare ``<h*>``
+    text — headings are often site chrome (``About DPS``, ``Main Navigation``).
+    """
     if not html:
         return None
     # Prefer early page region (headers) over map/footer chrome
     head = html[:120_000] if len(html) > 120_000 else html
-    candidates: List[str] = []
+    # (score_boost, name) — labeled fields outrank heading chrome
+    scored: List[Tuple[int, str]] = []
+    seen: set = set()
 
-    def _add(n: str) -> None:
+    def _add(n: str, *, boost: int = 0) -> None:
         n = re.sub(r"\s+", " ", (n or "").strip())
-        if _looks_like_person_name(n):
-            candidates.append(n)
+        n = n.replace("\xa0", " ").strip()
+        if not _looks_like_person_name(n):
+            return
+        key = n.casefold()
+        if key in seen:
+            return
+        seen.add(key)
+        toks = n.split()
+        caps = sum(
+            1 for t in toks if t.isupper() or t.rstrip(".").upper() in ("JR", "SR")
+        )
+        has_suf = 1 if re.search(r"\b(Jr|Sr|II|III|IV)\.?\b", n, re.I) else 0
+        # Higher is better
+        score = (
+            boost * 100
+            + has_suf * 10
+            + caps * 3
+            - abs(len(toks) - 3)
+            - min(len(n), 40) // 10
+        )
+        scored.append((score, n))
 
-    # MI mspsor / Bootstrap: <h2 class="text-primary">DAVID AGUILAR JR</h2>
+    # 1) Labeled name cells (MO DPS, many SOR tables) — highest priority
+    for m in re.finditer(
+        r"(?<![A-Za-z])(?:Offender\s+)?Name\s*:?\s*(?:&nbsp;|\s)*"
+        r"</(?:div|span|label|th|td)>\s*"
+        r"<(?:div|span|td)[^>]*>\s*([^<]{3,60})\s*<",
+        head,
+        flags=re.I,
+    ):
+        _add(m.group(1), boost=5)
+    for m in re.finditer(
+        r"(?<![A-Za-z])(?:Offender\s+)?Name\s*:?\s*</(?:div|span|label|th|td)>\s*"
+        r"<(?:div|span|td)[^>]*>\s*([^<]{3,60})\s*<",
+        head,
+        flags=re.I,
+    ):
+        _add(m.group(1), boost=5)
+    # class="nameData">John David Barnett
+    for m in re.finditer(
+        r'class\s*=\s*["\'][^"\']*name[^"\']*["\'][^>]*>\s*([A-Za-z][^<]{2,55})\s*<',
+        head,
+        flags=re.I,
+    ):
+        _add(m.group(1), boost=4)
+
+    # 2) MI mspsor / Bootstrap headings — only if not pure chrome
     for m in re.finditer(
         r"<h([1-3])\b[^>]*>\s*([^<]{3,60})\s*</h\1>",
         head,
         flags=re.I,
     ):
-        _add(m.group(2))
+        _add(m.group(2), boost=1)
     for m in re.finditer(
         r'font-weight:\s*bold[^>]*>\s*([A-Za-z][A-Za-z0-9 \-\'.]{3,48})\s*<',
         head,
         flags=re.I,
     ):
-        _add(m.group(1))
-    if candidates:
-        # Prefer 2–4 token ALL CAPS names; keep Jr/Sr (do not strip for display)
-        def _score(s: str) -> tuple:
-            toks = s.split()
-            caps = sum(1 for t in toks if t.isupper() or t.rstrip(".").upper() in ("JR", "SR"))
-            # Prefer names that still include generational suffix when present
-            has_suf = 1 if re.search(r"\b(Jr|Sr|II|III|IV)\.?\b", s, re.I) else 0
-            return (has_suf, caps, -abs(len(toks) - 3), -len(s))
+        _add(m.group(1), boost=1)
 
-        candidates.sort(key=_score, reverse=True)
-        return candidates[0]
-    m = re.search(
-        r"(?<![A-Za-z])(?:Offender\s+)?Name\s*:?\s*</(?:div|span|label|th|td)>\s*"
-        r"<(?:div|span|td)[^>]*>\s*([^<]{3,48})\s*<",
-        head,
-        flags=re.I,
-    )
-    if m:
-        n = re.sub(r"\s+", " ", m.group(1)).strip()
-        if _looks_like_person_name(n):
-            return n
+    if scored:
+        scored.sort(key=lambda t: t[0], reverse=True)
+        return scored[0][1]
     return None
 
 

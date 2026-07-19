@@ -46,7 +46,12 @@ class BuilderRequeueWorkMixin:
             except Exception as e:
                 summary["errors"] += 1
                 log(f"    ↳ fetch error: {e}")
-                self._requeue_progress(on_progress, summary["attempted"], total_q)
+                self._requeue_progress(
+                    on_progress,
+                    summary["attempted"],
+                    total_q,
+                    updated=summary["updated"],
+                )
                 continue
             try:
                 record = dict(rec)
@@ -69,7 +74,12 @@ class BuilderRequeueWorkMixin:
                     f"    ↳ apply error id={rid}: {e} "
                     "(continuing with next record)"
                 )
-            self._requeue_progress(on_progress, summary["attempted"], total_q)
+            self._requeue_progress(
+                on_progress,
+                summary["attempted"],
+                total_q,
+                updated=summary["updated"],
+            )
 
     def _requeue_parallel(
         self,
@@ -161,7 +171,12 @@ class BuilderRequeueWorkMixin:
                         log=log,
                         on_update=on_update,
                     )
-                self._requeue_progress(on_progress, summary["attempted"], total_q)
+                self._requeue_progress(
+                    on_progress,
+                    summary["attempted"],
+                    total_q,
+                    updated=summary["updated"],
+                )
         finally:
             pool.close()
 
@@ -200,13 +215,13 @@ class BuilderRequeueWorkMixin:
             "eye_color", "hair_color", "crime", "offense_type",
             "offense_description", "report_html_path", "photo_path", "photo_url",
             "county", "city", "address", "risk_level",
-            "sources_json", "flags",
+            "sources_json", "flags", "raw_data_json",
         ):
             new_v = record.get(key)
             old_v = rec.get(key)
             if new_v is None or new_v == "":
                 continue
-            if key in ("sources_json", "flags", "race"):
+            if key in ("sources_json", "flags", "race", "raw_data_json"):
                 if new_v != old_v:
                     patch[key] = new_v
                 continue
@@ -285,13 +300,21 @@ class BuilderRequeueWorkMixin:
 
     @staticmethod
     def _requeue_progress(
-        on_progress: Optional[Callable[[int, int], None]],
+        on_progress: Optional[Callable[..., None]],
         done: int,
         total: int,
+        *,
+        updated: int = 0,
     ) -> None:
         if not on_progress:
             return
         try:
-            on_progress(done, total or 1)
+            on_progress(done, total or 1, updated=updated)
+        except TypeError:
+            # Older callbacks: (done, total) only
+            try:
+                on_progress(done, total or 1)
+            except Exception:
+                pass
         except Exception:
             pass

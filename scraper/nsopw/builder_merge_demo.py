@@ -114,8 +114,12 @@ class BuilderMergeDemoMixin:
         # Preserve any pre-existing sources (e.g. FL CSV) and add/update this one
         attach_source_to_record(record, report_src, prefer_new_fields=bool(id_ok))
 
-        # Top-level fill only when identity matched — never copy wrong person
+        # Top-level fill only when identity matched — never copy wrong person.
+        # Race usually comes from apply_sources_to_record; also fill blank race
+        # from demo so enrich counts move even when sources_json is sparse.
         if id_ok:
+            if demo.get("race") and not str(record.get("race") or "").strip():
+                record["race"] = demo.get("race")
             for key in (
                 "ethnicity", "gender", "height", "weight",
                 "eye_color", "hair_color", "skin_tone", "build", "age",

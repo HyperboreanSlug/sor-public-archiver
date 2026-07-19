@@ -75,13 +75,16 @@ class NsopwEnrichRunMixin:
             if hasattr(self, "log_queue"):
                 self.log_queue.put(msg)
 
-        def on_progress(done: int, total: int) -> None:
+        def on_progress(done: int, total: int, **kw) -> None:
+            # Accept optional updated/with_* from callers; ignore extras safely.
+            updated = int(kw.get("updated") or 0)
             frac = (done / total) if total else 0.0
 
             def ui():
                 self.nsopw_enrich_progress.set(min(1.0, max(0.0, frac)))
+                extra = f" · saved {updated}" if updated else ""
                 self.nsopw_enrich_status.configure(
-                    text=f"Enrich {state or 'all'} {done}/{total}…"
+                    text=f"Enrich {state or 'all'} {done}/{total}{extra}…"
                 )
 
             self.after(0, ui)
@@ -122,16 +125,25 @@ class NsopwEnrichRunMixin:
                         text=(
                             f"Done · queued {summary.get('queued', 0)} · "
                             f"updated {summary.get('updated', 0)} · "
+                            f"race {summary.get('with_race', 0)} · "
+                            f"crime {summary.get('with_crime', 0)} · "
+                            f"photo {summary.get('with_photo', 0)} · "
                             f"errors {summary.get('errors', 0)} · "
                             f"threads {summary.get('threads', threads)}"
                         )
                     )
+                    # Refresh state enriched%/total + incomplete list after a run.
                     if hasattr(self, "_nsopw_refresh_state_dropdown"):
                         self._nsopw_refresh_state_dropdown()
-                    else:
+                    elif hasattr(self, "_nsopw_enrich_reload_list"):
                         self._nsopw_enrich_reload_list()
                     if hasattr(self, "_refresh_header_db_path"):
                         self._refresh_header_db_path()
+                    if hasattr(self, "_after_db_data_changed"):
+                        try:
+                            self._after_db_data_changed()
+                        except Exception:
+                            pass
 
                 self.after(0, done)
             except Exception as e:
