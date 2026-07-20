@@ -25,7 +25,7 @@
 | Card export # | `gui_app/shared/export_card_release.py` — sequential No. per person (`offenders.export_number` + `data/card_release.json`); **mint only on deliberate Desktop/grid export** (`assign_number=True`); bare render/peek never burns a number; re-export reuses; Reports shows `export #N` |
 | Export → confirm | `gui_app/shared/export_card_confirm.py` — exporting a card auto-marks **Confirmed incorrect** (`ethnicity_review` + report verdicts) |
 | Deported flag | `gui_app/shared/deported.py` — when address/city/county marks deported, Reports + export banner shows bold **`LISTED WHITE - DEPORTED`** / **`WHITE - DEPORTED`** (list + grid + HTML + share card) |
-| Offline listing | `scraper/online_listing.py` — Reports shows **`NOT AVAILABLE ONLINE`** when flags/sources mark dead URL (`blocked:http_404`, error404); Open becomes Offline (archive or message, no dead flyer) |
+| Offline listing | `scraper/online_listing.py` — Reports **`NOT AVAILABLE ONLINE`** only when stored URLs are solely error404 / search-home (or empty) **and** dead evidence exists. Sticky HTML-fetch `blocked:http_404` does **not** banner rows that still have a person detail URL; photos often come from NSOPW `photo_url` / FDLE CallImage independent of HTML. Open → Offline only in that true-dead case. |
 | Enrich identity | `reports/identity_gate.py` — HTML name extract prefers `Name:` labels over chrome headings (`About DPS`); failed name match blocks race attach (keeps wrong-person safety) |
 | Crime summary | `scraper/crime_summary*.py` (clause parse + docket strip) |
 | Statute → charge | `scraper/statute_ref.py` + `statute_labels.json` — expand bare `Statute Number(s): 28-320.01` (etc.) to real offense names on Reports/export |
