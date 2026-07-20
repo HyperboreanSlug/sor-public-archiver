@@ -87,6 +87,9 @@ _HTML_NAME_NOISE = frozenset(
         "resources",
         "home",
         "contact us",
+        "call us",
+        "known aliases",
+        "aliases",
         "privacy policy",
         "terms of use",
         "skip to content",
@@ -104,6 +107,14 @@ _HTML_NAME_NOISE = frozenset(
         "offense information",
         "personal information",
         "contact information",
+        "division of criminal justice services",
+        "criminal justice services",
+        "offender details",
+        "offender information",
+        "registry search",
+        "sex offender registry",
+        "sex offender",
+        "click here",
     }
 )
 
@@ -131,6 +142,8 @@ _HTML_NAME_NOISE_SUBSTR = (
     "submit a tip",
     "state of ",
     "department of ",
+    "division of ",
+    "criminal justice",
     "public safety",
     "highway patrol",
     "navigation",
@@ -149,6 +162,10 @@ _HTML_NAME_NOISE_SUBSTR = (
     "offense information",
     "personal information",
     "contact information",
+    "known aliases",
+    "call us",
+    "offender details",
+    "registry search",
 )
 
 _GEN_SUFFIX = frozenset(
@@ -203,6 +220,21 @@ def _looks_like_person_name(n: str) -> bool:
     tokens = [t for t in re.split(r"\s+", raw) if t]
     tokens = _strip_gen_suffix(tokens)
     if len(tokens) < 2 or len(tokens) > 5:
+        return False
+    # Org/chrome phrases: "Division of …", "Department of …"
+    cores_pre = [t.casefold().rstrip(".") for t in tokens]
+    if "of" in cores_pre or cores_pre[0] in {
+        "division",
+        "department",
+        "bureau",
+        "office",
+        "known",
+        "call",
+        "click",
+        "view",
+        "show",
+        "print",
+    }:
         return False
     if len(raw) > 48:
         return False
