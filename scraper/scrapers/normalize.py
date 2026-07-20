@@ -76,17 +76,27 @@ def normalize_record(record: Dict[str, Any], state: Optional[str] = None) -> Dic
     # Split full_name when parts missing
     full = out.get("full_name") or out.get("NAME")
     if full and not out.get("last_name"):
-        parts = str(full).replace(",", " ").split()
-        if len(parts) >= 3:
-            out.setdefault("first_name", parts[0])
-            out.setdefault("middle_name", " ".join(parts[1:-1]))
-            out.setdefault("last_name", parts[-1])
-        elif len(parts) >= 2:
-            # Prefer "LAST, FIRST" style already handled by replace
-            out.setdefault("first_name", parts[0] if "," not in str(full) else " ".join(parts[1:]))
-            out.setdefault("last_name", parts[-1] if "," not in str(full) else parts[0])
-        elif parts:
-            out.setdefault("last_name", parts[0])
+        full_s = str(full)
+        if "," in full_s:
+            # "LAST, FIRST MIDDLE" — the comma marks the surname boundary
+            last, rest = full_s.split(",", 1)
+            rest_parts = rest.strip().split()
+            out.setdefault("last_name", last.strip())
+            if rest_parts:
+                out.setdefault("first_name", rest_parts[0])
+            if len(rest_parts) >= 2:
+                out.setdefault("middle_name", " ".join(rest_parts[1:]))
+        else:
+            parts = full_s.split()
+            if len(parts) >= 3:
+                out.setdefault("first_name", parts[0])
+                out.setdefault("middle_name", " ".join(parts[1:-1]))
+                out.setdefault("last_name", parts[-1])
+            elif len(parts) >= 2:
+                out.setdefault("first_name", parts[0])
+                out.setdefault("last_name", parts[-1])
+            elif parts:
+                out.setdefault("last_name", parts[0])
 
     # Handle "LAST, FIRST MIDDLE" in NAME
     name_raw = out.get("full_name") or out.get("NAME")

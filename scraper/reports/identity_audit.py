@@ -329,6 +329,15 @@ def repair_nuclear_findings(
             if rec.get("photo_url"):
                 rec["photo_url"] = None
                 changed = True
+    # Photo-only nuclear mismatch: clear the wrong-person photo even when the
+    # HTML name/DOB/link are fine (the block above only runs for those codes).
+    if "photo_html_mismatch" in codes:
+        if rec.get("photo_path"):
+            rec["photo_path"] = None
+            changed = True
+        if rec.get("photo_url"):
+            rec["photo_url"] = None
+            changed = True
     return changed
 
 

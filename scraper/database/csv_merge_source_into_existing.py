@@ -46,7 +46,7 @@ class MergeSourceIntoExistingCsvMixin:
         # Guard: never merge when DOB/middle/name conflict (even if caller passed id).
         # FL PERSON_NBR can collide with flyer personId for a different person —
         # hard reject must always win over shared external_id / URL.
-        _ok, _sc, reasons = should_merge_records(incoming, existing, min_score=5)
+        _ok, _sc, reasons = should_merge_records(incoming, existing, min_score=6)
         _s, _r, hard = score_identity_match(incoming, existing)
         if hard:
             return False

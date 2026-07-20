@@ -113,16 +113,27 @@ class NormalizeRecordCsvMixin:
 
         # Derive name parts from full_name when missing
         if not new_record.get("last_name") and new_record.get("full_name"):
-            parts = str(new_record["full_name"]).replace(",", " ").split()
-            if len(parts) >= 3:
-                new_record.setdefault("first_name", parts[0])
-                new_record.setdefault("middle_name", " ".join(parts[1:-1]))
-                new_record.setdefault("last_name", parts[-1])
-            elif len(parts) >= 2:
-                new_record.setdefault("first_name", parts[0])
-                new_record.setdefault("last_name", parts[-1])
-            elif parts:
-                new_record.setdefault("last_name", parts[0])
+            full_s = str(new_record["full_name"])
+            if "," in full_s:
+                # "LAST, FIRST MIDDLE" — the comma marks the surname boundary
+                last, rest = full_s.split(",", 1)
+                rest_parts = rest.strip().split()
+                new_record.setdefault("last_name", last.strip())
+                if rest_parts:
+                    new_record.setdefault("first_name", rest_parts[0])
+                if len(rest_parts) >= 2:
+                    new_record.setdefault("middle_name", " ".join(rest_parts[1:]))
+            else:
+                parts = full_s.split()
+                if len(parts) >= 3:
+                    new_record.setdefault("first_name", parts[0])
+                    new_record.setdefault("middle_name", " ".join(parts[1:-1]))
+                    new_record.setdefault("last_name", parts[-1])
+                elif len(parts) >= 2:
+                    new_record.setdefault("first_name", parts[0])
+                    new_record.setdefault("last_name", parts[-1])
+                elif parts:
+                    new_record.setdefault("last_name", parts[0])
 
         # Split multi-token first_name into first + middle when middle empty
         first = str(new_record.get("first_name") or "").strip()
