@@ -225,7 +225,12 @@ def _draw_footer(
             total_w = sow + so_gap + rw
             nx = _CARD_W - margin - total_w
             ny = ty - 2
-            draw.text((nx, ny + 12), so_text, font=so_font, fill=(250, 250, 255, 255))
+            # Vertically center "SEX OFFENDER" on the large export No.'s midline.
+            try:
+                so_y = int(ny + (rb[1] + rb[3]) / 2 - (sob[1] + sob[3]) / 2)
+            except Exception:
+                so_y = ny + 12
+            draw.text((nx, so_y), so_text, font=so_font, fill=(250, 250, 255, 255))
             num_x = nx + sow + so_gap
             for ox, oy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
                 draw.text(
