@@ -279,7 +279,7 @@ def resolve_public_source_url(
     """
     urls = split_source_urls(raw_url)
     st = (state or "").strip().upper()
-    if " | " in st:
+    if "|" in st:
         # multi-jurisdiction: prefer host of the first URL, else first listed code
         # (do NOT force FL just because FL appears — out-of-state GA+FL address)
         from scraper.database.sources import jurisdiction_from_url

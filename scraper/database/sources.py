@@ -421,17 +421,12 @@ def apply_sources_to_record(record: Dict[str, Any]) -> Dict[str, Any]:
         if not _norm_str(record.get(field)):
             pv = primary_field_value(sources, field)
             if pv:
-                # Guard: do not copy race codes into ethnicity
+                # Guard: a pure race value must never be copied into ethnicity.
+                # Hispanic/Latino map to HISPANIC and are still allowed through.
                 if field == "ethnicity" and _race_key(str(pv)) in (
                     "WHITE", "BLACK", "ASIAN", "UNKNOWN", "AMERICAN INDIAN",
                 ):
-                    # Letter-only or pure race words are not ethnicity
-                    if re.fullmatch(
-                        r"(?i)W|B|A|I|U|White|Black|Asian|Unknown|Caucasian|"
-                        r"African American|Black or African American",
-                        str(pv).strip(),
-                    ):
-                        continue
+                    continue
                 record[field] = pv
 
     # Flags

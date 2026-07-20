@@ -76,7 +76,13 @@ def _has_dead_listing_evidence(record: Mapping[str, Any]) -> bool:
     return False
 
 
+_SEARCH_HOMES_CACHE: Optional[set] = None
+
+
 def _search_homes() -> set:
+    global _SEARCH_HOMES_CACHE
+    if _SEARCH_HOMES_CACHE is not None:
+        return _SEARCH_HOMES_CACHE
     try:
         from scraper.public_links import (
             CO_SOR_SEARCH_HOME,
@@ -86,7 +92,7 @@ def _search_homes() -> set:
             TX_SOR_SEARCH_HOME,
         )
 
-        return {
+        _SEARCH_HOMES_CACHE = {
             FL_FDLE_SEARCH_HOME.rstrip("/").lower(),
             FL_FDLE_HOME.rstrip("/").lower(),
             CO_SOR_SEARCH_HOME.rstrip("/").lower(),
@@ -94,7 +100,8 @@ def _search_homes() -> set:
             TX_SOR_SEARCH_HOME.rstrip("/").lower(),
         }
     except Exception:
-        return set()
+        _SEARCH_HOMES_CACHE = set()
+    return _SEARCH_HOMES_CACHE
 
 
 def _is_generic_search_home(url: str) -> bool:
