@@ -27,6 +27,26 @@ from scraper.crime_summary_junk import (
 )
 
 
+# Garbled FL offense abbreviations -> readable text (applied to each label).
+_OFFENSE_ABBREV_CLEAN = [
+    (
+        re.compile(r"(?i)\bsend\s+minor\s+harm\.?\s*info[\s\-]*oth\.?\s*state\b"),
+        "Sending harmful info to a minor",
+    ),
+    (
+        re.compile(r"(?i)\bharm\.?\s*info[\s\-]*oth\.?\s*state\b"),
+        "harmful info to a minor",
+    ),
+]
+
+
+def _clean_offense_abbreviations(s: str) -> str:
+    t = s or ""
+    for rx, repl in _OFFENSE_ABBREV_CLEAN:
+        t = rx.sub(repl, t)
+    return t
+
+
 def _is_physical_or_smt_crime(text: str) -> bool:
     """True when stored crime is demographics / tattoos, not an offense."""
     try:
@@ -153,6 +173,7 @@ def _summarize_crime_impl(text: Optional[str], *, max_len: int = 200) -> str:
             polished = re.sub(r"\s{2,}", " ", polished).strip(" ·;,|—-")
             if not polished or len(polished) < 3:
                 continue
+        polished = _clean_offense_abbreviations(polished)
         cleaned_labels.append(polished)
     labels = _dedupe_preserve(cleaned_labels)
 

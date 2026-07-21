@@ -118,6 +118,15 @@ def render_export_card(
         text_opacity=0.22,
     )
 
+    # Large red "DEPORTED" at 45° across the mugshot when registry says deported.
+    try:
+        from gui_app.shared.deported import is_deported
+
+        if is_deported(record):
+            _draw_deported_watermark(canvas, photo_rect)
+    except Exception:
+        pass
+
     y = photo_top + photo_h + 20
     y = _draw_name(draw, name, y, _PAD, max_text_w, name_font)
     if race:
@@ -165,9 +174,47 @@ def _draw_foil_sheen(canvas: Image.Image) -> None:
 
 def _draw_name(draw, name: str, y: int, margin: int, max_w: int, font) -> int:
     for line in wrap_text(draw, name or "", font, max_w)[:2]:
-        draw.text((margin, y), line, font=font, fill=_FOIL)
+        try:
+            bb = draw.textbbox((0, 0), line, font=font)
+            lw = int(bb[2] - bb[0])
+        except Exception:
+            lw = max_w
+        x = margin + max(0, (max_w - lw) // 2)
+        draw.text((x, y), line, font=font, fill=_FOIL)
         y += 58
     return y
+
+
+def _draw_deported_watermark(canvas: Image.Image, photo_rect) -> None:
+    """Large red 'DEPORTED' at 45° across the mugshot when registry says deported."""
+    try:
+        from PIL import ImageChops
+
+        x0, y0, x1, y1 = [int(v) for v in photo_rect]
+        pw, ph = x1 - x0, y1 - y0
+        if pw < 40 or ph < 40:
+            return
+        font = _load_display_font(max(56, pw // 6))
+        txt = "DEPORTED"
+        layer = Image.new("RGBA", (pw, ph), (0, 0, 0, 0))
+        td = ImageDraw.Draw(layer)
+        bb = td.textbbox((0, 0), txt, font=font)
+        tw, th = int(bb[2] - bb[0]), int(bb[3] - bb[1])
+        cx, cy = (pw - tw) // 2, (ph - th) // 2
+        for ox, oy in ((-3, 0), (3, 0), (0, -3), (0, 3)):
+            td.text((cx + ox, cy - bb[1] + oy), txt, font=font, fill=(50, 0, 0, 210))
+        td.text((cx, cy - bb[1]), txt, font=font, fill=(225, 35, 35, 240))
+        rotated = layer.rotate(45, resample=Image.BICUBIC, expand=False)
+        full = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+        full.paste(rotated, (x0, y0), rotated)
+        clip = Image.new("L", canvas.size, 0)
+        ImageDraw.Draw(clip).rounded_rectangle(photo_rect, radius=28, fill=255)
+        r, g, b, a = full.split()
+        a = ImageChops.multiply(a, clip)
+        full = Image.merge("RGBA", (r, g, b, a))
+        canvas.alpha_composite(full)
+    except Exception:
+        pass
 
 
 def _draw_crime_panel(draw, text: str, y: int, margin: int, max_w: int, font) -> int:
