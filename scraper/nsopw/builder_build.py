@@ -19,6 +19,44 @@ from scraper.nsopw.client import (
 from scraper.nsopw.parallel import JurisdictionReportPool, ReportJob
 
 class BuilderBuildMixin:
+    def _find_existing_person_id(self, record: Dict[str, Any]) -> Optional[int]:
+        """Id of an existing row that is the same person, or None.
+
+        Prevents the build inserting a duplicate of a person already in the DB
+        under a different source URL / registry id (e.g. two FDLE personIds for
+        one person, or a CSV row + an NSOPW row). Uses the same score-gated
+        identity check as dedupe (min_score=6, requires a 2nd identifier).
+        """
+        from scraper.database.identity import should_merge_records
+
+        last = str(record.get("last_name") or "").strip()
+        first = str(record.get("first_name") or "").strip()
+        if not last or not first:
+            return None
+        first_tok = first.split()[0]
+        try:
+            rows = self.db._conn.execute(
+                "SELECT * FROM offenders WHERE last_name = ? COLLATE NOCASE "
+                "AND (first_name = ? COLLATE NOCASE OR first_name LIKE ? COLLATE NOCASE) "
+                "LIMIT 8",
+                (last, first_tok, first_tok + " %"),
+            ).fetchall()
+        except Exception:
+            return None
+        best_id: Optional[int] = None
+        best_sc = -1
+        for r in rows:
+            existing = dict(r)
+            try:
+                ok, sc, _ = should_merge_records(
+                    record, existing, min_score=6, unique_name_candidate=(len(rows) == 1)
+                )
+            except Exception:
+                continue
+            if ok and sc > best_sc:
+                best_sc, best_id = sc, int(existing["id"])
+        return best_id
+
     def build(
         self,
         ethnicity: str = "hispanic",
@@ -444,13 +482,27 @@ class BuilderBuildMixin:
 
         # ---- report finalize + optional parallel report-fetch pool ----
         def _finalize_record(record, hit, st, is_eth_match, url, *, ensure_photo):
-            """Main-thread: photo (if not already fetched), DB insert, notify."""
+            """Main-thread: photo, then merge into an existing person or insert."""
             if url:
                 record["source_url"] = record.get("source_url") or url
             if ensure_photo:
                 self._ensure_photo(record, hit, st)
             try:
-                self.db.insert_offender(record)
+                # Merge into an existing record of the same person instead of
+                # inserting a duplicate (same person under a different URL / id).
+                existing_id = self._find_existing_person_id(record)
+                merged = False
+                if existing_id is not None:
+                    try:
+                        merged = bool(
+                            self.db._merge_source_into_existing(
+                                existing_id, record, commit=False
+                            )
+                        )
+                    except Exception:
+                        merged = False
+                if not merged:
+                    self.db.insert_offender(record)
                 self.stats.inserted += 1
                 if is_eth_match:
                     self.stats.inserted_matched += 1
