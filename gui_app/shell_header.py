@@ -136,3 +136,77 @@ class ShellHeaderMixin:
             path = Path("data")
             path.mkdir(parents=True, exist_ok=True)
         self._open_path(path)
+
+    def trigger_post_write_dedupe(self) -> None:
+        """Run a background dedupe after a large DB write (guarded, idempotent)."""
+        if getattr(self, "_dedupe_running", False):
+            return
+        self._run_background_dedupe()
+
+    def _run_background_dedupe(self) -> None:
+        """Dedupe (source_url -> external_id -> name_state_dob -> name_dob) on a
+        background thread, showing per-strategy progress in the top-right header."""
+        if getattr(self, "_dedupe_running", False):
+            return
+        self._dedupe_running = True
+        try:
+            from scraper.paths import resolve_under_root
+
+            db_path = str(
+                resolve_under_root(
+                    getattr(self, "db_path", None) or "data/offenders.db"
+                )
+            )
+        except Exception:
+            db_path = str(getattr(self, "db_path", None) or "data/offenders.db")
+        strategies = ["source_url", "external_id", "name_state_dob", "name_dob"]
+
+        def _label(text: str) -> None:
+            if hasattr(self, "header_dedupe_label"):
+                try:
+                    self.header_dedupe_label.configure(text=text)
+                except Exception:
+                    pass
+
+        def work():
+            from scraper.database import Database
+
+            total_deleted = 0
+            db = Database(db_path, busy_timeout_ms=60000)
+            try:
+                for i, s in enumerate(strategies, 1):
+                    if getattr(self, "_closing", False):
+                        break
+                    self.after(
+                        0,
+                        lambda i=i, s=s: _label(
+                            f"Deduping {i}/{len(strategies)}: {s}…"
+                        ),
+                    )
+                    r = db.remove_duplicates(
+                        s, dry_run=False, merge_fields=True, safe_only=True
+                    )
+                    total_deleted += int(r.get("deleted") or 0)
+            finally:
+                db.close()
+            return total_deleted
+
+        def apply(result=None, error=None):
+            self._dedupe_running = False
+            if error is not None:
+                _label(f"Dedupe failed: {str(error)[:28]}")
+            else:
+                _label(f"Dedupe done · {int(result or 0):,} merged")
+            try:
+                self.after(15000, lambda: _label(""))
+            except Exception:
+                pass
+            self.schedule_header_refresh(0)
+
+        if hasattr(self, "run_bg"):
+            self.run_bg(work, apply, name="post-write-dedupe")
+        else:
+            try:
+                apply(result=work(), error=None)
+            except Exception as e:
+                apply(result=None, error=e)

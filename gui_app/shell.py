@@ -125,6 +125,11 @@ class ArchiverApp(
             anchor="e",
         )
         self.stats_label.pack(side="right", padx=(8, 12), pady=6)
+        # Post-write dedupe progress (top-right; shown only while a dedupe runs)
+        self.header_dedupe_label = ctk.CTkLabel(
+            header, text="", font=FONT_SM, text_color=C["muted"], anchor="e",
+        )
+        self.header_dedupe_label.pack(side="right", padx=(0, 4), pady=6)
         self._build_header_sync_indicator(header)
 
         # Left: title + DB path (includes the only record count)

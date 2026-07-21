@@ -128,6 +128,12 @@ class ScrapeImportMixin:
                 self._refresh_header_db_path()
         except Exception:
             pass
+        # Auto-dedupe in the background after a large write (top-right progress).
+        try:
+            if hasattr(self, "trigger_post_write_dedupe"):
+                self.trigger_post_write_dedupe()
+        except Exception:
+            pass
         if hasattr(self, "integrity_summary") and hasattr(self, "_refresh_integrity"):
             try:
                 self.after(50, self._refresh_integrity)
