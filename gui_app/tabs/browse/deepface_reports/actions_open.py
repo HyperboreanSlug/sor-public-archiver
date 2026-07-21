@@ -117,4 +117,21 @@ class DfrOpenMixin:
             except Exception as e:
                 messagebox.showerror("Copy", str(e))
 
+    def _dfr_export_card(self) -> None:
+        """Export the selected DeepFace record as a share card to the Desktop."""
+        rec = getattr(self, "_dfr_current_record", None)
+        if not rec:
+            return
+        try:
+            from gui_app.shared.export_card import export_record_card_to_desktop
+
+            path = export_record_card_to_desktop(rec)
+            if hasattr(self, "dfr_status"):
+                try:
+                    self.dfr_status.configure(text=f"Card → {path.name}")
+                except Exception:
+                    pass
+        except Exception as e:
+            messagebox.showerror("Export card", str(e))
+
 

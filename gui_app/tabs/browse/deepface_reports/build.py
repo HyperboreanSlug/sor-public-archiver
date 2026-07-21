@@ -333,6 +333,12 @@ class DfrBuildMixin:
             border_width=1, border_color=C["border"],
         )
         self.dfr_btn_copy.pack(side="left")
+        self.dfr_btn_export = ctk.CTkButton(
+            link_row, text="Export card", width=92, state="disabled",
+            command=self._dfr_export_card,
+            fg_color=C["accent"], hover_color=C["accent_hover"], text_color=C["bg"],
+        )
+        self.dfr_btn_export.pack(side="left", padx=(6, 0))
 
         btns = ctk.CTkFrame(rev, fg_color="transparent")
         btns.pack(fill="x", padx=12, pady=(0, 12))

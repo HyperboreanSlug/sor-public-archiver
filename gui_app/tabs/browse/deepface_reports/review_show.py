@@ -113,6 +113,7 @@ class DfrShowMixin:
         self._dfr_html_path = html_path
         self._dfr_source_url = url or ""
         self._dfr_photo_open_path = photo_path
+        self._dfr_current_record = rec
 
         try:
             self.dfr_name.configure(text=name)
@@ -136,6 +137,8 @@ class DfrShowMixin:
                 )
             if hasattr(self, "dfr_btn_copy"):
                 self.dfr_btn_copy.configure(state="normal")
+            if hasattr(self, "dfr_btn_export"):
+                self.dfr_btn_export.configure(state="normal")
         except Exception:
             pass
 
