@@ -109,6 +109,17 @@ class ReportsBuildMixin:
             )
         )
 
+        self.report_has_crime = ctk.BooleanVar(value=False)
+        flow.add(
+            ctk.CTkCheckBox(
+                h, text="Has crime", variable=self.report_has_crime,
+                font=FONT_SM, text_color=C["text"],
+                fg_color=C["accent"], hover_color=C["accent_hover"],
+                border_color=C["border"], checkmark_color=C["bg"],
+                command=lambda: self._reports_on_filter_change(),
+            )
+        )
+
         self.report_include_deepface = ctk.BooleanVar(value=False)
         flow.add(
             ctk.CTkCheckBox(

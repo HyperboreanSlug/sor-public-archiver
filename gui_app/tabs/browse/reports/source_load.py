@@ -219,6 +219,13 @@ class ReportsSourceLoadMixin:
             )
         except Exception:
             include_df = False
+        try:
+            has_crime = bool(
+                getattr(self, "report_has_crime", None)
+                and self.report_has_crime.get()
+            )
+        except Exception:
+            has_crime = False
         if verdict_key is not None:
             vfilter = str(verdict_key).strip().lower() or "all"
         else:
@@ -253,6 +260,7 @@ class ReportsSourceLoadMixin:
         return {
             "photos_only": photos_only,
             "include_deepface": include_df,
+            "has_crime": has_crime,
             "vfilter": vfilter,
             "race_allow": race_allow,
             "actual": actual,
@@ -279,6 +287,7 @@ class ReportsSourceLoadMixin:
             snap["vfilter"] = str(verdict_key).strip().lower() or "all"
 
         photos_only = bool(snap.get("photos_only"))
+        has_crime = bool(snap.get("has_crime"))
         vfilter = str(snap.get("vfilter") or "unreviewed")
         race_allow = set(snap.get("race_allow") or {"White", "Black", "Other"})
         actual_want = str(snap.get("actual") or "All")
@@ -370,6 +379,8 @@ class ReportsSourceLoadMixin:
             photo = (rec.get("photo_path") or "").strip()
             has_photo = self._reports_photo_exists(photo)
             if photos_only and not has_photo:
+                continue
+            if has_crime and not self._reports_crime_text(rec):
                 continue
             try:
                 person = self._report_person_key(mc)
