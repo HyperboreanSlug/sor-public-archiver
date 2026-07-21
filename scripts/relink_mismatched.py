@@ -80,8 +80,14 @@ def main():
     )
     try:
         rows = builder.db._conn.execute(
-            "SELECT * FROM offenders WHERE flags LIKE '%identity_html_mismatch%' "
-            "AND (source_url LIKE '%flyer.jsf?personId=%' "
+            "SELECT * FROM offenders WHERE ("
+            "flags LIKE '%identity_html_mismatch%' "
+            "OR flags LIKE '%name_mismatch%' "
+            "OR flags LIKE '%dob_mismatch%' "
+            "OR sources_json LIKE '%name_mismatch%' "
+            "OR sources_json LIKE '%dob_mismatch%' "
+            "OR sources_json LIKE '%identity:report_not_ok%'"
+            ") AND (source_url LIKE '%flyer.jsf?personId=%' "
             "     OR source_url LIKE '%flyer.jsf?personid=%')"
         ).fetchall()
         total = len(rows)
