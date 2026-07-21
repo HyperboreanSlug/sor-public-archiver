@@ -45,6 +45,45 @@ class ReportsSourceConfirmMixin:
                 )
             )
 
+    def _reports_confirm_checked(self) -> None:
+        """Mark the checked (export-selected) cards as Confirmed incorrect."""
+        self._reports_export_selected_init()
+        sel = getattr(self, "_report_export_selected", None) or {}
+        if not sel:
+            messagebox.showinfo(
+                "Confirm checked", "Check cards first (the ☐ box on each card)."
+            )
+            return
+        sel_keys = set(sel.keys())
+        targets = [
+            mc
+            for mc in list(self._report_items or [])
+            if self._reports_export_key(mc) in sel_keys
+        ]
+        if not targets:
+            messagebox.showinfo("Confirm checked", "No checked cards on this page.")
+            return
+        ok = messagebox.askyesno(
+            "Confirm checked inaccurate?",
+            f"Mark {len(targets):,} checked card(s) as Confirmed incorrect?",
+        )
+        if not ok:
+            return
+        for mc in targets:
+            self._set_verdict_for_mc(mc, "confirmed", save=False)
+        self._save_report_verdicts()
+        sel.clear()  # clear the check marks now that they're confirmed
+        self._reports_rebuild_cards()
+        self._refresh_stats_from_verdicts()
+        try:
+            self._reports_refresh_confirm_button()
+        except Exception:
+            pass
+        if hasattr(self, "report_status"):
+            self.report_status.configure(
+                text=f"Marked {len(targets):,} checked as Confirmed incorrect"
+            )
+
     def _reports_confirm_others(self, keep_mc) -> None:
         """Confirm other visible unreviewed cards; leave *keep_mc* unchanged."""
         keep_key = self._report_item_key(keep_mc)

@@ -219,13 +219,12 @@ class ReportsBuildMixin:
         ).pack(side="left", padx=(0, 2), pady=2)
         flow.add(show)
 
-        flow.add(
-            ctk.CTkButton(
-                h, text="Confirm unchecked", width=148, height=28,
-                command=self._reports_confirm_unchecked,
-                fg_color="#5c3030", hover_color="#7a4040", text_color=C["text"],
-            )
+        self.report_confirm_btn = ctk.CTkButton(
+            h, text="Confirm unchecked", width=184, height=28,
+            command=self._reports_confirm_unchecked,
+            fg_color="#5c3030", hover_color="#7a4040", text_color=C["text"],
         )
+        flow.add(self.report_confirm_btn)
         flow.add(
             ctk.CTkButton(
                 h, text="Open HTML", width=108, height=28,

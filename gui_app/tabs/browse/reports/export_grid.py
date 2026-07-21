@@ -285,6 +285,31 @@ class ReportsExportGridMixin:
         else:
             self._report_export_selected.pop(key, None)
         self._reports_update_export_status()
+        try:
+            self._reports_refresh_confirm_button()
+        except Exception:
+            pass
+
+    def _reports_refresh_confirm_button(self) -> None:
+        """Swap 'Confirm unchecked' <-> 'Confirm N checked inaccurate' with selection."""
+        btn = getattr(self, "report_confirm_btn", None)
+        if btn is None:
+            return
+        self._reports_export_selected_init()
+        n = len(self._report_export_selected or {})
+        try:
+            if n > 0:
+                btn.configure(
+                    text=f"Confirm {n} checked inaccurate",
+                    command=self._reports_confirm_checked,
+                )
+            else:
+                btn.configure(
+                    text="Confirm unchecked",
+                    command=self._reports_confirm_unchecked,
+                )
+        except Exception:
+            pass
 
     def _reports_selected_records(self) -> List[Dict[str, Any]]:
         self._reports_export_selected_init()
