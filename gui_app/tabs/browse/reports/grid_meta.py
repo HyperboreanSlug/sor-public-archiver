@@ -161,15 +161,65 @@ class ReportsGridMetaMixin:
                 "No online URL or archived page for this record.",
             )
 
-    def _reports_open_inmate_link(self, mc) -> None:
-        """Open the FL FDC offender search for an incarcerated offender.
+    @staticmethod
+    def _extract_fdc_dc_number(html: str):
+        """Extract the FL Dept of Corrections DC number from a FDLE flyer.
 
-        The FDLE flyer redacts the DC number (shows 00000), so a specific
-        detail page (DCNumber=…) can't be built — open the FDC offender search.
+        The flyer shows 'Dept of Corrections #:' followed by a link to
+        dc.state.fl.us whose text is the DC number (e.g. A81404).
+        """
+        import re
+
+        m = re.search(
+            r"Dept of Corrections #:\s*<a[^>]*>\s*([A-Z]\d{4,7})\s*</a>",
+            html,
+            re.I,
+        )
+        if m:
+            return m.group(1).upper()
+        m = re.search(
+            r"<a[^>]*dc\.state\.fl\.us[^>]*>\s*([A-Z]\d{4,7})\s*</a>",
+            html,
+            re.I,
+        )
+        if m:
+            return m.group(1).upper()
+        return None
+
+    def _reports_open_inmate_link(self, mc) -> None:
+        """Open the FL FDC inmate detail page for an incarcerated offender.
+
+        Pulls the DC number (e.g. A81404) from the archived FDLE flyer
+        ('Dept of Corrections #:' link) and opens the FDC detail page. Falls
+        back to the FDC offender search if the DC number isn't found.
         """
         import webbrowser
 
-        url = "https://pubapps.fdc.myflorida.com/offenderSearch/"
+        rec = getattr(mc, "record", None) or {}
+        html_raw = (rec.get("report_html_path") or "").strip()
+        dc = None
+        if html_raw:
+            for p in (
+                Path(html_raw),
+                ROOT / html_raw,
+                ROOT / html_raw.replace("\\", "/"),
+                Path.cwd() / html_raw,
+            ):
+                try:
+                    if p.is_file():
+                        dc = self._extract_fdc_dc_number(
+                            p.read_text(encoding="utf-8", errors="replace")
+                        )
+                        break
+                except Exception:
+                    continue
+        if dc:
+            url = (
+                "https://pubapps.fdc.myflorida.com/offenderSearch/detail.aspx"
+                f"?Page=Detail&DCNumber={dc}&TypeSearch=AI"
+            )
+        else:
+            url = "https://pubapps.fdc.myflorida.com/offenderSearch/"
         try:
             webbrowser.open(url)
         except Exception as e:
