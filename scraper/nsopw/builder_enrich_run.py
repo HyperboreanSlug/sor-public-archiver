@@ -448,15 +448,22 @@ class BuilderEnrichRunMixin:
         *,
         limit: int = 0,
         save_html: bool = True,
+        threads: Optional[int] = None,
+        report_delay: Optional[float] = None,
         log: Optional[Callable[[str], None]] = None,
     ) -> Dict[str, int]:
         """Re-fetch report/flyer URLs for one state's records (overnight run).
 
-        Fills missing demographics via the normal identity-gated merge and flags
-        dead flyers (HTTP 404 / FDLE error404 landing) with ``blocked:http_404``
-        so the GUI falls back to the registry search home instead of a dead page.
-        Resumable: skips rows already flagged dead or already HTML-verified.
+        Multi-threaded via JurisdictionReportPool: ``threads`` workers fetch
+        concurrently (capped by max_per_jurisdiction), DB writes stay on the
+        calling thread. Fills demographics via the identity-gated merge and flags
+        dead flyers (HTTP 404 / FDLE error404) with ``blocked:http_404`` so the
+        GUI falls back to the registry search home. Captcha/WAF walls are counted
+        (never flagged dead); 20 consecutive walls skip the state. Resumable:
+        skips rows already flagged dead or already HTML-verified.
         """
+        from scraper.nsopw.parallel import JurisdictionReportPool, ReportJob
+
         st = (state or "").strip().upper()
 
         def _log(m: str) -> None:
@@ -477,9 +484,7 @@ class BuilderEnrichRunMixin:
         ).fetchall()
         if limit and int(limit) > 0:
             rows = rows[: int(limit)]
-        total = len(rows)
-        _log(f"[{st}] overnight enrich: {total:,} unverified records with a source URL")
-        stats = {"checked": 0, "alive": 0, "dead": 0, "filled": 0, "empty": 0, "captcha": 0, "errors": 0}
+
         patch_cols = (
             "race", "ethnicity", "gender", "height", "weight", "eye_color",
             "hair_color", "photo_path", "photo_url", "report_html_path", "crime",
@@ -487,56 +492,122 @@ class BuilderEnrichRunMixin:
             "raw_data_json", "date_of_birth", "age", "city", "address", "county",
             "risk_level", "source_url",
         )
-        consec_captcha = 0
-        for i, row in enumerate(rows, 1):
-            if self.cancel_check():
-                _log(f"[{st}] enrich cancelled at {i:,}/{total:,}")
-                break
+
+        # One job per fetchable record. Workers fetch (+merge/photo); the calling
+        # thread alone writes sqlite (pool invariant: workers never touch the DB).
+        jobs: List[ReportJob] = []
+        for row in rows:
             rec = dict(row)
             url = self._primary_fetch_url(rec.get("source_url") or "", st)
             if not url:
                 continue
-            stats["checked"] += 1
-            if self.report_limiter.wait(self.cancel_check):
-                _log(f"[{st}] enrich cancelled (during delay) at {i:,}/{total:,}")
-                break
+            job = ReportJob(
+                jurisdiction=st, url=url, record=rec, hit=None,
+                is_eth_match=False, save_html=save_html,
+            )
+            job._orig = {c: (row[c] if c in row.keys() else None) for c in patch_cols}  # type: ignore[attr-defined]
+            jobs.append(job)
+
+        total = len(jobs)
+        try:
+            n_threads = max(1, min(int(threads if threads is not None else 6), 16))
+        except (TypeError, ValueError):
+            n_threads = 6
+        delay = float(report_delay if report_delay is not None else self.report_delay)
+        stats = {"checked": 0, "alive": 0, "dead": 0, "filled": 0, "empty": 0, "captcha": 0, "errors": 0}
+        _log(
+            f"[{st}] overnight enrich: {total:,} unverified records · "
+            f"{n_threads} threads · {delay:.2f}s pace"
+        )
+        if not total:
+            _log(f"[{st}] enrich done: {stats}")
+            return stats
+
+        def _worker(job: ReportJob, fetcher) -> None:
             try:
-                demo = self.reports.fetch_demographics(
-                    url, save_html=save_html, html_dir=self.html_dir, jurisdiction=st
+                demo = fetcher.fetch_demographics(
+                    job.url, save_html=job.save_html,
+                    html_dir=self.html_dir, jurisdiction=job.jurisdiction,
                 )
+                job.demo = demo
+                if bool(demo.get("report_fetch_ok")):
+                    self._merge_demographics(job.record, demo)
+
+                    class _Hit:
+                        image_uri = job.record.get("photo_url") or demo.get("photo_url") or ""
+
+                    try:
+                        self._ensure_photo(job.record, _Hit(), job.jurisdiction, fetcher=fetcher)
+                    except Exception:
+                        pass
             except Exception as e:
+                job.error = str(e)
+
+        pool = JurisdictionReportPool(
+            num_threads=n_threads,
+            make_fetcher=self._make_report_fetcher,
+            worker_fn=_worker,
+            report_delay=delay,
+            cancel_check=self.cancel_check,
+            log=_log,
+            max_per_jurisdiction=n_threads,
+        )
+        for job in jobs:
+            pool.submit(job)
+
+        done = 0
+        consec_captcha = 0
+        walled = False
+        for job in pool.collect(total):
+            done += 1
+            stats["checked"] += 1
+            rec = job.record
+            orig = getattr(job, "_orig", {}) or {}
+            if job.error:
                 stats["errors"] += 1
-                _log(f"  fetch error id={rec.get('id')}: {e}")
-                continue
-            ok = bool(demo.get("report_fetch_ok"))
-            final_url = str(demo.get("report_final_url") or url)
-            if ok:
-                self._merge_demographics(rec, demo)
-
-                class _Hit:
-                    image_uri = rec.get("photo_url") or demo.get("photo_url") or ""
-
+            else:
+                demo = job.demo or {}
+                ok = bool(demo.get("report_fetch_ok"))
+                final_url = str(demo.get("report_final_url") or job.url)
+                if ok:
+                    stats["filled"] += 1
+                    stats["alive"] += 1
+                    consec_captcha = 0
+                elif self._is_captcha_block(demo):
+                    # Temporary captcha/WAF wall — never flag dead; leave for
+                    # retry / manual cookie solve (fetcher already queued the URL).
+                    stats["captcha"] += 1
+                    consec_captcha += 1
+                elif self._looks_dead_link(final_url, demo):
+                    self._mark_link_dead(rec)
+                    stats["dead"] += 1
+                    consec_captcha = 0
+                else:
+                    # HTTP 200 but no demographics — empty / JS shell page, not dead.
+                    stats["empty"] += 1
+                    stats["alive"] += 1
+                    consec_captcha = 0
+                patch: Dict[str, Any] = {}
+                for c in patch_cols:
+                    v = rec.get(c)
+                    if v is not None and v != orig.get(c):
+                        patch[c] = v
+                if patch and rec.get("id") is not None:
+                    try:
+                        self.db.update_offender(int(rec["id"]), patch)
+                    except Exception as e:
+                        stats["errors"] += 1
+                        _log(f"  db error id={rec.get('id')}: {e}")
+            if done % 100 == 0 or done == total:
                 try:
-                    self._ensure_photo(rec, _Hit(), st)
+                    self.db._conn.commit()
                 except Exception:
                     pass
-                stats["filled"] += 1
-                stats["alive"] += 1
-                consec_captcha = 0
-            elif self._is_captcha_block(demo):
-                # Temporary captcha/WAF wall — never flag dead; leave for retry /
-                # manual cookie solve (the fetcher already queued the URL).
-                stats["captcha"] += 1
-                consec_captcha += 1
-            elif self._looks_dead_link(final_url, demo):
-                self._mark_link_dead(rec)
-                stats["dead"] += 1
-                consec_captcha = 0
-            else:
-                # HTTP 200 but no demographics — empty / JS shell page, not dead.
-                stats["empty"] += 1
-                stats["alive"] += 1
-                consec_captcha = 0
+                _log(
+                    f"  [{st}] {done:,}/{total:,} · filled={stats['filled']} "
+                    f"dead={stats['dead']} empty={stats['empty']} "
+                    f"captcha={stats['captcha']} err={stats['errors']}"
+                )
             # Circuit breaker: a run of consecutive captcha walls means the state
             # registry is bot-blocking us — stop burning requests, try the next state.
             if consec_captcha >= 20:
@@ -544,34 +615,14 @@ class BuilderEnrichRunMixin:
                     f"  [{st}] {consec_captcha} consecutive captcha/WAF blocks — "
                     f"state appears bot-walled, moving on to the next state"
                 )
+                walled = True
                 break
-            patch: Dict[str, Any] = {}
-            for c in patch_cols:
-                v = rec.get(c)
-                orig = row[c] if c in row.keys() else None
-                if v is not None and v != orig:
-                    patch[c] = v
-            if patch and rec.get("id") is not None:
-                try:
-                    self.db.update_offender(int(rec["id"]), patch)
-                except Exception as e:
-                    stats["errors"] += 1
-                    _log(f"  db error id={rec.get('id')}: {e}")
-            if i % 100 == 0 or i == total:
-                try:
-                    self.db._conn.commit()
-                except Exception:
-                    pass
-                _log(
-                    f"  [{st}] {i:,}/{total:,} · filled={stats['filled']} "
-                    f"dead={stats['dead']} empty={stats['empty']} "
-                    f"captcha={stats['captcha']} err={stats['errors']}"
-                )
+        pool.close()
         try:
             self.db._conn.commit()
         except Exception:
             pass
-        _log(f"[{st}] enrich done: {stats}")
+        _log(f"[{st}] enrich done{' (bot-walled)' if walled else ''}: {stats}")
         return stats
 
 

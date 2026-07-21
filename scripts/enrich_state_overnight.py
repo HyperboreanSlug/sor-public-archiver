@@ -61,19 +61,28 @@ def main() -> int:
         except Exception:
             pass
 
+    import os
+    try:
+        threads = int(os.environ.get("ENRICH_THREADS", "6"))
+    except (TypeError, ValueError):
+        threads = 6
+    try:
+        delay = float(os.environ.get("ENRICH_DELAY", "0.7"))
+    except (TypeError, ValueError):
+        delay = 0.7
     builder = NSOPWEthnicDatabaseBuilder(
         db_path=str(ROOT / "data" / "offenders.db"),
-        report_delay=1.5,
-        report_threads=1,
+        report_delay=delay,
+        report_threads=threads,
         html_dir=str(ROOT / "data" / "report_pages"),
     )
     try:
         states = _state_order(builder, explicit)
-        log(f"=== Overnight enrich queue: {', '.join(states)} ===")
+        log(f"=== Overnight enrich queue: {', '.join(states)} (threads={threads}, delay={delay:.2f}s) ===")
         for state in states:
             log(f"=== Starting enrich for {state} ===")
             try:
-                stats = builder.enrich_state(state, save_html=True, log=log)
+                stats = builder.enrich_state(state, save_html=True, threads=threads, report_delay=delay, log=log)
                 log(f"=== Finished {state}: {stats} ===")
             except Exception as e:
                 log(f"=== {state} ERROR: {type(e).__name__}: {e} ===")
