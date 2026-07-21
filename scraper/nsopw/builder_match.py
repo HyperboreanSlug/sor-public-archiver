@@ -69,7 +69,7 @@ class BuilderMatchMixin:
         ).strip().upper()
         if want_state in ("", "UNK", "US", "YY", "XX"):
             want_state = ""
-        want_dob = NSOPWEthnicDatabaseBuilder._normalize_dob_key(
+        want_dob = BuilderMatchMixin._normalize_dob_key(
             rec.get("date_of_birth")
         )
         try:
@@ -92,7 +92,7 @@ class BuilderMatchMixin:
             ).strip().upper()
             if st in ("", "UNK", "US"):
                 st = ""
-            hit_dob = NSOPWEthnicDatabaseBuilder._normalize_dob_key(
+            hit_dob = BuilderMatchMixin._normalize_dob_key(
                 getattr(hit, "date_of_birth", None)
             )
             try:

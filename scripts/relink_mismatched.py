@@ -83,10 +83,7 @@ def main():
             "SELECT * FROM offenders WHERE ("
             "flags LIKE '%identity_html_mismatch%' "
             "OR flags LIKE '%name_mismatch%' "
-            "OR flags LIKE '%dob_mismatch%' "
-            "OR sources_json LIKE '%name_mismatch%' "
-            "OR sources_json LIKE '%dob_mismatch%' "
-            "OR sources_json LIKE '%identity:report_not_ok%'"
+            "OR flags LIKE '%dob_mismatch%'"
             ") AND (source_url LIKE '%flyer.jsf?personId=%' "
             "     OR source_url LIKE '%flyer.jsf?personid=%')"
         ).fetchall()
@@ -108,28 +105,28 @@ def main():
                 errors += 1
                 log(f"  search error id={rec.get('id')}: {e}")
                 continue
-            best = builder._pick_nsopw_hit_for_person(rec, hits)
-            if best is None:
-                not_found += 1
-                continue
-            hit_rec = best.to_record()
-            new_url = (hit_rec.get("source_url") or "").strip()
-            old_url = (rec.get("source_url") or "").strip()
-            if not new_url or new_url == old_url:
-                not_found += 1
-                continue
-            patch = {
-                "source_url": new_url,
-                "external_id": (hit_rec.get("external_id") or rec.get("external_id") or ""),
-                "report_html_path": None,  # drop wrong-person archived HTML
-                "flags": _strip_mismatch_flags(rec),
-            }
             try:
+                best = builder._pick_nsopw_hit_for_person(rec, hits)
+                if best is None:
+                    not_found += 1
+                    continue
+                hit_rec = best.to_record()
+                new_url = (hit_rec.get("source_url") or "").strip()
+                old_url = (rec.get("source_url") or "").strip()
+                if not new_url or new_url == old_url:
+                    not_found += 1
+                    continue
+                patch = {
+                    "source_url": new_url,
+                    "external_id": (hit_rec.get("external_id") or rec.get("external_id") or ""),
+                    "report_html_path": None,  # drop wrong-person archived HTML
+                    "flags": _strip_mismatch_flags(rec),
+                }
                 builder.db.update_offender(int(rec["id"]), patch)
                 relinked += 1
             except Exception as e:
                 errors += 1
-                log(f"  update error id={rec.get('id')}: {e}")
+                log(f"  relink error id={rec.get('id')}: {e}")
             if i % 50 == 0 or i == total:
                 log(
                     f"  {i}/{total} relinked={relinked} "
@@ -148,4 +145,17 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    import os
+
+    LOCK = ROOT / "data" / "reports" / "relink_running.lock"
+    if LOCK.exists():
+        print("relink already running; exiting", flush=True)
+        sys.exit(0)
+    LOCK.write_text(str(os.getpid()))
+    try:
+        main()
+    finally:
+        try:
+            LOCK.unlink()
+        except Exception:
+            pass
