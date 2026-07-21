@@ -91,6 +91,8 @@ def is_statute_or_docket(clause: str) -> bool:
 
 def strip_statute_cites(s: str) -> str:
     t = s or ""
+    # PA MegansLaw statute prefix: "6318 ‑ UNLAWFUL CONTACT…" / "901/3121 ‑ ATTEMPTED RAPE"
+    t = re.sub(r"^(?:\d{3,4}(?:/\d{3,4})?)\s*[\u2010-\u2015\-]\s+", "", t)
     # iCrimeWatch / OffenderWatch field prefixes left in stored crime text
     t = re.sub(
         r"(?i)^[\u2022\u00b7•·\-\*]+\s*"
