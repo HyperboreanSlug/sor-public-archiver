@@ -154,6 +154,7 @@ class ReportsFilterPageMixin:
             return
         self._report_page = cur + 1
         self._reports_rebuild_cards(refilter=False)
+        self._reports_scroll_to_top()
 
 
     def _reports_prev_page(self) -> None:
@@ -164,5 +165,46 @@ class ReportsFilterPageMixin:
             return
         self._report_page = cur - 1
         self._reports_rebuild_cards(refilter=False)
+        self._reports_scroll_to_top()
+
+
+    def _reports_goto_page(self) -> None:
+        """Jump to the page number typed in the Page # box."""
+        try:
+            target = int(str(self.report_page_entry.get()).strip())
+        except (TypeError, ValueError, AttributeError):
+            if hasattr(self, "report_status"):
+                self.report_status.configure(text="Type a page number to jump to")
+            return
+        pool = getattr(self, "_report_pool", None) or []
+        page_size = self._reports_page_size()
+        n_pages = max(1, (len(pool) + page_size - 1) // page_size) if pool else 1
+        page = max(1, min(target, n_pages)) - 1
+        self._report_page = page
+        self._reports_rebuild_cards(refilter=False)
+        self._reports_scroll_to_top()
+        if hasattr(self, "report_status"):
+            self.report_status.configure(text=f"Jumped to page {page + 1} / {n_pages}")
+
+
+    def _reports_scroll_to_top(self) -> None:
+        """Scroll the report card list back to the top after a page change."""
+        scroll = getattr(self, "_report_scroll", None)
+        if scroll is None:
+            return
+
+        def _do():
+            try:
+                scroll._parent_canvas.yview_moveto(0.0)
+            except Exception:
+                try:
+                    scroll._parent_canvas.yview_scroll(-1000000, "units")
+                except Exception:
+                    pass
+
+        try:
+            self.after(60, _do)
+        except Exception:
+            _do()
 
 

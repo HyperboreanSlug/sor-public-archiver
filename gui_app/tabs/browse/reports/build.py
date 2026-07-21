@@ -298,6 +298,24 @@ class ReportsBuildMixin:
                 border_width=1, border_color=C["border"],
             )
         )
+        # Jump to a specific page: type the number, press Go / Enter
+        page_jump = ctk.CTkFrame(line2.host, fg_color="transparent")
+        ctk.CTkLabel(
+            page_jump, text="Page #", font=FONT_SM, text_color=C["muted"],
+        ).pack(side="left", padx=(8, 2))
+        self.report_page_entry = ctk.CTkEntry(
+            page_jump, width=52, fg_color=C["bg"],
+            border_color=C["border"], text_color=C["text"],
+        )
+        self.report_page_entry.pack(side="left", padx=(0, 2))
+        self.report_page_entry.bind("<Return>", lambda _e: self._reports_goto_page())
+        ctk.CTkButton(
+            page_jump, text="Go", width=40, height=26,
+            command=self._reports_goto_page,
+            fg_color=C["elevated"], hover_color=C["border"], text_color=C["text"],
+            border_width=1, border_color=C["border"],
+        ).pack(side="left")
+        line2.add(page_jump)
         self.report_layout_hint = ctk.CTkLabel(
             line2.host,
             text="☐ multi · Export = one card · Grid 1×2/2×2",
