@@ -180,6 +180,14 @@ def _start_deepface_setup_background(app_settings: Optional[dict] = None) -> Non
 
 
 def main() -> None:
+    # Unique AppUserModelID so Windows gives SORPA its own taskbar button
+    try:
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+            "SORPublicArchiver.SORPA.1"
+        )
+    except Exception:
+        pass
     # Capture uncaught errors for pythonw launches (no console)
     try:
         from gui_app.crash_log import install_crash_logging, log_exception

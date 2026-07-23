@@ -65,6 +65,10 @@ class ArchiverApp(
         self.geometry("1320x860")
         self.minsize(940, 650)
         self.configure(fg_color=C["bg"])
+        try:
+            self.iconbitmap(str(ROOT / "assets" / "sorpa.ico"))
+        except Exception:
+            pass
 
         _style_treeview(self)
 
